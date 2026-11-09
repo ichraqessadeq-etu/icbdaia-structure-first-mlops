@@ -18,7 +18,10 @@ out = ["# Manual check of the unpacked-dictionary estimator calls", "",
        "`>>>` marks the flagged call, `***` marks every line that mentions random_state.", ""]
 n = 0
 for root, label, lim in [("runs_claude", "Claude Sonnet 4.5", 10),
-                         ("runs", "GPT-4o batch 1", 99), ("runs_gpt4o_batch2", "GPT-4o batch 2", 99)]:
+                         ("runs", "GPT-4o batch 1", 99), ("runs_gpt4o_batch1", "GPT-4o batch 1", 99),
+                         ("runs_gpt4o_batch2", "GPT-4o batch 2", 99)]:
+    if not os.path.isdir(root):
+        continue
     out += [f"## {label} (`{root}`)", ""]
     for d in sorted(glob.glob(f"{root}/*__*/run_*")):
         if int(d[-2:]) > lim:

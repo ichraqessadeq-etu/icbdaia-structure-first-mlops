@@ -1194,11 +1194,100 @@ Answer: ____
      391          raise
 ```
 
-## GPT-4o batch 1 (`runs`)
+## GPT-4o batch 1 (`runs_gpt4o_batch1`)
+
+### Case 28: `runs_gpt4o_batch1/structure_first__under_specified/run_09`, code block 0, line 36 (function `train_model`)
+
+Answer: ____
+
+```python
+      29  def train_model(data: pd.DataFrame, model_params: dict) -> RandomForestClassifier:
+      30      """Train the fraud detection model with provided data and parameters."""
+      31      try:
+      32          X = data.drop('target', axis=1)
+      33          y = data['target']
+***   34          X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+      35          
+>>>   36          model = RandomForestClassifier(**model_params)
+      37          model.fit(X_train, y_train)
+      38          print("Model training completed successfully.")
+      39          return model
+      40      except Exception as e:
+      41          print(f"Error in model training: {e}")
+      42          raise
+```
+
+### Case 29: `runs_gpt4o_batch1/structure_first__under_specified/run_19`, code block 0, line 42 (function `train_model`)
+
+Answer: ____
+
+```python
+      37  def train_model(training_data: pd.DataFrame, model_params: dict) -> RandomForestClassifier:
+      38      """Train the fraud detection model with given parameters."""
+      39      try:
+      40          features = training_data.drop('target', axis=1)
+      41          target = training_data['target']
+>>>   42          model = RandomForestClassifier(**model_params)
+      43          model.fit(features, target)
+      44          return model
+      45      except Exception as e:
+      46          raise ValueError(f"Error training model: {e}")
+```
+
+Note: no line of this function mentions random_state; the dictionary comes from the caller or from a config: search the file for the dictionary's name.
+
+### Case 30: `runs_gpt4o_batch1/structure_first__under_specified/run_20`, code block 0, line 33 (function `train_model`)
+
+Answer: ____
+
+```python
+      30  def train_model(train_data: tuple, model_params: dict) -> RandomForestClassifier:
+      31      """Train the fraud detection model."""
+      32      X_train, _, y_train, _ = train_data
+>>>   33      model = RandomForestClassifier(**model_params)
+      34      model.fit(X_train, y_train)
+      35      return model
+```
+
+Note: no line of this function mentions random_state; the dictionary comes from the caller or from a config: search the file for the dictionary's name.
+
+### Case 31: `runs_gpt4o_batch1/structure_first__under_specified/run_20`, code block 1, line 55 (function `test_save_and_load_model`)
+
+Answer: ____
+
+```python
+      54  def test_save_and_load_model(tmpdir):
+>>>   55      model = RandomForestClassifier(**MODEL_PARAMS)
+      56      model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+      57  
+      58      # Save model
+      59      model_path = tmpdir.join("model.joblib")
+      60      save_model(model, model_path)
+      61  
+      62      # Load model
+      63      loaded_model = load_model(model_path)
+      64      assert isinstance(loaded_model, RandomForestClassifier)
+```
+
+Note: no line of this function mentions random_state; the dictionary comes from the caller or from a config: search the file for the dictionary's name.
+
+### Case 32: `runs_gpt4o_batch1/structure_first__under_specified/run_20`, code block 1, line 67 (function `test_predict`)
+
+Answer: ____
+
+```python
+      66  def test_predict():
+>>>   67      model = RandomForestClassifier(**MODEL_PARAMS)
+      68      model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+      69      predictions = predict(model, SAMPLE_DATA.drop('label', axis=1))
+      70      assert len(predictions) == len(SAMPLE_DATA)
+```
+
+Note: no line of this function mentions random_state; the dictionary comes from the caller or from a config: search the file for the dictionary's name.
 
 ## GPT-4o batch 2 (`runs_gpt4o_batch2`)
 
-### Case 28: `runs_gpt4o_batch2/structure_first__under_specified/run_12`, code block 0, line 40 (function `train_model`)
+### Case 33: `runs_gpt4o_batch2/structure_first__under_specified/run_12`, code block 0, line 40 (function `train_model`)
 
 Answer: ____
 
