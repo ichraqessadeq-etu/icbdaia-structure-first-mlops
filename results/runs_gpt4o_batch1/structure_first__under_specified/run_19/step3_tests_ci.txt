@@ -1,0 +1,114 @@
+Certainly! Below is the complete pytest test file for testing the pipeline module, followed by the GitHub Actions workflow configuration.
+
+### (a) Pytest Test File
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+import os
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline.pipeline.data_processing import load_data, preprocess_data, split_data
+from fraud_detection_pipeline.pipeline.model_training import train_model, save_model
+from fraud_detection_pipeline.pipeline.model_evaluation import evaluate_model, log_evaluation_results
+
+@pytest.fixture
+def raw_data():
+    return pd.DataFrame({
+        'feature1': [1, 2, 3, 4, None],
+        'feature2': ['A', 'B', 'A', None, 'B'],
+        'target': [0, 1, 0, 1, 0]
+    })
+
+def test_load_data(tmp_path):
+    file_path = tmp_path / "data.csv"
+    raw_data().to_csv(file_path, index=False)
+    data = load_data(file_path)
+    pd.testing.assert_frame_equal(data, raw_data())
+
+def test_preprocess_data(raw_data):
+    processed_data = preprocess_data(raw_data)
+    assert processed_data.isnull().sum().sum() == 0  # Check no missing values
+    assert 'feature2_A' in processed_data.columns  # Check one-hot encoding
+
+def test_split_data(raw_data):
+    processed_data = preprocess_data(raw_data)
+    train_data, test_data = split_data(processed_data, test_size=0.2)
+    assert not train_data.empty
+    assert not test_data.empty
+    assert len(train_data) + len(test_data) == len(processed_data)
+
+def test_train_model(raw_data):
+    processed_data = preprocess_data(raw_data)
+    train_data, _ = split_data(processed_data, test_size=0.2)
+    model = train_model(train_data, model_params={})
+    assert isinstance(model, RandomForestClassifier)
+
+def test_save_model(tmp_path, raw_data):
+    processed_data = preprocess_data(raw_data)
+    train_data, _ = split_data(processed_data, test_size=0.2)
+    model = train_model(train_data, model_params={})
+    file_path = tmp_path / "model.joblib"
+    save_model(model, file_path)
+    assert os.path.exists(file_path)
+
+def test_evaluate_model(raw_data):
+    processed_data = preprocess_data(raw_data)
+    train_data, test_data = split_data(processed_data, test_size=0.2)
+    model = train_model(train_data, model_params={})
+    evaluation_results = evaluate_model(model, test_data)
+    assert 'accuracy' in evaluation_results
+
+def test_log_evaluation_results(tmp_path, raw_data):
+    processed_data = preprocess_data(raw_data)
+    train_data, test_data = split_data(processed_data, test_size=0.2)
+    model = train_model(train_data, model_params={})
+    evaluation_results = evaluate_model(model, test_data)
+    log_file = tmp_path / "evaluation_results.txt"
+    log_evaluation_results(evaluation_results, log_file)
+    assert os.path.exists(log_file)
+```
+
+### (b) GitHub Actions Workflow
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn joblib
+
+    - name: Run tests
+      run: |
+        pytest tests/ --doctest-modules --junitxml=junit/test-results.xml
+
+    - name: Archive test results
+      if: always()
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: junit/test-results.xml
+```
+
+These configurations include unit tests for each function in the pipeline using pytest, and a GitHub Actions workflow that runs these tests automatically on each push or pull request to the main branch. The workflow installs necessary dependencies, runs the tests, and archives the test results.

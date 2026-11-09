@@ -1,0 +1,142 @@
+To create a comprehensive testing and CI/CD setup for your pipeline, we'll focus on two main tasks: writing pytest tests for the module and configuring a GitHub Actions workflow to automate the testing process. Below, you'll find the complete pytest test file followed by the GitHub Actions workflow configuration.
+
+### (a) Pytest Test File
+
+Here is a pytest test file to test your pipeline module:
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+import numpy as np
+from src.data_loader import load_data, preprocess_data
+from src.model_trainer import train_model, save_model
+from src.evaluator import evaluate_model
+from src.drift_detector import detect_concept_drift
+from sklearn.ensemble import RandomForestClassifier
+import os
+import joblib
+
+# Sample Data
+@pytest.fixture
+def sample_data():
+    data = pd.DataFrame({
+        'feature1': np.random.rand(100),
+        'feature2': np.random.rand(100),
+        'label': np.random.choice([0, 1], size=100)
+    })
+    return data
+
+@pytest.fixture
+def sample_data_with_drift():
+    data = pd.DataFrame({
+        'feature1': np.random.rand(100) * 2,  # Different distribution
+        'feature2': np.random.rand(100) * 2,
+        'label': np.random.choice([0, 1], size=100)
+    })
+    return data
+
+def test_load_data(sample_data, tmpdir):
+    # Create a temporary CSV file
+    file_path = os.path.join(tmpdir, "sample_data.csv")
+    sample_data.to_csv(file_path, index=False)
+    
+    # Load data using the function
+    loaded_data = load_data(file_path)
+    
+    # Check if data is loaded correctly
+    pd.testing.assert_frame_equal(sample_data, loaded_data)
+
+def test_preprocess_data(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+
+def test_train_model(sample_data):
+    X_train, _, y_train, _ = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    
+    assert isinstance(model, RandomForestClassifier)
+
+def test_save_model(sample_data, tmpdir):
+    X_train, _, y_train, _ = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    
+    # Save model
+    file_path = os.path.join(tmpdir, "model.joblib")
+    save_model(model, file_path)
+    
+    # Check if file is created
+    assert os.path.exists(file_path)
+
+def test_evaluate_model(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    assert 'accuracy' in metrics
+    assert 'f1_score' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+
+def test_detect_concept_drift(sample_data, sample_data_with_drift):
+    drift_detected = detect_concept_drift(sample_data.drop('label', axis=1), sample_data_with_drift.drop('label', axis=1))
+    assert drift_detected
+
+```
+
+### (b) GitHub Actions Workflow
+
+Here is a GitHub Actions workflow file to automate testing with pytest:
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: |
+        pytest tests --junitxml=test-results.xml
+
+    - name: Archive test results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: test-results.xml
+```
+
+### Explanation
+
+- **Pytest Test File**: Tests are created to verify each function's behavior in your pipeline. Fixtures are used to provide sample data for testing, including a data variant for drift detection.
+- **GitHub Actions Workflow**: This configuration will trigger on pushes and pull requests to the `main` branch. It checks out the repository, sets up Python, installs dependencies, runs the tests, and uploads test results as an artifact. The workflow can be extended to include more jobs, such as deployment, if needed.

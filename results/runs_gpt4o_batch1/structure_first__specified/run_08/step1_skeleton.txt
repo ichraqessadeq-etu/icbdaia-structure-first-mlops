@@ -1,0 +1,156 @@
+Here is the structure for your CI/CD pipeline setup for a fraud detection model using scikit-learn, MLflow, and pytest:
+
+### File Layout
+```
+fraud_detection/
+│
+├── pipeline/
+│   ├── __init__.py
+│   ├── data_loading.py
+│   ├── model_training.py
+│   ├── model_evaluation.py
+│   ├── mlflow_logging.py
+│   └── main.py
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py
+│
+└── .github/
+    └── workflows/
+        └── ci_cd.yml
+```
+
+### Pipeline Module
+
+#### `data_loading.py`
+```python
+def load_data(file_path: str) -> tuple:
+    """Load the dataset from the specified file path."""
+    ...
+```
+
+#### `model_training.py`
+```python
+def train_model(X_train, y_train) -> 'RandomForestClassifier':
+    """Train the RandomForestClassifier model."""
+    ...
+```
+
+#### `model_evaluation.py`
+```python
+def evaluate_model(model, X_test, y_test) -> dict:
+    """Evaluate the model and return performance metrics."""
+    ...
+```
+
+#### `mlflow_logging.py`
+```python
+def log_metrics_to_mlflow(metrics: dict) -> None:
+    """Log the evaluation metrics to MLflow."""
+    ...
+```
+
+#### `main.py`
+```python
+def run_pipeline() -> None:
+    """Execute the full pipeline: data loading, training, evaluation, and logging."""
+    ...
+```
+
+### Test File
+
+#### `test_pipeline.py`
+```python
+def test_data_loading():
+    """Test the data loading function."""
+    ...
+
+def test_train_model():
+    """Test the model training function."""
+    ...
+
+def test_evaluate_model():
+    """Test the model evaluation function."""
+    ...
+```
+
+### GitHub Actions Workflow
+
+#### `.github/workflows/ci_cd.yml`
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # Weekly trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/
+
+  drift_detection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Detect Concept Drift
+        run: python drift_detection.py
+
+  retrain:
+    needs: drift_detection
+    runs-on: ubuntu-latest
+    if: ${{ needs.drift_detection.outputs.drift_detected }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pipeline
+        run: python pipeline/main.py
+```
+
+This structure provides a clear separation of concerns and a proper CI/CD setup for a robust fraud detection ML pipeline.

@@ -1,0 +1,97 @@
+Below is the complete pytest test file and the GitHub Actions workflow file for the provided pipeline module.
+
+### Pytest Test File
+
+Create a new file named `test_pipeline.py` and add the following code:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, detect_concept_drift
+
+def test_load_data():
+    filepath = "data/fraud_data.csv"
+    data = load_data(filepath)
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data():
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4, 5, 6],
+        'feature2': [6, 5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0, 1]
+    })
+    X, y = preprocess_data(data)
+    assert isinstance(X, pd.DataFrame)
+    assert isinstance(y, pd.Series)
+    assert len(X) == len(y)
+    assert y.value_counts()[0] == y.value_counts()[1]  # Check if balanced
+
+def test_train_model():
+    X = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6]})
+    y = pd.Series([0, 1, 0])
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model():
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_train = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6]})
+    y_train = pd.Series([0, 1, 0])
+    X_test = pd.DataFrame({'feature1': [2, 3], 'feature2': [5, 6]})
+    y_test = pd.Series([1, 0])
+    model.fit(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert isinstance(metrics, dict)
+    for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
+        assert metric in metrics
+        assert 0.0 <= metrics[metric] <= 1.0
+
+def test_detect_concept_drift():
+    drift_detected = detect_concept_drift()
+    assert isinstance(drift_detected, bool)
+
+```
+
+### GitHub Actions Workflow File
+
+Create a new file named `.github/workflows/ci.yml` and add the following code:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow numpy pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+
+```
+
+In this setup:
+- The pytest file tests each function in the pipeline module for expected behavior.
+- The GitHub Actions workflow runs on pushes and pull requests to the main branch, installs the necessary dependencies, and runs the tests using pytest.

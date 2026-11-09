@@ -1,0 +1,1039 @@
+```python
+# src/pipeline.py
+
+"""Fraud detection model CI/CD pipeline implementation."""
+
+from typing import Tuple, Dict, Any, List
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import joblib
+import json
+from datetime import datetime
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report
+)
+from scipy import stats
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load raw fraud detection data from specified path.
+    
+    Args:
+        data_path: Path to the data file (CSV, parquet, or JSON)
+        
+    Returns:
+        DataFrame containing the loaded data
+        
+    Raises:
+        FileNotFoundError: If the data file doesn't exist
+        ValueError: If the file format is not supported
+    """
+    data_path = Path(data_path)
+    
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data file not found: {data_path}")
+    
+    file_extension = data_path.suffix.lower()
+    
+    try:
+        if file_extension == '.csv':
+            df = pd.read_csv(data_path)
+        elif file_extension == '.parquet':
+            df = pd.read_parquet(data_path)
+        elif file_extension == '.json':
+            df = pd.read_json(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_extension}")
+        
+        logger.info(f"Successfully loaded data from {data_path}. Shape: {df.shape}")
+        return df
+    
+    except Exception as e:
+        logger.error(f"Error loading data from {data_path}: {str(e)}")
+        raise
+
+
+def validate_data_schema(df: pd.DataFrame, expected_schema: Dict[str, str]) -> bool:
+    """Validate that dataframe matches expected schema.
+    
+    Args:
+        df: DataFrame to validate
+        expected_schema: Dictionary mapping column names to expected data types
+        
+    Returns:
+        True if schema is valid, False otherwise
+    """
+    if df.empty:
+        logger.warning("DataFrame is empty")
+        return False
+    
+    # Check for missing columns
+    expected_columns = set(expected_schema.keys())
+    actual_columns = set(df.columns)
+    
+    missing_columns = expected_columns - actual_columns
+    if missing_columns:
+        logger.error(f"Missing columns: {missing_columns}")
+        return False
+    
+    # Check data types
+    for column, expected_dtype in expected_schema.items():
+        actual_dtype = str(df[column].dtype)
+        
+        # Normalize dtype strings for comparison
+        if expected_dtype in ['int64', 'int32', 'int'] and 'int' not in actual_dtype:
+            logger.error(f"Column '{column}' has type {actual_dtype}, expected {expected_dtype}")
+            return False
+        elif expected_dtype in ['float64', 'float32', 'float'] and 'float' not in actual_dtype:
+            logger.error(f"Column '{column}' has type {actual_dtype}, expected {expected_dtype}")
+            return False
+        elif expected_dtype == 'object' and actual_dtype != 'object':
+            logger.error(f"Column '{column}' has type {actual_dtype}, expected {expected_dtype}")
+            return False
+    
+    logger.info("Data schema validation passed")
+    return True
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Preprocess and split data into train and test sets.
+    
+    Args:
+        df: Raw DataFrame to preprocess
+        
+    Returns:
+        Tuple of (train_df, test_df)
+    """
+    # Create a copy to avoid modifying original
+    df_processed = df.copy()
+    
+    # Handle missing values
+    # For numeric columns, fill with median
+    numeric_columns = df_processed.select_dtypes(include=[np.number]).columns
+    for col in numeric_columns:
+        if df_processed[col].isnull().any():
+            median_value = df_processed[col].median()
+            df_processed[col].fillna(median_value, inplace=True)
+            logger.info(f"Filled {col} missing values with median: {median_value}")
+    
+    # For categorical columns, fill with mode or 'unknown'
+    categorical_columns = df_processed.select_dtypes(include=['object']).columns
+    for col in categorical_columns:
+        if df_processed[col].isnull().any():
+            if len(df_processed[col].mode()) > 0:
+                mode_value = df_processed[col].mode()[0]
+                df_processed[col].fillna(mode_value, inplace=True)
+            else:
+                df_processed[col].fillna('unknown', inplace=True)
+            logger.info(f"Filled {col} missing values")
+    
+    # Remove duplicates
+    initial_rows = len(df_processed)
+    df_processed.drop_duplicates(inplace=True)
+    removed_duplicates = initial_rows - len(df_processed)
+    if removed_duplicates > 0:
+        logger.info(f"Removed {removed_duplicates} duplicate rows")
+    
+    # Split data with stratification if 'is_fraud' column exists
+    if 'is_fraud' in df_processed.columns:
+        train_df, test_df = train_test_split(
+            df_processed,
+            test_size=0.2,
+            random_state=42,
+            stratify=df_processed['is_fraud']
+        )
+        logger.info(f"Stratified split - Train: {len(train_df)}, Test: {len(test_df)}")
+    else:
+        train_df, test_df = train_test_split(
+            df_processed,
+            test_size=0.2,
+            random_state=42
+        )
+        logger.info(f"Random split - Train: {len(train_df)}, Test: {len(test_df)}")
+    
+    return train_df, test_df
+
+
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create engineered features for fraud detection.
+    
+    Args:
+        df: DataFrame with raw features
+        
+    Returns:
+        DataFrame with additional engineered features
+    """
+    df_featured = df.copy()
+    
+    # Transaction amount features
+    if 'amount' in df_featured.columns:
+        df_featured['amount_log'] = np.log1p(df_featured['amount'])
+        df_featured['amount_squared'] = df_featured['amount'] ** 2
+        df_featured['amount_sqrt'] = np.sqrt(df_featured['amount'])
+    
+    # Time-based features
+    if 'timestamp' in df_featured.columns:
+        df_featured['timestamp'] = pd.to_datetime(df_featured['timestamp'])
+        df_featured['hour'] = df_featured['timestamp'].dt.hour
+        df_featured['day_of_week'] = df_featured['timestamp'].dt.dayofweek
+        df_featured['is_weekend'] = df_featured['day_of_week'].isin([5, 6]).astype(int)
+        df_featured['is_night'] = df_featured['hour'].isin(range(0, 6)).astype(int)
+    
+    # User aggregation features (if user_id exists)
+    if 'user_id' in df_featured.columns and 'amount' in df_featured.columns:
+        user_stats = df_featured.groupby('user_id')['amount'].agg([
+            ('user_avg_amount', 'mean'),
+            ('user_std_amount', 'std'),
+            ('user_max_amount', 'max'),
+            ('user_transaction_count', 'count')
+        ]).reset_index()
+        
+        df_featured = df_featured.merge(user_stats, on='user_id', how='left')
+        
+        # Fill NaN std with 0 (for users with single transaction)
+        df_featured['user_std_amount'].fillna(0, inplace=True)
+        
+        # Deviation from user's typical behavior
+        df_featured['amount_deviation'] = (
+            df_featured['amount'] - df_featured['user_avg_amount']
+        ) / (df_featured['user_std_amount'] + 1e-5)
+    
+    # Merchant features (if merchant_id exists)
+    if 'merchant_id' in df_featured.columns and 'amount' in df_featured.columns:
+        merchant_stats = df_featured.groupby('merchant_id')['amount'].agg([
+            ('merchant_avg_amount', 'mean'),
+            ('merchant_transaction_count', 'count')
+        ]).reset_index()
+        
+        df_featured = df_featured.merge(merchant_stats, on='merchant_id', how='left')
+    
+    # Location features (if available)
+    if all(col in df_featured.columns for col in ['latitude', 'longitude']):
+        # Distance from origin (0, 0)
+        df_featured['distance_from_origin'] = np.sqrt(
+            df_featured['latitude']**2 + df_featured['longitude']**2
+        )
+    
+    # Categorical encoding (one-hot encoding for low cardinality)
+    categorical_cols = df_featured.select_dtypes(include=['object']).columns
+    for col in categorical_cols:
+        if col not in ['timestamp']:  # Skip timestamp
+            unique_values = df_featured[col].nunique()
+            if unique_values <= 10:  # Only encode if low cardinality
+                dummies = pd.get_dummies(df_featured[col], prefix=col, drop_first=True)
+                df_featured = pd.concat([df_featured, dummies], axis=1)
+    
+    logger.info(f"Feature engineering complete. New shape: {df_featured.shape}")
+    logger.info(f"New features added: {set(df_featured.columns) - set(df.columns)}")
+    
+    return df_featured
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, hyperparameters: Dict[str, Any]) -> Any:
+    """Train fraud detection model with given hyperparameters.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        hyperparameters: Model hyperparameters
+        
+    Returns:
+        Trained model object with scaler attached
+    """
+    # Validate inputs
+    if X_train.empty or y_train.empty:
+        raise ValueError("Training data cannot be empty")
+    
+    if len(X_train) != len(y_train):
+        raise ValueError("X_train and y_train must have same length")
+    
+    # Select only numeric columns
+    numeric_columns = X_train.select_dtypes(include=[np.number]).columns
+    X_train_numeric = X_train[numeric_columns].copy()
+    
+    # Handle any remaining NaN values
+    X_train_numeric.fillna(0, inplace=True)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train_numeric)
+    
+    # Extract hyperparameters with defaults
+    model_params = {
+        'n_estimators': hyperparameters.get('n_estimators', 100),
+        'max_depth': hyperparameters.get('max_depth', 10),
+        'min_samples_split': hyperparameters.get('min_samples_split', 2),
+        'min_samples_leaf': hyperparameters.get('min_samples_leaf', 1),
+        'max_features': hyperparameters.get('max_features', 'sqrt'),
+        'random_state': hyperparameters.get('random_state', 42),
+        'n_jobs': hyperparameters.get('n_jobs', -1),
+        'class_weight': hyperparameters.get('class_weight', 'balanced')
+    }
+    
+    # Train model
+    logger.info(f"Training RandomForestClassifier with params: {model_params}")
+    model = RandomForestClassifier(**model_params)
+    model.fit(X_train_scaled, y_train)
+    
+    # Attach scaler and feature columns to model for later use
+    model.scaler = scaler
+    model.feature_columns = list(numeric_columns)
+    
+    logger.info("Model training complete")
+    logger.info(f"Feature importances (top 10): {sorted(zip(numeric_columns, model.feature_importances_), key=lambda x: x[1], reverse=True)[:10]}")
+    
+    return model
+
+
+def evaluate_model(model: Any, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance and return metrics.
+    
+    Args:
+        model: Trained model object
+        X_test: Test features
+        y_test: Test labels
+        
+    Returns:
+        Dictionary containing performance metrics
+    """
+    # Prepare test data
+    X_test_numeric = X_test[model.feature_columns].copy()
+    X_test_numeric.fillna(0, inplace=True)
+    X_test_scaled = model.scaler.transform(X_test_numeric)
+    
+    # Make predictions
+    y_pred = model.predict(X_test_scaled)
+    y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+    
+    # Calculate metrics
+    metrics = {
+        'accuracy': float(accuracy_score(y_test, y_pred)),
+        'precision': float(precision_score(y_test, y_pred, zero_division=0)),
+        'recall': float(recall_score(y_test, y_pred, zero_division=0)),
+        'f1_score': float(f1_score(y_test, y_pred, zero_division=0)),
+        'roc_auc': float(roc_auc_score(y_test, y_pred_proba)),
+    }
+    
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    metrics.update({
+        'true_negatives': int(tn),
+        'false_positives': int(fp),
+        'false_negatives': int(fn),
+        'true_positives': int(tp),
+        'specificity': float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0,
+        'false_positive_rate': float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0,
+    })
+    
+    logger.info(f"Model evaluation complete: {metrics}")
+    
+    return metrics
+
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model meets minimum performance thresholds.
+    
+    Args:
+        metrics: Dictionary of model performance metrics
+        thresholds: Dictionary of minimum acceptable thresholds
+        
+    Returns:
+        True if all thresholds are met, False otherwise
+    """
+    validation_passed = True
+    
+    for metric_name, threshold_value in thresholds.items():
+        if metric_name not in metrics:
+            logger.warning(f"Metric '{metric_name}' not found in evaluation results")
+            continue
+        
+        actual_value = metrics[metric_name]
+        
+        if actual_value < threshold_value:
+            logger.error(
+                f"Performance validation failed: {metric_name} = {actual_value:.4f} "
+                f"< threshold {threshold_value:.4f}"
+            )
+            validation_passed = False
+        else:
+            logger.info(
+                f"Performance validation passed: {metric_name} = {actual_value:.4f} "
+                f">= threshold {threshold_value:.4f}"
+            )
+    
+    return validation_passed
+
+
+def check_model_bias(model: Any, X_test: pd.DataFrame, y_test: pd.Series, 
+                     sensitive_features: List[str]) -> Dict[str, Any]:
+    """Check model for bias across sensitive feature groups.
+    
+    Args:
+        model: Trained model object
+        X_test: Test features
+        y_test: Test labels
+        sensitive_features: List of column names representing sensitive attributes
+        
+    Returns:
+        Dictionary containing bias metrics for each sensitive feature
+    """
+    bias_report = {}
+    
+    # Prepare test data
+    X_test_numeric = X_test[model.feature_columns].copy()
+    X_test_numeric.fillna(0, inplace=True)
+    X_test_scaled = model.scaler.transform(X_test_numeric)
+    y_pred = model.predict(X_test_scaled)
+    
+    for feature in sensitive_features:
+        if feature not in X_test.columns:
+            logger.warning(f"Sensitive feature '{feature}' not found in test data")
+            continue
+        
+        feature_bias = {}
+        unique_groups = X_test[feature].unique()
+        
+        for group in unique_groups:
+            group_mask = X_test[feature] == group
+            
+            if group_mask.sum() == 0:
+                continue
+            
+            group_y_test = y_test[group_mask]
+            group_y_pred = y_pred[group_mask]
+            
+            # Calculate metrics for this group
+            group_metrics = {
+                'count': int(group_mask.sum()),
+                'accuracy': float(accuracy_score(group_y_test, group_y_pred)),
+                'precision': float(precision_score(group_y_test, group_y_pred, zero_division=0)),
+                'recall': float(recall_score(group_y_test, group_y_pred, zero_division=0)),
+                'f1_score': float(f1_score(group_y_test, group_y_pred, zero_division=0)),
+            }
+            
+            feature_bias[str(group)] = group_metrics
+        
+        # Calculate disparity metrics
+        if len(feature_bias) >= 2:
+            accuracies = [v['accuracy'] for v in feature_bias.values()]
+            recalls = [v['recall'] for v in feature_bias.values()]
+            precisions = [v['precision'] for v in feature_bias.values()]
+            
+            feature_bias['accuracy_disparity'] = float(max(accuracies) - min(accuracies))
+            feature_bias['recall_disparity'] = float(max(recalls) - min(recalls))
+            feature_bias['precision_disparity'] = float(max(precisions) - min(precisions))
+            
+            # Flag if disparity exceeds 0.1 (10%)
+            feature_bias['bias_detected'] = (
+                feature_bias['accuracy_disparity'] > 0.1 or
+                feature_bias['recall_disparity'] > 0.1
+            )
+        else:
+            feature_bias['bias_detected'] = False
+        
+        bias_report[feature] = feature_bias
+        
+        if feature_bias.get('bias_detected', False):
+            logger.warning(f"Potential bias detected in feature '{feature}'")
+        else:
+            logger.info(f"No significant bias detected in feature '{feature}'")
+    
+    return bias_report
+
+
+def save_model(model: Any, model_path: Path, metadata: Dict[str, Any]) -> None:
+    """Save trained model with metadata to specified path.
+    
+    Args:
+        model: Trained model object
+        model_path: Path where model should be saved
+        metadata: Dictionary containing model metadata
+    """
+    model_path = Path(model_path)
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save model
+    model_file = model_path / 'model.joblib'
+    joblib.dump(model, model_file)
+    logger.info(f"Model saved to {model_file}")
+    
+    # Add timestamp to metadata
+    metadata['saved_at'] = datetime.now().isoformat()
+    metadata['model_file'] = str(model_file)
+    
+    # Save metadata
+    metadata_file = model_path / 'metadata.json'
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    logger.info(f"Metadata saved to {metadata_file}")
+    
+    # Save feature columns
+    feature_info = {
+        'feature_columns': model.feature_columns if hasattr(model, 'feature_columns') else [],
+        'n_features': len(model.feature_columns) if hasattr(model, 'feature_columns') else 0
+    }
+    
+    feature_file = model_path / 'features.json'
+    with open(feature_file, 'w') as f:
+        json.dump(feature_info, f, indent=2)
+    logger.info(f"Feature info saved to {feature_file}")
+
+
+def load_model(model_path: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Load model and metadata from specified path.
+    
+    Args:
+        model_path: Path where model is saved
+        
+    Returns:
+        Tuple of (model, metadata)
+        
+    Raises:
+        FileNotFoundError: If model files don't exist
+    """
+    model_path = Path(model_path)
+    
+    # Load model
+    model_file = model_path / 'model.joblib'
+    if not model_file.exists():
+        raise FileNotFoundError(f"Model file not found: {model_file}")
+    
+    model = joblib.load(model_file)
+    logger.info(f"Model loaded from {model_file}")
+    
+    # Load metadata
+    metadata_file = model_path / 'metadata.json'
+    if metadata_file.exists():
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+        logger.info(f"Metadata loaded from {metadata_file}")
+    else:
+        logger.warning(f"Metadata file not found: {metadata_file}")
+        metadata = {}
+    
+    return model, metadata
+
+
+def version_model(model_path: Path, registry_url: str, version: str) -> str:
+    """Version and register model in model registry.
+    
+    Args:
+        model_path: Path to the model artifacts
+        registry_url: URL of the model registry
+        version: Version string for the model
+        
+    Returns:
+        Registry ID or path of the registered model
+    """
+    model_path = Path(model_path)
+    
+    # Create version info
+    version_info = {
+        'version': version,
+        'registry_url': registry_url,
+        'model_path': str(model_path),
+        'registered_at': datetime.now().isoformat(),
+    }
+    
+    # In a real implementation, this would interact with MLflow, Weights & Biases, etc.
+    # For now, we'll save version info locally
+    registry_path = model_path / 'registry.json'
+    
+    # Load existing registry if it exists
+    if registry_path.exists():
+        with open(registry_path, 'r') as f:
+            registry = json.load(f)
+    else:
+        registry = {'versions': []}
+    
+    # Add new version
+    registry['versions'].append(version_info)
+    registry['latest_version'] = version
+    
+    # Save updated registry
+    with open(registry_path, 'w') as f:
+        json.dump(registry, f, indent=2)
+    
+    registry_id = f"{registry_url}/{version}"
+    logger.info(f"Model versioned and registered: {registry_id}")
+    
+    return registry_id
+
+
+def generate_model_card(model: Any, metrics: Dict[str, float], 
+                       metadata: Dict[str, Any]) -> str:
+    """Generate model card documentation.
+    
+    Args:
+        model: Trained model object
+        metrics: Performance metrics
+        metadata: Model metadata
+        
+    Returns:
+        Model card as a formatted string
+    """
+    model_card = f"""
+# Fraud Detection Model Card
+
+## Model Details
+- **Model Type**: {type(model).__name__}
+- **Version**: {metadata.get('version', 'N/A')}
+- **Created**: {metadata.get('saved_at', 'N/A')}
+- **Framework**: scikit-learn
+
+## Intended Use
+- **Primary Use**: Fraud detection in financial transactions
+- **Primary Users**: Fraud prevention teams, risk analysts
+- **Out-of-Scope Uses**: Should not be used as the sole decision-maker for legal actions
+
+## Training Data
+- **Dataset**: {metadata.get('dataset_name', 'N/A')}
+- **Training Samples**: {metadata.get('n_train_samples', 'N/A')}
+- **Features**: {metadata.get('n_features', 'N/A')}
+- **Class Distribution**: {metadata.get('class_distribution', 'N/A')}
+
+## Performance Metrics
+
+### Overall Performance
+- **Accuracy**: {metrics.get('accuracy', 0):.4f}
+- **Precision**: {metrics.get('precision', 0):.4f}
+- **Recall**: {metrics.get('recall', 0):.4f}
+- **F1 Score**: {metrics.get('f1_score', 0):.4f}
+- **ROC AUC**: {metrics.get('roc_auc', 0):.4f}
+
+### Confusion Matrix
+- **True Positives**: {metrics.get('true_positives', 0)}
+- **False Positives**: {metrics.get('false_positives', 0)}
+- **True Negatives**: {metrics.get('true_negatives', 0)}
+- **False Negatives**: {metrics.get('false_negatives', 0)}
+
+## Ethical Considerations
+- **Bias Testing**: {metadata.get('bias_testing_completed', 'Not specified')}
+- **Fairness Metrics**: {metadata.get('fairness_metrics', 'Not specified')}
+- **Sensitive Features**: {metadata.get('sensitive_features', 'Not specified')}
+
+## Caveats and Recommendations
+- Model performance may degrade over time due to data drift
+- Regular retraining is recommended (at least quarterly)
+- Human review should be incorporated for high-stakes decisions
+- Monitor for bias in production predictions
+
+## Model Maintenance
+- **Retraining Frequency**: {metadata.get('retraining_frequency', 'Quarterly')}
+- **Monitoring**: {metadata.get('monitoring_enabled', 'Yes')}
+- **Owner**: {metadata.get('model_owner', 'ML Team')}
+
+---
+*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+    
+    logger.info("Model card generated")
+    return model_card
+
+
+def run_data_quality_checks(df: pd.DataFrame) -> Dict[str, Any]:
+    """Run comprehensive data quality checks.
+    
+    Args:
+        df: DataFrame to check
+        
+    Returns:
+        Dictionary containing data quality metrics and issues
+    """
+    quality_report = {
+        'total_rows': len(df),
+        'total_columns': len(df.columns),
+        'checks_passed': True,
+        'issues': []
+    }
+    
+    # Check for empty dataframe
+    if df.empty:
+        quality_report['checks_passed'] = False
+        quality_report['issues'].append('DataFrame is empty')
+        return quality_report
+    
+    # Check for missing values
+    missing_values = df.isnull().sum()
+    if missing_values.any():
+        missing_pct = (missing_values / len(df) * 100).round(2)
+        quality_report['missing_values'] = missing_values[missing_values > 0].to_dict()
+        quality_report['missing_percentage'] = missing_pct[missing_pct > 0].to_dict()
+        
+        # Flag if more than 50% missing in any column
+        critical_missing = missing_pct[missing_pct > 50]
+        if not critical_missing.empty:
+            quality_report['checks_passed'] = False
+            quality_report['issues'].append(
+                f"Columns with >50% missing: {critical_missing.to_dict()}"
+            )
+    
+    # Check for duplicates
+    n_duplicates = df.duplicated().sum()
+    if n_duplicates > 0:
+        quality_report['duplicate_rows'] = int(n_duplicates)
+        quality_report['duplicate_percentage'] = float(n_duplicates / len(df) * 100)
+        
+        if n_duplicates / len(df) > 0.1:  # More than 10% duplicates
+            quality_report['issues'].append(
+                f"High duplicate rate: {n_duplicates} ({n_duplicates/len(df)*100:.2f}%)"
+            )
+    
+    # Check for constant columns
+    constant_columns = [col for col in df.columns if df[col].nunique() <= 1]
+    if constant_columns:
+        quality_report['constant_columns'] = constant_columns
+        quality_report['issues'].append(f"Constant columns found: {constant_columns}")
+    
+    # Check for high cardinality in categorical columns
+    categorical_cols = df.select_dtypes(include=['object']).columns
+    high_cardinality = {}
+    for col in categorical_cols:
+        unique_count = df[col].nunique()
+        if unique_count > len(df) * 0.9:  # More than 90% unique
+            high_cardinality[col] = unique_count
+    
+    if high_cardinality:
+        quality_report['high_cardinality_columns'] = high_cardinality
+        quality_report['issues'].append(
+            f"High cardinality categorical columns: {high_cardinality}"
+        )
+    
+    # Check for outliers in numeric columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    outlier_info = {}
+    
+    for col in numeric_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 3 * IQR
+        upper_bound = Q3 + 3 * IQR
+        
+        outliers = ((df[col] < lower_bound) | (df[col] > upper_bound)).sum()
+        if outliers > 0:
+            outlier_info[col] = {
+                'count': int(outliers),
+                'percentage': float(outliers / len(df) * 100)
+            }
+    
+    if outlier_info:
+        quality_report['outliers'] = outlier_info
+    
+    # Check data types
+    quality_report['dtypes'] = df.dtypes.astype(str).to_dict()
+    
+    # Summary statistics for numeric columns
+    if len(numeric_cols) > 0:
+        quality_report['numeric_summary'] = df[numeric_cols].describe().to_dict()
+    
+    logger.info(f"Data quality checks complete. Passed: {quality_report['checks_passed']}")
+    if quality_report['issues']:
+        logger.warning(f"Issues found: {quality_report['issues']}")
+    
+    return quality_report
+
+
+def detect_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame) -> Dict[str, Any]:
+    """Detect data drift between reference and current datasets.
+    
+    Args:
+        reference_data: Reference (baseline) dataset
+        current_data: Current dataset to compare
+        
+    Returns:
+        Dictionary containing drift detection results
+    """
+    drift_report = {
+        'drift_detected': False,
+        'drifted_features': [],
+        'feature_drift_scores': {}
+    }
+    
+    # Get common numeric columns
+    reference_numeric = reference_data.select_dtypes(include=[np.number]).columns
+    current_numeric = current_data.select_dtypes(include=[np.number]).columns
+    common_numeric = list(set(reference_numeric) & set(current_numeric))
+    
+    if not common_numeric:
+        logger.warning("No common numeric columns found for drift detection")
+        return drift_report
+    
+    # Kolmogorov-Smirnov test for each numeric feature
+    for col in common_numeric:
+        ref_values = reference_data[col].dropna()
+        curr_values = current_data[col].dropna()
+        
+        if len(ref_values) == 0 or len(curr_values) == 0:
+            continue
+        
+        # Perform KS test
+        ks_statistic, p_value = stats.ks_2samp(ref_values, curr_values)
+        
+        drift_report['feature_drift_scores'][col] = {
+            'ks_statistic': float(ks_statistic),
+            'p_value': float(p_value),
+            'drift_detected': p_value < 0.05,  # 5% significance level
+            'reference_mean': float(ref_values.mean()),
+            'current_mean': float(curr_values.mean()),
+            'reference_std': float(ref_values.std()),
+            'current_std': float(curr_values.std()),
+        }
+        
+        if p_value < 0.05:
+            drift_report['drifted_features'].append(col)
+            drift_report['drift_detected'] = True
+            logger.warning(
+                f"Drift detected in '{col}': KS={ks_statistic:.4f}, p={p_value:.4f}"
+            )
+    
+    # Check categorical columns using chi-square test
+    reference_categorical = reference_data.select_dtypes(include=['object']).columns
+    current_categorical = current_data.select_dtypes(include=['object']).columns
+    common_categorical = list(set(reference_categorical) & set(current_categorical))
+    
+    for col in common_categorical:
+        ref_counts = reference_data[col].value_counts()
+        curr_counts = current_data[col].value_counts()
+        
+        # Get all unique categories
+        all_categories = set(ref_counts.index) | set(curr_counts.index)
+        
+        # Align counts
+        ref_aligned = [ref_counts.get(cat, 0) for cat in all_categories]
+        curr_aligned = [curr_counts.get(cat, 0) for cat in all_categories]
+        
+        # Chi-square test
+        if sum(ref_aligned) > 0 and sum(curr_aligned) > 0:
+            chi2_stat, p_value = stats.chisquare(
+                f_obs=curr_aligned,
+                f_exp=ref_aligned
+            )
+            
+            drift_report['feature_drift_scores'][col] = {
+                'chi2_statistic': float(chi2_stat),
+                'p_value': float(p_value),
+                'drift_detected': p_value < 0.05,
+            }
+            
+            if p_value < 0.05:
+                drift_report['drifted_features'].append(col)
+                drift_report['drift_detected'] = True
+                logger.warning(
+                    f"Drift detected in categorical '{col}': Chi2={chi2_stat:.4f}, p={p_value:.4f}"
+                )
+    
+    drift_report['n_drifted_features'] = len(drift_report['drifted_features'])
+    drift_report['total_features_checked'] = len(common_numeric) + len(common_categorical)
+    
+    if drift_report['drift_detected']:
+        logger.warning(
+            f"Data drift detected in {drift_report['n_drifted_features']} features"
+        )
+    else:
+        logger.info("No significant data drift detected")
+    
+    return drift_report
+
+
+def run_training_pipeline(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute complete training pipeline.
+    
+    Args:
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Dictionary containing pipeline results and artifacts
+    """
+    logger.info("Starting training pipeline")
+    pipeline_results = {
+        'status': 'success',
+        'timestamp': datetime.now().isoformat(),
+        'config': config
+    }
+    
+    try:
+        # 1. Load data
+        data_path = Path(config['data_path'])
+        df = load_data(data_path)
+        pipeline_results['data_loaded'] = True
+        pipeline_results['n_samples'] = len(df)
+        
+        # 2. Validate schema
+        if 'expected_schema' in config:
+            schema_valid = validate_data_schema(df, config['expected_schema'])
+            pipeline_results['schema_valid'] = schema_valid
+            if not schema_valid:
+                raise ValueError("Data schema validation failed")
+        
+        # 3. Run data quality checks
+        quality_report = run_data_quality_checks(df)
+        pipeline_results['data_quality'] = quality_report
+        if not quality_report['checks_passed'] and config.get('strict_quality', False):
+            raise ValueError("Data quality checks failed")
+        
+        # 4. Preprocess data
+        train_df, test_df = preprocess_data(df)
+        pipeline_results['n_train'] = len(train_df)
+        pipeline_results['n_test'] = len(test_df)
+        
+        # 5. Engineer features
+        train_df = engineer_features(train_df)
+        test_df = engineer_features(test_df)
+        
+        # 6. Prepare features and target
+        target_column = config.get('target_column', 'is_fraud')
+        feature_columns = [col for col in train_df.columns if col != target_column]
+        
+        X_train = train_df[feature_columns]
+        y_train = train_df[target_column]
+        X_test = test_df[feature_columns]
+        y_test = test_df[target_column]
+        
+        # 7. Train model
+        hyperparameters = config.get('hyperparameters', {})
+        model = train_model(X_train, y_train, hyperparameters)
+        pipeline_results['model_trained'] = True
+        
+        # 8. Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        pipeline_results['metrics'] = metrics
+        
+        # 9. Validate performance
+        if 'performance_thresholds' in config:
+            performance_valid = validate_model_performance(
+                metrics,
+                config['performance_thresholds']
+            )
+            pipeline_results['performance_valid'] = performance_valid
+            if not performance_valid:
+                raise ValueError("Model performance below thresholds")
+        
+        # 10. Check bias
+        if 'sensitive_features' in config:
+            bias_report = check_model_bias(
+                model,
+                X_test,
+                y_test,
+                config['sensitive_features']
+            )
+            pipeline_results['bias_report'] = bias_report
+        
+        # 11. Save model
+        model_path = Path(config.get('model_path', 'models/latest'))
+        metadata = {
+            'version': config.get('version', '1.0.0'),
+            'dataset_name': config.get('dataset_name', 'fraud_data'),
+            'n_train_samples': len(train_df),
+            'n_test_samples': len(test_df),
+            'n_features': len(model.feature_columns),
+            'metrics': metrics,
+            'hyperparameters': hyperparameters,
+        }
+        
+        save_model(model, model_path, metadata)
+        pipeline_results['model_saved'] = True
+        pipeline_results['model_path'] = str(model_path)
+        
+        # 12. Generate model card
+        model_card = generate_model_card(model, metrics, metadata)
+        model_card_path = model_path / 'model_card.md'
+        with open(model_card_path, 'w') as f:
+            f.write(model_card)
+        pipeline_results['model_card_path'] = str(model_card_path)
+        
+        logger.info("Training pipeline completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Training pipeline failed: {str(e)}")
+        pipeline_results['status'] = 'failed'
+        pipeline_results['error'] = str(e)
+        raise
+    
+    return pipeline_results
+
+
+def run_validation_pipeline(model_path: Path, test_data_path: Path) -> Dict[str, Any]:
+    """Execute model validation pipeline.
+    
+    Args:
+        model_path: Path to saved model
+        test_data_path: Path to test data
+        
+    Returns:
+        Dictionary containing validation results
+    """
+    logger.info("Starting validation pipeline")
+    validation_results = {
+        'status': 'success',
+        'timestamp': datetime.now().isoformat(),
+    }
+    
+    try:
+        # 1. Load model
+        model, metadata = load_model(model_path)
+        validation_results['model_loaded'] = True
+        validation_results['model_version'] = metadata.get('version', 'unknown')
+        
+        # 2. Load test data
+        test_df = load_data(test_data_path)
+        validation_results['test_data_loaded'] = True
+        validation_results['n_test_samples'] = len(test_df)
+        
+        # 3. Preprocess and engineer features
+        test_df = engineer_features(test_df)
+        
+        # 4. Prepare features and target
+        target_column = 'is_fraud'
+        X_test = test_df.drop(columns=[target_column])
+        y_test = test_df[target_column]
+        
+        # 5. Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        validation_results['metrics'] = metrics
+        
+        # 6. Compare with training metrics
+        if 'metrics' in metadata:
+            training_metrics = metadata['metrics']
+            metric_comparison = {}
+            
+            for metric_name in ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']:
+                if metric_name in metrics and metric_name in training_metrics:
+                    diff = metrics[metric_name] - training_metrics[metric_name]
+                    metric_comparison[metric_name] = {
+                        'training': training_metrics[metric_name],
+                        'validation': metrics[metric_name],
+                        'difference': diff,
+                        'degradation': diff < -0.05  # Flag if >5% degradation
+                    }
+            
+            validation_results['metric_comparison'] = metric_comparison
+        
+        # 7. Data quality checks on test data
+        quality_report = run_data_quality_checks(test_df)
+        validation_results['data_quality'] = quality_report
+        
+        logger.info("Validation pipeline completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Validation pipeline failed: {str(e)}")
+        validation_results['status'] = 'failed'
+        validation_results['error'] = str(e)
+        raise
+    
+    return validation_results
+```

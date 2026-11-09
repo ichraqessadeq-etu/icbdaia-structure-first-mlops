@@ -1,0 +1,187 @@
+Here's the complete implementation of the `pipeline.py` module, following the specified structure:
+
+```python
+import mlflow
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils import resample
+from typing import Tuple
+import numpy as np
+
+def load_data() -> Tuple[pd.DataFrame, pd.Series]:
+    """Load the credit card fraud dataset."""
+    # Assuming a CSV file named 'creditcard.csv' in the current directory
+    data = pd.read_csv('creditcard.csv')
+    X = data.drop('Class', axis=1)
+    y = data['Class']
+    return X, y
+
+def preprocess_data(X: pd.DataFrame, y: pd.Series) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Preprocess the dataset, handling imbalanced classes."""
+    # Normalize the features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Balance the dataset using resampling
+    X_resampled, y_resampled = resample(X_scaled[y == 1],
+                                        y[y == 1],
+                                        replace=True,
+                                        n_samples=X_scaled[y == 0].shape[0],
+                                        random_state=42)
+    X_balanced = np.vstack((X_scaled[y == 0], X_resampled))
+    y_balanced = np.hstack((y[y == 0], y_resampled))
+
+    # Split the data
+    X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+def train_model(X_train: np.ndarray, y_train: np.ndarray) -> RandomForestClassifier:
+    """Train a RandomForestClassifier on the given data."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model: RandomForestClassifier, X_test: np.ndarray, y_test: np.ndarray) -> dict:
+    """Evaluate the model and return performance metrics."""
+    y_pred = model.predict(X_test)
+    report = classification_report(y_test, y_pred, output_dict=True)
+    return report
+
+def log_to_mlflow(model: RandomForestClassifier, metrics: dict):
+    """Log the model and metrics to MLflow."""
+    mlflow.sklearn.log_model(model, "model")
+    mlflow.log_metrics({
+        "precision": metrics['1']['precision'],
+        "recall": metrics['1']['recall'],
+        "f1-score": metrics['1']['f1-score']
+    })
+
+def detect_concept_drift(data: pd.DataFrame) -> bool:
+    """Detect concept drift in the dataset."""
+    # Placeholder for concept drift detection logic
+    return False
+
+def main():
+    """Execute the complete pipeline."""
+    mlflow.start_run()
+
+    # Load and preprocess data
+    X, y = load_data()
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+
+    # Train and evaluate model
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+
+    # Log to MLflow
+    log_to_mlflow(model, metrics)
+
+    # Detect concept drift
+    if detect_concept_drift(X):
+        print("Concept drift detected, retraining model...")
+        main()  # Retrain
+    else:
+        print("No concept drift detected, pipeline completed.")
+
+    mlflow.end_run()
+```
+
+This implementation assumes that the dataset is available as a CSV file named `creditcard.csv`. The `preprocess_data` function includes standard scaling and resampling to handle class imbalance. The pipeline includes logging to MLflow and a placeholder for concept drift detection. Make sure to replace the placeholder with actual drift detection logic as needed.
+
+Let's start by writing the pytest test file for the module you've implemented. We'll cover the main functionalities such as data loading, preprocessing, model training, and evaluation. Additionally, we'll create a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from module_name import load_data, preprocess_data, train_model, evaluate_model, detect_concept_drift
+
+# Mocking the data loading function if needed
+def test_load_data():
+    X, y = load_data()
+    assert isinstance(X, pd.DataFrame), "X should be a DataFrame"
+    assert isinstance(y, pd.Series), "y should be a Series"
+    assert 'Class' not in X.columns, "Class column should not be in features"
+
+def test_preprocess_data():
+    X, y = load_data()
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    assert X_train.shape[0] > 0, "X_train should not be empty"
+    assert X_test.shape[0] > 0, "X_test should not be empty"
+    assert y_train.shape[0] > 0, "y_train should not be empty"
+    assert y_test.shape[0] > 0, "y_test should not be empty"
+    assert X_train.shape[1] == X_test.shape[1], "Feature count should match between train and test sets"
+
+def test_train_model():
+    X, y = load_data()
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier"
+    assert model.n_estimators == 100, "Model should have 100 estimators"
+
+def test_evaluate_model():
+    X, y = load_data()
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert isinstance(metrics, dict), "Metrics should be a dictionary"
+    assert '1' in metrics, "Metrics should contain class '1'"
+    assert 'precision' in metrics['1'], "Metrics should contain precision for class '1'"
+
+def test_detect_concept_drift():
+    X, _ = load_data()
+    drift_detected = detect_concept_drift(X)
+    assert isinstance(drift_detected, bool), "Drift detection should return a boolean"
+    assert not drift_detected, "For now, drift should not be detected"
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/test_pipeline.yml
+
+name: Test Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow pytest
+
+    - name: Run tests
+      run: pytest --disable-warnings
+```
+
+### Explanation
+
+- **Pytest Test File**: This test file includes basic tests for the functions in your pipeline module. It checks the types and important attributes of the outputs to ensure the functions behave correctly.
+  
+- **GitHub Actions Workflow**: The workflow is set to trigger on pushes and pull requests to the `main` branch. It checks out the code, sets up Python, installs necessary dependencies, and runs the tests using pytest. This setup ensures that your pipeline is tested automatically with each change to the codebase.

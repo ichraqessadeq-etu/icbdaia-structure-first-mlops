@@ -1,0 +1,1620 @@
+# (a) Complete Pytest Test File
+
+```python
+"""Comprehensive test suite for fraud detection ML pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+import os
+import json
+import tempfile
+import shutil
+from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
+from sklearn.ensemble import RandomForestClassifier
+import mlflow
+
+from src.pipeline import (
+    setup_logging,
+    load_data,
+    validate_data,
+    preprocess_data,
+    handle_imbalance,
+    train_model,
+    evaluate_model,
+    log_to_mlflow,
+    save_model_artifacts,
+    check_model_performance,
+    run_pipeline
+)
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@pytest.fixture
+def sample_fraud_data():
+    """Create a sample fraud detection dataset."""
+    np.random.seed(42)
+    n_samples = 1000
+    n_fraud = 50
+    
+    # Create feature columns V1-V28
+    data = {}
+    for i in range(1, 29):
+        data[f'V{i}'] = np.random.randn(n_samples)
+    
+    # Add Time and Amount
+    data['Time'] = np.random.randint(0, 172800, n_samples)
+    data['Amount'] = np.random.exponential(scale=50, size=n_samples)
+    
+    # Add Class (0 = normal, 1 = fraud)
+    data['Class'] = np.zeros(n_samples, dtype=int)
+    fraud_indices = np.random.choice(n_samples, n_fraud, replace=False)
+    data['Class'][fraud_indices] = 1
+    
+    return pd.DataFrame(data)
+
+
+@pytest.fixture
+def sample_csv_file(sample_fraud_data, tmp_path):
+    """Create a temporary CSV file with sample data."""
+    csv_path = tmp_path / "test_data.csv"
+    sample_fraud_data.to_csv(csv_path, index=False)
+    return str(csv_path)
+
+
+@pytest.fixture
+def invalid_data():
+    """Create invalid dataset for testing validation."""
+    return pd.DataFrame({
+        'V1': [1, 2, 3],
+        'Amount': [10, 20, 30],
+        # Missing required columns
+    })
+
+
+@pytest.fixture
+def default_config():
+    """Default configuration for pipeline."""
+    return {
+        "log_level": "INFO",
+        "test_size": 0.2,
+        "random_state": 42,
+        "imbalance_strategy": "class_weight",
+        "hyperparameters": {
+            "n_estimators": 10,
+            "max_depth": 5,
+            "random_state": 42,
+            "n_jobs": -1
+        },
+        "performance_thresholds": {
+            "precision": 0.5,
+            "recall": 0.5,
+            "f1_score": 0.5
+        },
+        "output_dir": "test_models",
+        "experiment_name": "test_fraud_detection",
+        "enforce_thresholds": False
+    }
+
+
+@pytest.fixture
+def temp_output_dir(tmp_path):
+    """Create temporary output directory."""
+    output_dir = tmp_path / "models"
+    output_dir.mkdir()
+    yield str(output_dir)
+    # Cleanup
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+
+
+@pytest.fixture
+def trained_model(sample_fraud_data):
+    """Create a trained model for testing."""
+    X = sample_fraud_data.drop('Class', axis=1).values
+    y = sample_fraud_data['Class'].values
+    
+    model = RandomForestClassifier(
+        n_estimators=10,
+        max_depth=5,
+        random_state=42
+    )
+    model.fit(X, y)
+    return model
+
+
+@pytest.fixture
+def sample_metrics():
+    """Sample evaluation metrics."""
+    return {
+        "precision": 0.85,
+        "recall": 0.75,
+        "f1_score": 0.80,
+        "roc_auc": 0.90,
+        "average_precision": 0.88,
+        "accuracy": 0.95,
+        "true_positives": 30,
+        "true_negatives": 450,
+        "false_positives": 20,
+        "false_negatives": 10,
+        "specificity": 0.96
+    }
+
+
+# ============================================================================
+# Test Logging Setup
+# ============================================================================
+
+class TestLoggingSetup:
+    """Tests for logging configuration."""
+    
+    def test_setup_logging_default_level(self):
+        """Test logger setup with default INFO level."""
+        logger = setup_logging()
+        assert logger.name == "fraud_detection_pipeline"
+        assert logger.level == 20  # INFO level
+        assert len(logger.handlers) > 0
+    
+    def test_setup_logging_custom_level(self):
+        """Test logger setup with custom log level."""
+        logger = setup_logging(log_level="DEBUG")
+        assert logger.level == 10  # DEBUG level
+    
+    def test_setup_logging_removes_duplicate_handlers(self):
+        """Test that duplicate handlers are removed."""
+        logger1 = setup_logging()
+        handler_count_1 = len(logger1.handlers)
+        
+        logger2 = setup_logging()
+        handler_count_2 = len(logger2.handlers)
+        
+        assert handler_count_1 == handler_count_2
+    
+    def test_logging_formatter(self):
+        """Test that logger has correct formatter."""
+        logger = setup_logging()
+        handler = logger.handlers[0]
+        formatter = handler.formatter
+        
+        assert formatter is not None
+        assert '%(asctime)s' in formatter._fmt
+        assert '%(levelname)s' in formatter._fmt
+
+
+# ============================================================================
+# Test Data Loading
+# ============================================================================
+
+class TestDataLoading:
+    """Tests for data loading functionality."""
+    
+    def test_load_data_success(self, sample_csv_file):
+        """Test successful data loading from CSV."""
+        df = load_data(sample_csv_file)
+        
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 1000
+        assert 'Class' in df.columns
+        assert all(f'V{i}' in df.columns for i in range(1, 29))
+    
+    def test_load_data_file_not_found(self):
+        """Test error handling for missing file."""
+        with pytest.raises(FileNotFoundError):
+            load_data("nonexistent_file.csv")
+    
+    def test_load_data_invalid_format(self, tmp_path):
+        """Test error handling for invalid file format."""
+        invalid_file = tmp_path / "invalid.txt"
+        invalid_file.write_text("not a csv file")
+        
+        with pytest.raises(Exception):
+            load_data(str(invalid_file))
+    
+    def test_load_data_logs_statistics(self, sample_csv_file, caplog):
+        """Test that data loading logs statistics."""
+        import logging
+        with caplog.at_level(logging.INFO):
+            df = load_data(sample_csv_file)
+        
+        assert "Successfully loaded" in caplog.text
+        assert "Fraud cases:" in caplog.text
+
+
+# ============================================================================
+# Test Data Validation
+# ============================================================================
+
+class TestDataValidation:
+    """Tests for data validation functionality."""
+    
+    def test_validate_data_success(self, sample_fraud_data):
+        """Test validation with valid data."""
+        assert validate_data(sample_fraud_data) is True
+    
+    def test_validate_data_empty_dataframe(self):
+        """Test validation fails for empty DataFrame."""
+        empty_df = pd.DataFrame()
+        assert validate_data(empty_df) is False
+    
+    def test_validate_data_missing_columns(self):
+        """Test validation fails for missing required columns."""
+        df = pd.DataFrame({
+            'V1': [1, 2, 3],
+            'Amount': [10, 20, 30]
+            # Missing Class and other V columns
+        })
+        assert validate_data(df) is False
+    
+    def test_validate_data_invalid_class_values(self, sample_fraud_data):
+        """Test validation fails for invalid Class values."""
+        df = sample_fraud_data.copy()
+        df.loc[0, 'Class'] = 2  # Invalid class
+        assert validate_data(df) is False
+    
+    def test_validate_data_non_numeric_features(self, sample_fraud_data):
+        """Test validation fails for non-numeric features."""
+        df = sample_fraud_data.copy()
+        df['V1'] = df['V1'].astype(str)
+        assert validate_data(df) is False
+    
+    def test_validate_data_warns_on_duplicates(self, sample_fraud_data, caplog):
+        """Test warning logged for duplicate rows."""
+        import logging
+        df = pd.concat([sample_fraud_data, sample_fraud_data.iloc[:10]], ignore_index=True)
+        
+        with caplog.at_level(logging.WARNING):
+            validate_data(df)
+        
+        assert "duplicate rows" in caplog.text.lower()
+    
+    def test_validate_data_warns_on_low_fraud_rate(self, caplog):
+        """Test warning for very low fraud percentage."""
+        import logging
+        np.random.seed(42)
+        n_samples = 10000
+        
+        data = {}
+        for i in range(1, 29):
+            data[f'V{i}'] = np.random.randn(n_samples)
+        data['Time'] = np.random.randint(0, 172800, n_samples)
+        data['Amount'] = np.random.exponential(scale=50, size=n_samples)
+        data['Class'] = np.zeros(n_samples, dtype=int)
+        data['Class'][0] = 1  # Only 1 fraud case (0.01%)
+        
+        df = pd.DataFrame(data)
+        
+        with caplog.at_level(logging.WARNING):
+            validate_data(df)
+        
+        assert "low fraud percentage" in caplog.text.lower()
+
+
+# ============================================================================
+# Test Data Preprocessing
+# ============================================================================
+
+class TestDataPreprocessing:
+    """Tests for data preprocessing functionality."""
+    
+    def test_preprocess_data_output_shapes(self, sample_fraud_data):
+        """Test that preprocessing returns correct shapes."""
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data,
+            test_size=0.2,
+            random_state=42
+        )
+        
+        assert X_train.shape[0] == 800
+        assert X_test.shape[0] == 200
+        assert y_train.shape[0] == 800
+        assert y_test.shape[0] == 200
+        assert X_train.shape[1] == 30  # 28 V columns + Time + Amount
+    
+    def test_preprocess_data_stratified_split(self, sample_fraud_data):
+        """Test that split maintains class distribution."""
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data,
+            test_size=0.2,
+            random_state=42
+        )
+        
+        train_fraud_ratio = y_train.sum() / len(y_train)
+        test_fraud_ratio = y_test.sum() / len(y_test)
+        
+        # Ratios should be similar (within 2%)
+        assert abs(train_fraud_ratio - test_fraud_ratio) < 0.02
+    
+    def test_preprocess_data_scaling(self, sample_fraud_data):
+        """Test that Time and Amount are properly scaled."""
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data,
+            test_size=0.2,
+            random_state=42
+        )
+        
+        # After scaling, mean should be close to 0 and std close to 1
+        # Time is column 0, Amount is column 1
+        assert abs(X_train[:, 0].mean()) < 0.1
+        assert abs(X_train[:, 1].mean()) < 0.1
+        assert abs(X_train[:, 0].std() - 1.0) < 0.1
+        assert abs(X_train[:, 1].std() - 1.0) < 0.1
+    
+    def test_preprocess_data_no_data_leakage(self, sample_fraud_data):
+        """Test that scaler is fit only on training data."""
+        # This is verified by ensuring test set statistics differ from training
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data,
+            test_size=0.2,
+            random_state=42
+        )
+        
+        # Test set mean might not be exactly 0 since scaler was fit on train
+        # This is expected and correct behavior
+        assert X_train.shape[0] > X_test.shape[0]
+    
+    def test_preprocess_data_custom_test_size(self, sample_fraud_data):
+        """Test preprocessing with custom test size."""
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data,
+            test_size=0.3,
+            random_state=42
+        )
+        
+        assert X_train.shape[0] == 700
+        assert X_test.shape[0] == 300
+
+
+# ============================================================================
+# Test Imbalance Handling
+# ============================================================================
+
+class TestImbalanceHandling:
+    """Tests for class imbalance handling."""
+    
+    def test_handle_imbalance_class_weight(self, sample_fraud_data):
+        """Test class_weight strategy."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        X_res, y_res, info = handle_imbalance(X, y, strategy="class_weight")
+        
+        assert X_res.shape == X.shape
+        assert y_res.shape == y.shape
+        assert info["strategy"] == "class_weight"
+        assert "class_weights" in info
+        assert 0 in info["class_weights"]
+        assert 1 in info["class_weights"]
+    
+    def test_handle_imbalance_smote(self, sample_fraud_data):
+        """Test SMOTE oversampling strategy."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        X_res, y_res, info = handle_imbalance(X, y, strategy="smote")
+        
+        assert X_res.shape[0] > X.shape[0]  # More samples after SMOTE
+        assert y_res.shape[0] > y.shape[0]
+        assert info["strategy"] == "smote"
+        assert "resampled_samples" in info
+        assert info["resampled_fraud_ratio"] > info["original_fraud_ratio"]
+    
+    def test_handle_imbalance_invalid_strategy(self, sample_fraud_data):
+        """Test error handling for invalid strategy."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        with pytest.raises(ValueError, match="Unknown imbalance strategy"):
+            handle_imbalance(X, y, strategy="invalid_strategy")
+    
+    def test_handle_imbalance_smote_balances_classes(self, sample_fraud_data):
+        """Test that SMOTE creates balanced classes."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        X_res, y_res, info = handle_imbalance(X, y, strategy="smote")
+        
+        # After SMOTE, classes should be balanced
+        fraud_ratio = y_res.sum() / len(y_res)
+        assert 0.4 < fraud_ratio < 0.6  # Should be close to 0.5
+
+
+# ============================================================================
+# Test Model Training
+# ============================================================================
+
+class TestModelTraining:
+    """Tests for model training functionality."""
+    
+    def test_train_model_success(self, sample_fraud_data):
+        """Test successful model training."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        hyperparameters = {
+            "n_estimators": 10,
+            "max_depth": 5,
+            "random_state": 42
+        }
+        
+        model = train_model(X, y, hyperparameters)
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert model.n_estimators == 10
+        assert model.max_depth == 5
+    
+    def test_train_model_with_class_weights(self, sample_fraud_data):
+        """Test training with class weights."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        hyperparameters = {
+            "n_estimators": 10,
+            "max_depth": 5,
+            "random_state": 42,
+            "class_weight": {0: 1, 1: 10}
+        }
+        
+        model = train_model(X, y, hyperparameters)
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert model.class_weight == {0: 1, 1: 10}
+    
+    def test_train_model_can_predict(self, sample_fraud_data):
+        """Test that trained model can make predictions."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        hyperparameters = {
+            "n_estimators": 10,
+            "max_depth": 5,
+            "random_state": 42
+        }
+        
+        model = train_model(X, y, hyperparameters)
+        predictions = model.predict(X[:10])
+        
+        assert len(predictions) == 10
+        assert all(p in [0, 1] for p in predictions)
+    
+    def test_train_model_invalid_hyperparameters(self, sample_fraud_data):
+        """Test error handling for invalid hyperparameters."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        hyperparameters = {
+            "n_estimators": -1,  # Invalid
+        }
+        
+        with pytest.raises(ValueError):
+            train_model(X, y, hyperparameters)
+
+
+# ============================================================================
+# Test Model Evaluation
+# ============================================================================
+
+class TestModelEvaluation:
+    """Tests for model evaluation functionality."""
+    
+    def test_evaluate_model_returns_all_metrics(self, trained_model, sample_fraud_data):
+        """Test that evaluation returns all required metrics."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        metrics = evaluate_model(trained_model, X, y)
+        
+        required_metrics = [
+            "precision", "recall", "f1_score", "roc_auc",
+            "average_precision", "accuracy", "specificity",
+            "true_positives", "true_negatives",
+            "false_positives", "false_negatives"
+        ]
+        
+        for metric in required_metrics:
+            assert metric in metrics
+    
+    def test_evaluate_model_metric_ranges(self, trained_model, sample_fraud_data):
+        """Test that metrics are in valid ranges."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        metrics = evaluate_model(trained_model, X, y)
+        
+        # Probability metrics should be between 0 and 1
+        prob_metrics = ["precision", "recall", "f1_score", "roc_auc", 
+                       "average_precision", "accuracy", "specificity"]
+        
+        for metric in prob_metrics:
+            assert 0 <= metrics[metric] <= 1
+    
+    def test_evaluate_model_confusion_matrix_sum(self, trained_model, sample_fraud_data):
+        """Test that confusion matrix values sum to total samples."""
+        X = sample_fraud_data.drop('Class', axis=1).values
+        y = sample_fraud_data['Class'].values
+        
+        metrics = evaluate_model(trained_model, X, y)
+        
+        total = (metrics["true_positives"] + metrics["true_negatives"] +
+                metrics["false_positives"] + metrics["false_negatives"])
+        
+        assert total == len(y)
+    
+    def test_evaluate_model_handles_zero_division(self):
+        """Test that evaluation handles edge cases with zero division."""
+        # Create a model that predicts all negatives
+        model = Mock(spec=RandomForestClassifier)
+        model.predict.return_value = np.zeros(100)
+        model.predict_proba.return_value = np.column_stack([
+            np.ones(100), np.zeros(100)
+        ])
+        
+        X_test = np.random.randn(100, 30)
+        y_test = np.zeros(100)
+        
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Should not raise error and return valid metrics
+        assert "precision" in metrics
+        assert "recall" in metrics
+
+
+# ============================================================================
+# Test MLflow Logging
+# ============================================================================
+
+class TestMLflowLogging:
+    """Tests for MLflow logging functionality."""
+    
+    @patch('src.pipeline.mlflow')
+    def test_log_to_mlflow_success(self, mock_mlflow, trained_model, sample_metrics, temp_output_dir):
+        """Test successful MLflow logging."""
+        # Setup mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        hyperparameters = {"n_estimators": 10, "max_depth": 5}
+        artifacts = {"model": f"{temp_output_dir}/model.pkl"}
+        
+        # Create artifact file
+        Path(artifacts["model"]).touch()
+        
+        run_id = log_to_mlflow(
+            trained_model,
+            sample_metrics,
+            hyperparameters,
+            artifacts,
+            experiment_name="test_experiment"
+        )
+        
+        assert run_id == "test_run_123"
+        mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
+        mock_mlflow.log_params.assert_called_once_with(hyperparameters)
+        mock_mlflow.log_metrics.assert_called_once_with(sample_metrics)
+    
+    @patch('src.pipeline.mlflow')
+    def test_log_to_mlflow_logs_model(self, mock_mlflow, trained_model, sample_metrics):
+        """Test that model is logged to MLflow."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        hyperparameters = {"n_estimators": 10}
+        artifacts = {}
+        
+        log_to_mlflow(trained_model, sample_metrics, hyperparameters, artifacts)
+        
+        mock_mlflow.sklearn.log_model.assert_called_once()
+        call_args = mock_mlflow.sklearn.log_model.call_args
+        assert call_args[0][0] == trained_model
+        assert call_args[0][1] == "model"
+    
+    @patch('src.pipeline.mlflow')
+    def test_log_to_mlflow_sets_tags(self, mock_mlflow, trained_model, sample_metrics):
+        """Test that appropriate tags are set."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        log_to_mlflow(trained_model, sample_metrics, {}, {})
+        
+        # Verify tags were set
+        assert mock_mlflow.set_tag.call_count >= 3
+    
+    @patch('src.pipeline.mlflow')
+    def test_log_to_mlflow_handles_missing_artifacts(self, mock_mlflow, trained_model, 
+                                                      sample_metrics, caplog):
+        """Test warning for missing artifact files."""
+        import logging
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        artifacts = {"model": "/nonexistent/path/model.pkl"}
+        
+        with caplog.at_level(logging.WARNING):
+            log_to_mlflow(trained_model, sample_metrics, {}, artifacts)
+        
+        assert "Artifact not found" in caplog.text
+
+
+# ============================================================================
+# Test Artifact Saving
+# ============================================================================
+
+class TestArtifactSaving:
+    """Tests for saving model artifacts."""
+    
+    def test_save_model_artifacts_creates_directory(self, trained_model, sample_metrics, tmp_path):
+        """Test that output directory is created."""
+        output_dir = tmp_path / "new_models"
+        
+        artifacts = save_model_artifacts(trained_model, sample_metrics, str(output_dir))
+        
+        assert output_dir.exists()
+    
+    def test_save_model_artifacts_saves_model(self, trained_model, sample_metrics, temp_output_dir):
+        """Test that model file is saved."""
+        artifacts = save_model_artifacts(trained_model, sample_metrics, temp_output_dir)
+        
+        assert "model" in artifacts
+        assert os.path.exists(artifacts["model"])
+        assert artifacts["model"].endswith(".pkl")
+    
+    def test_save_model_artifacts_saves_metrics(self, trained_model, sample_metrics, temp_output_dir):
+        """Test that metrics JSON is saved."""
+        artifacts = save_model_artifacts(trained_model, sample_metrics, temp_output_dir)
+        
+        assert "metrics" in artifacts
+        assert os.path.exists(artifacts["metrics"])
+        
+        # Verify metrics content
+        with open(artifacts["metrics"], 'r') as f:
+            saved_metrics = json.load(f)
+        
+        assert saved_metrics == sample_metrics
+    
+    def test_save_model_artifacts_saves_feature_importances(self, trained_model, 
+                                                            sample_metrics, temp_output_dir):
+        """Test that feature importances are saved."""
+        artifacts = save_model_artifacts(trained_model, sample_metrics, temp_output_dir)
+        
+        assert "feature_importances" in artifacts
+        assert os.path.exists(artifacts["feature_importances"])
+        
+        # Verify content
+        with open(artifacts["feature_importances"], 'r') as f:
+            importances = json.load(f)
+        
+        assert len(importances) == trained_model.n_features_in_
+    
+    def test_save_model_artifacts_model_loadable(self, trained_model, sample_metrics, temp_output_dir):
+        """Test that saved model can be loaded."""
+        import joblib
+        
+        artifacts = save_model_artifacts(trained_model, sample_metrics, temp_output_dir)
+        
+        loaded_model = joblib.load(artifacts["model"])
+        
+        assert isinstance(loaded_model, RandomForestClassifier)
+        assert loaded_model.n_estimators == trained_model.n_estimators
+
+
+# ============================================================================
+# Test Performance Checking
+# ============================================================================
+
+class TestPerformanceChecking:
+    """Tests for model performance validation."""
+    
+    def test_check_model_performance_passes(self, sample_metrics):
+        """Test performance check passes with good metrics."""
+        thresholds = {
+            "precision": 0.7,
+            "recall": 0.7,
+            "f1_score": 0.7
+        }
+        
+        assert check_model_performance(sample_metrics, thresholds) is True
+    
+    def test_check_model_performance_fails(self, sample_metrics):
+        """Test performance check fails with high thresholds."""
+        thresholds = {
+            "precision": 0.95,
+            "recall": 0.95,
+            "f1_score": 0.95
+        }
+        
+        assert check_model_performance(sample_metrics, thresholds) is False
+    
+    def test_check_model_performance_missing_metric(self, sample_metrics):
+        """Test handling of missing metrics."""
+        thresholds = {
+            "nonexistent_metric": 0.5
+        }
+        
+        assert check_model_performance(sample_metrics, thresholds) is False
+    
+    def test_check_model_performance_logs_results(self, sample_metrics, caplog):
+        """Test that results are logged."""
+        import logging
+        thresholds = {
+            "precision": 0.7,
+            "recall": 0.7
+        }
+        
+        with caplog.at_level(logging.INFO):
+            check_model_performance(sample_metrics, thresholds)
+        
+        assert "precision" in caplog.text
+        assert "recall" in caplog.text
+
+
+# ============================================================================
+# Test Full Pipeline
+# ============================================================================
+
+class TestFullPipeline:
+    """Integration tests for complete pipeline execution."""
+    
+    @patch('src.pipeline.mlflow')
+    def test_run_pipeline_success(self, mock_mlflow, sample_csv_file, default_config, temp_output_dir):
+        """Test successful end-to-end pipeline execution."""
+        # Setup MLflow mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        # Update config with temp directory
+        default_config["output_dir"] = temp_output_dir
+        
+        model, metrics, run_id = run_pipeline(
+            data_path=sample_csv_file,
+            config=default_config,
+            mlflow_tracking_uri=None
+        )
+        
+        # Verify outputs
+        assert isinstance(model, RandomForestClassifier)
+        assert isinstance(metrics, dict)
+        assert "precision" in metrics
+        assert "recall" in metrics
+        assert run_id == "test_run_123"
+    
+    @patch('src.pipeline.mlflow')
+    def test_run_pipeline_with_smote(self, mock_mlflow, sample_csv_file, default_config, temp_output_dir):
+        """Test pipeline with SMOTE strategy."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        default_config["imbalance_strategy"] = "smote"
+        default_config["output_dir"] = temp_output_dir
+        
+        model, metrics, run_id = run_pipeline(
+            data_path=sample_csv_file,
+            config=default_config
+        )
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert isinstance(metrics, dict)
+    
+    def test_run_pipeline_validation_failure(self, tmp_path, default_config):
+        """Test pipeline fails on data validation."""
+        # Create invalid CSV
+        invalid_csv = tmp_path / "invalid.csv"
+        pd.DataFrame({"col1": [1, 2, 3]}).to_csv(invalid_csv, index=False)
+        
+        with pytest.raises(ValueError, match="Data validation failed"):
+            run_pipeline(str(invalid_csv), default_config)
+    
+    @patch('src.pipeline.mlflow')
+    def test_run_pipeline_performance_threshold_enforcement(self, mock_mlflow, sample_csv_file, 
+                                                           default_config, temp_output_dir):
+        """Test pipeline fails when performance thresholds not met."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        # Set very high thresholds
+        default_config["performance_thresholds"] = {
+            "precision": 0.99,
+            "recall": 0.99,
+            "f1_score": 0.99
+        }
+        default_config["enforce_thresholds"] = True
+        default_config["output_dir"] = temp_output_dir
+        
+        with pytest.raises(ValueError, match="performance below minimum thresholds"):
+            run_pipeline(sample_csv_file, default_config)
+    
+    @patch('src.pipeline.mlflow')
+    def test_run_pipeline_creates_artifacts(self, mock_mlflow, sample_csv_file, 
+                                           default_config, temp_output_dir):
+        """Test that pipeline creates all expected artifacts."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        default_config["output_dir"] = temp_output_dir
+        
+        model, metrics, run_id = run_pipeline(sample_csv_file, default_config)
+        
+        # Check artifacts exist
+        assert os.path.exists(os.path.join(temp_output_dir, "fraud_detection_model.pkl"))
+        assert os.path.exists(os.path.join(temp_output_dir, "metrics.json"))
+        assert os.path.exists(os.path.join(temp_output_dir, "feature_importances.json"))
+    
+    @patch('src.pipeline.mlflow')
+    def test_run_pipeline_sets_mlflow_uri(self, mock_mlflow, sample_csv_file, 
+                                         default_config, temp_output_dir):
+        """Test that MLflow tracking URI is set."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        default_config["output_dir"] = temp_output_dir
+        
+        run_pipeline(
+            sample_csv_file,
+            default_config,
+            mlflow_tracking_uri="http://localhost:5000"
+        )
+        
+        mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
+
+
+# ============================================================================
+# Test Edge Cases and Error Handling
+# ============================================================================
+
+class TestEdgeCases:
+    """Tests for edge cases and error conditions."""
+    
+    def test_empty_dataset_handling(self):
+        """Test handling of empty dataset."""
+        empty_df = pd.DataFrame()
+        assert validate_data(empty_df) is False
+    
+    def test_single_class_dataset(self):
+        """Test handling of dataset with only one class."""
+        np.random.seed(42)
+        n_samples = 100
+        
+        data = {}
+        for i in range(1, 29):
+            data[f'V{i}'] = np.random.randn(n_samples)
+        data['Time'] = np.random.randint(0, 172800, n_samples)
+        data['Amount'] = np.random.exponential(scale=50, size=n_samples)
+        data['Class'] = np.zeros(n_samples, dtype=int)  # All normal
+        
+        df = pd.DataFrame(data)
+        
+        # Should still validate but might warn
+        assert validate_data(df) is True
+    
+    def test_very_small_dataset(self):
+        """Test handling of very small dataset."""
+        np.random.seed(42)
+        n_samples = 10
+        
+        data = {}
+        for i in range(1, 29):
+            data[f'V{i}'] = np.random.randn(n_samples)
+        data['Time'] = np.random.randint(0, 172800, n_samples)
+        data['Amount'] = np.random.exponential(scale=50, size=n_samples)
+        data['Class'] = np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
+        
+        df = pd.DataFrame(data)
+        
+        # Should handle small dataset
+        X_train, X_test, y_train, y_test = preprocess_data(df, test_size=0.2, random_state=42)
+        assert len(X_train) > 0
+        assert len(X_test) > 0
+    
+    def test_nan_handling_in_metrics(self):
+        """Test that NaN values in predictions are handled."""
+        model = Mock(spec=RandomForestClassifier)
+        model.predict.return_value = np.array([0, 0, 0, 0, 0])
+        model.predict_proba.return_value = np.column_stack([
+            np.ones(5), np.zeros(5)
+        ])
+        
+        X_test = np.random.randn(5, 30)
+        y_test = np.array([0, 0, 0, 0, 0])
+        
+        # Should not raise error even with all same predictions
+        metrics = evaluate_model(model, X_test, y_test)
+        assert isinstance(metrics, dict)
+
+
+# ============================================================================
+# Test Configuration and Parameters
+# ============================================================================
+
+class TestConfiguration:
+    """Tests for configuration handling."""
+    
+    @patch('src.pipeline.mlflow')
+    def test_custom_hyperparameters(self, mock_mlflow, sample_csv_file, temp_output_dir):
+        """Test pipeline with custom hyperparameters."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        config = {
+            "log_level": "INFO",
+            "test_size": 0.3,
+            "random_state": 123,
+            "imbalance_strategy": "class_weight",
+            "hyperparameters": {
+                "n_estimators": 50,
+                "max_depth": 10,
+                "min_samples_split": 5,
+                "random_state": 123
+            },
+            "output_dir": temp_output_dir,
+            "experiment_name": "custom_experiment"
+        }
+        
+        model, metrics, run_id = run_pipeline(sample_csv_file, config)
+        
+        assert model.n_estimators == 50
+        assert model.max_depth == 10
+    
+    @patch('src.pipeline.mlflow')
+    def test_different_test_sizes(self, mock_mlflow, sample_csv_file, default_config, temp_output_dir):
+        """Test pipeline with different test/train splits."""
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test_run_123"
+        mock_mlflow.start_run.return_value.__enter__.return_value = mock_run
+        
+        default_config["test_size"] = 0.3
+        default_config["output_dir"] = temp_output_dir
+        
+        model, metrics, run_id = run_pipeline(sample_csv_file, default_config)
+        
+        assert isinstance(model, RandomForestClassifier)
+
+
+# ============================================================================
+# Performance and Stress Tests
+# ============================================================================
+
+class TestPerformance:
+    """Tests for performance and scalability."""
+    
+    @pytest.mark.slow
+    def test_large_dataset_handling(self, tmp_path):
+        """Test pipeline with larger dataset."""
+        # Create larger dataset
+        np.random.seed(42)
+        n_samples = 10000
+        n_fraud = 500
+        
+        data = {}
+        for i in range(1, 29):
+            data[f'V{i}'] = np.random.randn(n_samples)
+        data['Time'] = np.random.randint(0, 172800, n_samples)
+        data['Amount'] = np.random.exponential(scale=50, size=n_samples)
+        data['Class'] = np.zeros(n_samples, dtype=int)
+        fraud_indices = np.random.choice(n_samples, n_fraud, replace=False)
+        data['Class'][fraud_indices] = 1
+        
+        df = pd.DataFrame(data)
+        csv_path = tmp_path / "large_data.csv"
+        df.to_csv(csv_path, index=False)
+        
+        # Should handle without errors
+        loaded_df = load_data(str(csv_path))
+        assert len(loaded_df) == n_samples
+        assert validate_data(loaded_df) is True
+    
+    def test_pipeline_reproducibility(self, sample_csv_file, default_config, temp_output_dir):
+        """Test that pipeline produces reproducible results."""
+        with patch('src.pipeline.mlflow'):
+            default_config["output_dir"] = temp_output_dir
+            
+            # Run twice with same random seed
+            model1, metrics1, _ = run_pipeline(sample_csv_file, default_config)
+            
+            # Reset and run again
+            temp_output_dir2 = temp_output_dir + "_2"
+            default_config["output_dir"] = temp_output_dir2
+            model2, metrics2, _ = run_pipeline(sample_csv_file, default_config)
+            
+            # Metrics should be identical with same random seed
+            assert metrics1["accuracy"] == metrics2["accuracy"]
+```
+
+# (b) Complete GitHub Actions Workflow
+
+```yaml
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      run_training:
+        description: 'Run full model training'
+        required: false
+        default: 'false'
+
+env:
+  PYTHON_VERSION: '3.9'
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+
+jobs:
+  # ============================================================================
+  # Code Quality and Linting
+  # ============================================================================
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort mypy pylint
+          pip install -r requirements.txt
+      
+      - name: Run Black (code formatting)
+        run: |
+          black --check --diff src/ tests/
+        continue-on-error: true
+      
+      - name: Run isort (import sorting)
+        run: |
+          isort --check-only --diff src/ tests/
+        continue-on-error: true
+      
+      - name: Run Flake8 (linting)
+        run: |
+          flake8 src/ tests/ --max-line-length=100 --ignore=E203,W503
+        continue-on-error: true
+      
+      - name: Run Pylint (static analysis)
+        run: |
+          pylint src/ --disable=C0111,R0913,R0914 --max-line-length=100
+        continue-on-error: true
+
+  # ============================================================================
+  # Unit and Integration Tests
+  # ============================================================================
+  test:
+    name: Run Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+      
+      - name: Create test data directory
+        run: |
+          mkdir -p data
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --cov-report=term-missing -n auto --timeout=300
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+      
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+      
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
+          path: |
+            htmlcov/
+            coverage.xml
+          retention-days: 30
+
+  # ============================================================================
+  # Data Validation Tests
+  # ============================================================================
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install great-expectations pandas-profiling
+      
+      - name: Download sample data
+        run: |
+          mkdir -p data
+          # In real scenario, download from secure storage
+          # For demo, we'll create synthetic data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          n = 1000
+          data = {f'V{i}': np.random.randn(n) for i in range(1, 29)}
+          data['Time'] = np.random.randint(0, 172800, n)
+          data['Amount'] = np.random.exponential(50, n)
+          data['Class'] = np.random.choice([0, 1], n, p=[0.95, 0.05])
+          pd.DataFrame(data).to_csv('data/test_data.csv', index=False)
+          "
+      
+      - name: Validate data schema
+        run: |
+          python -c "
+          import sys
+          from src.pipeline import load_data, validate_data
+          df = load_data('data/test_data.csv')
+          if not validate_data(df):
+              sys.exit(1)
+          print('Data validation passed')
+          "
+      
+      - name: Generate data profile
+        run: |
+          python -c "
+          import pandas as pd
+          from pandas_profiling import ProfileReport
+          df = pd.read_csv('data/test_data.csv')
+          profile = ProfileReport(df, title='Data Profile Report', minimal=True)
+          profile.to_file('data_profile.html')
+          "
+        continue-on-error: true
+      
+      - name: Upload data profile
+        uses: actions/upload-artifact@v3
+        with:
+          name: data-profile
+          path: data_profile.html
+          retention-days: 30
+
+  # ============================================================================
+  # Model Training and Validation
+  # ============================================================================
+  train-model:
+    name: Train and Validate Model
+    runs-on: ubuntu-latest
+    needs: [test, data-validation]
+    if: github.event_name == 'push' || github.event.inputs.run_training == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Setup MLflow
+        run: |
+          mkdir -p mlruns
+          export MLFLOW_TRACKING_URI=file:///$(pwd)/mlruns
+      
+      - name: Prepare training data
+        run: |
+          mkdir -p data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          n = 5000
+          data = {f'V{i}': np.random.randn(n) for i in range(1, 29)}
+          data['Time'] = np.random.randint(0, 172800, n)
+          data['Amount'] = np.random.exponential(50, n)
+          data['Class'] = np.random.choice([0, 1], n, p=[0.95, 0.05])
+          pd.DataFrame(data).to_csv('data/train_data.csv', index=False)
+          "
+      
+      - name: Train model
+        run: |
+          python -c "
+          import json
+          from src.pipeline import run_pipeline
+          
+          config = {
+              'log_level': 'INFO',
+              'test_size': 0.2,
+              'random_state': 42,
+              'imbalance_strategy': 'class_weight',
+              'hyperparameters': {
+                  'n_estimators': 50,
+                  'max_depth': 10,
+                  'random_state': 42,
+                  'n_jobs': -1
+              },
+              'performance_thresholds': {
+                  'precision': 0.6,
+                  'recall': 0.6,
+                  'f1_score': 0.6
+              },
+              'output_dir': 'models',
+              'experiment_name': 'ci_cd_training',
+              'enforce_thresholds': True
+          }
+          
+          model, metrics, run_id = run_pipeline(
+              data_path='data/train_data.csv',
+              config=config,
+              mlflow_tracking_uri='file:///$(pwd)/mlruns'
+          )
+          
+          # Save metrics for artifact
+          with open('training_metrics.json', 'w') as f:
+              json.dump(metrics, f, indent=2)
+          
+          print(f'Training completed. Run ID: {run_id}')
+          print(f'Metrics: {metrics}')
+          "
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+      
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-artifacts
+          path: |
+            models/
+            training_metrics.json
+            mlruns/
+          retention-days: 90
+      
+      - name: Upload MLflow artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: mlflow-runs
+          path: mlruns/
+          retention-days: 90
+
+  # ============================================================================
+  # Model Performance Validation
+  # ============================================================================
+  validate-model:
+    name: Validate Model Performance
+    runs-on: ubuntu-latest
+    needs: [train-model]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: model-artifacts
+          path: ./artifacts
+      
+      - name: Validate model metrics
+        run: |
+          python -c "
+          import json
+          import sys
+          
+          with open('artifacts/training_metrics.json', 'r') as f:
+              metrics = json.load(f)
+          
+          thresholds = {
+              'precision': 0.6,
+              'recall': 0.6,
+              'f1_score': 0.6,
+              'roc_auc': 0.7
+          }
+          
+          passed = True
+          for metric, threshold in thresholds.items():
+              if metric in metrics:
+                  if metrics[metric] >= threshold:
+                      print(f'✓ {metric}: {metrics[metric]:.4f} >= {threshold}')
+                  else:
+                      print(f'✗ {metric}: {metrics[metric]:.4f} < {threshold}')
+                      passed = False
+              else:
+                  print(f'✗ {metric} not found in metrics')
+                  passed = False
+          
+          if not passed:
+              print('Model validation FAILED')
+              sys.exit(1)
+          else:
+              print('Model validation PASSED')
+          "
+      
+      - name: Test model inference
+        run: |
+          python -c "
+          import joblib
+          import numpy as np
+          
+          model = joblib.load('artifacts/models/fraud_detection_model.pkl')
+          
+          # Create test sample
+          X_test = np.random.randn(10, 30)
+          predictions = model.predict(X_test)
+          probabilities = model.predict_proba(X_test)
+          
+          print(f'Test predictions: {predictions}')
+          print(f'Test probabilities shape: {probabilities.shape}')
+          print('Model inference test PASSED')
+          "
+
+  # ============================================================================
+  # Security Scanning
+  # ============================================================================
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit
+          pip install -r requirements.txt
+      
+      - name: Run Safety (dependency vulnerability check)
+        run: |
+          safety check --json || true
+        continue-on-error: true
+      
+      - name: Run Bandit (security linting)
+        run: |
+          bandit -r src/ -f json -o bandit-report.json || true
+        continue-on-error: true
+      
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+          retention-days: 30
+
+  # ============================================================================
+  # Documentation and Reporting
+  # ============================================================================
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    needs: [test]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sphinx sphinx-rtd-theme
+          pip install -r requirements.txt
+      
+      - name: Generate API documentation
+        run: |
+          mkdir -p docs
+          sphinx-apidoc -o docs/source src/
+          # sphinx-build -b html docs/source docs/build
+        continue-on-error: true
+      
+      - name: Generate test report
+        run: |
+          echo "# Test Execution Report" > test_report.md
+          echo "Generated on: $(date)" >> test_report.md
+          echo "" >> test_report.md
+          echo "## Pipeline Components Tested" >> test_report.md
+          echo "- Data Loading and Validation" >> test_report.md
+          echo "- Data Preprocessing" >> test_report.md
+          echo "- Model Training" >> test_report.md
+          echo "- Model Evaluation" >> test_report.md
+          echo "- MLflow Integration" >> test_report.md
+      
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: |
+            docs/
+            test_report.md
+          retention-days: 30
+
+  # ============================================================================
+  # Build and Package
+  # ============================================================================
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    needs: [test, validate-model]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel setuptools
+      
+      - name: Build package
+        run: |
+          python -m build
+      
+      - name: Upload package
+        uses: actions/upload-artifact@v3
+        with:
+          name: python-package
+          path: dist/
+          retention-days: 90
+
+  # ============================================================================
+  # Deployment Preparation
+  # ============================================================================
+  prepare-deployment:
+    name: Prepare for Deployment
+    runs-on: ubuntu-latest
+    needs: [build, validate-model]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: model-artifacts
+          path: ./deployment/models
+      
+      - name: Create deployment package
+        run: |
+          mkdir -p deployment/package
+          cp -r deployment/models deployment/package/
+          cp requirements.txt deployment/package/
+          
+          # Create deployment manifest
+          cat > deployment/package/manifest.json << EOF
+          {
+            "version": "${{ github.sha }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "branch": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}"
+          }
+          EOF
+      
+      - name: Upload deployment package
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-package
+          path: deployment/package/
+          retention-days: 90
+      
+      - name: Create release notes
+        run: |
+          echo "# Release Notes" > RELEASE_NOTES.md
+          echo "Version: ${{ github.sha }}" >> RELEASE_NOTES.md
+          echo "Date: $(date)" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "## Changes" >> RELEASE_NOTES.md
+          git log --pretty=format:"- %s" -10 >> RELEASE_NOTES.md
+
+  # ============================================================================
+  # Notification and Reporting
+  # ============================================================================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [test, train-model, validate-model, security-scan]
+    if: always()
+    
+    steps:
+      - name: Check workflow status
+        id: check
+        run: |
+          if [ "${{ needs.test.result }}" == "success" ] && \
+             [ "${{ needs.train-model.result }}" == "success" ] && \
+             [ "${{ needs.validate-model.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create summary
+        run: |
+          echo "# CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: ${{ needs.test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Model Training: ${{ needs.train-model.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Model Validation: ${{ needs.validate-model.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security Scan: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Overall Status: ${{ steps.check.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+```

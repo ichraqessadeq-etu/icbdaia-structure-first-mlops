@@ -1,0 +1,200 @@
+Certainly! Below is the complete implementation of the pipeline module for the fraud detection model, following the specified structure and function signatures:
+
+```python
+# fraud_detection/pipeline/__init__.py
+# This file is intentionally left empty to indicate that this directory is a package.
+
+# fraud_detection/pipeline/data_loader.py
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data(file_path: str) -> tuple:
+    """Load and preprocess the dataset from the given file path."""
+    data = pd.read_csv(file_path)
+    X = data.drop('fraud_label', axis=1)
+    y = data['fraud_label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+# fraud_detection/pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train) -> RandomForestClassifier:
+    """Train a RandomForest model on the training data."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# fraud_detection/pipeline/evaluator.py
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model, X_test, y_test) -> dict:
+    """Evaluate the model on the test data and return performance metrics."""
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+
+# fraud_detection/pipeline/mlflow_logger.py
+import mlflow
+from sklearn.ensemble import RandomForestClassifier
+
+def log_to_mlflow(metrics: dict, model: RandomForestClassifier, params: dict) -> None:
+    """Log performance metrics and model parameters to MLflow."""
+    mlflow.start_run()
+    mlflow.log_params(params)
+    mlflow.log_metrics(metrics)
+    mlflow.sklearn.log_model(model, "random_forest_model")
+    mlflow.end_run()
+
+# fraud_detection/pipeline/main.py
+from .data_loader import load_data
+from .model_trainer import train_model
+from .evaluator import evaluate_model
+from .mlflow_logger import log_to_mlflow
+
+def main():
+    """Execute the complete pipeline: data loading, training, evaluation, and logging."""
+    # Load and preprocess data
+    X_train, X_test, y_train, y_test = load_data('data/fraud_data.csv')
+    
+    # Train the model
+    model = train_model(X_train, y_train)
+    
+    # Evaluate the model
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    # Log to MLflow
+    params = {'n_estimators': 100, 'random_state': 42}
+    log_to_mlflow(metrics, model, params)
+
+if __name__ == "__main__":
+    main()
+```
+
+This module includes:
+
+- `data_loader.py` for loading and splitting the dataset.
+- `model_trainer.py` for training a Random Forest model.
+- `evaluator.py` for evaluating the model using various metrics.
+- `mlflow_logger.py` for logging metrics and model details to MLflow.
+- `main.py` to execute the entire pipeline process.
+
+This structure provides a modular and organized approach for building, evaluating, and deploying a machine learning model with CI/CD integration.
+
+Certainly! Below is a pytest test file to test the components of the fraud detection pipeline, followed by a GitHub Actions workflow to automate the testing process.
+
+### (a) Complete pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from fraud_detection.pipeline.data_loader import load_data
+from fraud_detection.pipeline.model_trainer import train_model
+from fraud_detection.pipeline.evaluator import evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+
+# Mock data for testing
+MOCK_DATA = {
+    'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    'feature2': [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    'fraud_label': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+}
+
+@pytest.fixture
+def mock_df():
+    return pd.DataFrame(MOCK_DATA)
+
+def test_load_data(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    
+    assert X_train.shape[0] == 8
+    assert X_test.shape[0] == 2
+    assert y_train.shape[0] == 8
+    assert y_test.shape[0] == 2
+
+def test_train_model(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    model = train_model(X_train, y_train)
+    
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+    assert 0 <= metrics['accuracy'] <= 1
+    assert 0 <= metrics['precision'] <= 1
+    assert 0 <= metrics['recall'] <= 1
+    assert 0 <= metrics['f1_score'] <= 1
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out the code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest mlflow scikit-learn pandas
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+This setup includes:
+
+- **pytest Test File**: This file includes tests for the `load_data`, `train_model`, and `evaluate_model` functions using mock data.
+- **GitHub Actions Workflow**: The workflow automates the testing process on every push or pull request to the `main` branch, setting up the Python environment, installing necessary dependencies, and running the tests with pytest.
+
+Ensure that the directory structure and package imports in your project match those specified in the test file. Adjust the `python-version` and any other configuration as needed for your specific environment.

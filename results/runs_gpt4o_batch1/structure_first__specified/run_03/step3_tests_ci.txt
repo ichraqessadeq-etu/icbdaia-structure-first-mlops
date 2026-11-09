@@ -1,0 +1,90 @@
+Certainly! Below is the complete pytest test file for the provided pipeline module, and a GitHub Actions workflow for automating the testing process.
+
+### (a) Pytest Test File
+
+Save this as `test_pipeline.py`.
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow, detect_concept_drift
+
+def test_load_data():
+    file_path = 'test_data.csv'
+    with patch('pandas.read_csv') as mock_read_csv:
+        mock_read_csv.return_value = pd.DataFrame({'feature1': [1, 2], 'target': [0, 1]})
+        data = load_data(file_path)
+        mock_read_csv.assert_called_once_with(file_path)
+        assert not data.empty
+
+def test_preprocess_data():
+    data = pd.DataFrame({'feature1': [1, 2], 'target': [0, 1]})
+    features, target = preprocess_data(data)
+    assert len(features) == 2
+    assert len(target) == 2
+    assert list(target) == [0, 1]
+
+def test_train_model():
+    X_train = pd.DataFrame({'feature1': [1, 2]})
+    y_train = pd.Series([0, 1])
+    model = train_model(X_train, y_train)
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    X_test = pd.DataFrame({'feature1': [1, 2]})
+    y_test = pd.Series([0, 1])
+    model = MagicMock()
+    model.predict.return_value = [0, 1]
+    accuracy = evaluate_model(model, X_test, y_test)
+    assert accuracy == 1.0
+
+def test_log_to_mlflow():
+    model = MagicMock()
+    accuracy = 0.95
+    with patch('mlflow.start_run'), patch('mlflow.sklearn.log_model'), patch('mlflow.log_metric'), patch('mlflow.end_run'):
+        log_to_mlflow(model, accuracy)
+
+def test_detect_concept_drift():
+    with patch('numpy.random.rand', return_value=0.05):
+        assert detect_concept_drift() == True
+    with patch('numpy.random.rand', return_value=0.15):
+        assert detect_concept_drift() == False
+```
+
+### (b) GitHub Actions Workflow
+
+Save this as `.github/workflows/python-app.yml`.
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow numpy pytest
+
+    - name: Test with pytest
+      run: |
+        pytest test_pipeline.py
+```
+
+This setup will run tests using GitHub Actions whenever there is a push or pull request to the main branch, ensuring the integrity of your pipeline module. Make sure to adjust any paths or module names as necessary for your specific project structure.

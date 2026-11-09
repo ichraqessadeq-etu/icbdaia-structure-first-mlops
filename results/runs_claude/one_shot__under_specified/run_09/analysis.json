@@ -1,0 +1,71 @@
+{
+  "n_python_blocks": 2,
+  "n_parse_ok": 2,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": true,
+  "is_iih": false,
+  "n_tests": 36,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": true,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_estimator",
+            "detail": "RandomForestClassifier(...) called without random_state",
+            "lineno": 219
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_estimator",
+            "detail": "GradientBoostingClassifier(...) called without random_state",
+            "lineno": 221
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": true,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_sample",
+            "detail": ".sample(...) called without random_state",
+            "lineno": 562
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 9,
+  "cost": {
+    "calls": 1,
+    "prompt_tokens": 58,
+    "completion_tokens": 15387,
+    "errors": [],
+    "truncated_calls": 0,
+    "seconds": 165.06
+  }
+}

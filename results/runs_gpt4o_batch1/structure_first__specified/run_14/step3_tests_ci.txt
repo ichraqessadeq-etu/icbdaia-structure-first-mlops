@@ -1,0 +1,123 @@
+(a) Here is the complete pytest test file implementing the tests for your pipeline:
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from src.data_loader import load_data, preprocess_data
+from src.train import train_model, log_model_to_mlflow
+from src.evaluate import evaluate_model
+from src.drift_detection import detect_concept_drift
+
+def test_load_data():
+    """Test the data loading functionality."""
+    data = load_data('sample_data.csv')
+    assert data is not None
+    assert not data.empty
+
+def test_preprocess_data():
+    """Test the data preprocessing functionality."""
+    data = load_data('sample_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+
+def test_train_model():
+    """Test the model training process."""
+    data = load_data('sample_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    assert model is not None
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    """Test the model evaluation metrics."""
+    data = load_data('sample_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert metrics['accuracy'] >= 0
+    assert metrics['precision'] >= 0
+    assert metrics['recall'] >= 0
+    assert metrics['f1_score'] >= 0
+
+def test_detect_concept_drift():
+    """Test the concept drift detection function."""
+    data = load_data('sample_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    drift_detected = detect_concept_drift(X_test, X_train)
+    assert isinstance(drift_detected, bool)
+
+@pytest.mark.skip(reason="MLflow logging requires a setup environment.")
+def test_log_model_to_mlflow():
+    """Test MLflow logging functionality - requires setup environment."""
+    data = load_data('sample_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    params = {"n_estimators": 100, "random_state": 42}
+    log_model_to_mlflow(model, params, metrics)
+```
+
+(b) Here is the complete GitHub Actions workflow configuration:
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+
+    - name: Run linter
+      run: |
+        flake8 src/ tests/
+```
+
+This configuration sets up a continuous integration pipeline that runs on pushes and pull requests to the `main` branch. It includes jobs for testing with pytest and linting with flake8. Make sure to adjust `requirements.txt` as needed to include all necessary dependencies, including MLflow if tests for logging are to be executed.

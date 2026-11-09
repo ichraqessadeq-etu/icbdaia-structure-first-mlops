@@ -1,0 +1,102 @@
+Certainly! Below is the complete `pytest` test file that tests the various functions within your pipeline module, followed by a GitHub Actions workflow configuration for continuous integration.
+
+### (a) Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.data_preprocessing import load_data, clean_data
+from fraud_detection.pipeline.feature_engineering import generate_features
+from fraud_detection.pipeline.model_training import train_model
+from fraud_detection.pipeline.model_evaluation import evaluate_model
+
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'feature1': [1, 2, 3, 4, 5, 6],
+        'feature2': [10, 20, 30, 40, 50, 60],
+        'label': [0, 1, 0, 1, 0, 1]
+    })
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    file_path = tmp_path / "sample.csv"
+    sample_df = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})
+    sample_df.to_csv(file_path, index=False)
+
+    # Test loading data
+    loaded_df = load_data(file_path)
+    pd.testing.assert_frame_equal(sample_df, loaded_df)
+
+def test_clean_data(sample_data):
+    # Add duplicates and missing values
+    sample_data.loc[6] = [None, None, 1]
+    sample_data = sample_data.append(sample_data.iloc[0])
+
+    cleaned_data = clean_data(sample_data)
+
+    assert cleaned_data.isnull().sum().sum() == 0  # No missing values
+    assert cleaned_data.duplicated().sum() == 0    # No duplicates
+
+def test_generate_features(sample_data):
+    features = generate_features(sample_data)
+    assert features.shape[1] == sample_data.shape[1] - 1  # One less than original due to label
+    assert not features.isnull().values.any()            # No NaN values
+
+def test_train_model(sample_data):
+    features = generate_features(sample_data)
+    labels = sample_data['label']
+    model = train_model(features, labels)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    features = generate_features(sample_data)
+    labels = sample_data['label']
+    model = train_model(features, labels)
+    
+    metrics = evaluate_model(model, features, labels)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: pytest tests
+```
+
+This setup should cover basic test scenarios for your pipeline functions and ensure that every push or pull request to the `main` branch is tested using GitHub Actions. Adjust the Python version and packages as needed for your specific environment.

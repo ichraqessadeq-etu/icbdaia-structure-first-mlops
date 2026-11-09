@@ -1,0 +1,112 @@
+Below are the complete pytest test file and GitHub Actions workflow as requested.
+
+### (a) Pytest Test File
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from pipeline.data_loader import load_data
+from pipeline.model_trainer import train_model
+from pipeline.evaluator import evaluate_model
+from pipeline.utils import detect_concept_drift
+
+@pytest.fixture
+def sample_data():
+    """Fixture for creating a small sample dataset."""
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0]
+    })
+    return data
+
+def test_load_data(sample_data):
+    """Test the data loading and splitting function."""
+    sample_data.to_csv('test_data.csv', index=False)
+    X_train, X_test, y_train, y_test = load_data('test_data.csv')
+    assert len(X_train) + len(X_test) == len(sample_data) - 1  # One sample is dropped for test size
+    assert len(y_train) + len(y_test) == len(sample_data) - 1
+
+def test_train_model(sample_data):
+    """Test the model training function."""
+    X_train = sample_data.drop(columns=['target'])
+    y_train = sample_data['target']
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    """Test the model evaluation function."""
+    X_train = sample_data.drop(columns=['target'])
+    y_train = sample_data['target']
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    # Using the same data for testing for simplicity
+    metrics = evaluate_model(model, X_train, y_train)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+
+def test_detect_concept_drift():
+    """Test the concept drift detection function."""
+    drift_detected = detect_concept_drift()
+    assert isinstance(drift_detected, bool)
+    assert not drift_detected  # Since the placeholder always returns False
+
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Test with pytest
+      run: |
+        pytest --maxfail=1 --disable-warnings
+
+    - name: Display test results
+      run: |
+        pytest --maxfail=1 --disable-warnings --junitxml=test-results.xml
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: test-results.xml
+```
+
+This setup includes a pytest test suite that verifies the functionality of the pipeline components and a GitHub Actions workflow that automates the testing process on every push and pull request to the main branch. The workflow installs dependencies, runs the tests, and uploads the test results as an artifact.

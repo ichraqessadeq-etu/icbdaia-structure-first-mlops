@@ -1,0 +1,134 @@
+### (a) Pytest Test File
+
+Below is a complete pytest test file to test the various components of the pipeline module. This includes tests for data loading, cleaning, feature engineering, model training, evaluation, and deployment.
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.data_preprocess import load_data, clean_data, split_data
+from fraud_detection.pipeline.feature_engineering import generate_features, select_features
+from fraud_detection.pipeline.model_training import train_model, save_model
+from fraud_detection.pipeline.model_evaluation import evaluate_model, generate_report
+from fraud_detection.pipeline.deployment import deploy_model
+
+@pytest.fixture
+def sample_data():
+    """Fixture for sample data."""
+    data = {
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(tmp_path):
+    """Test the data loading function."""
+    filepath = tmp_path / "sample.csv"
+    sample_data = "feature1,feature2,target\n1,5,0\n2,4,1\n"
+    filepath.write_text(sample_data)
+    
+    data = load_data(str(filepath))
+    assert not data.empty
+    assert list(data.columns) == ['feature1', 'feature2', 'target']
+
+def test_clean_data(sample_data):
+    """Test the data cleaning function."""
+    data = sample_data.copy()
+    data.loc[5] = [None, None, None]  # Add a row with NaNs
+    cleaned_data = clean_data(data)
+    assert cleaned_data.shape[0] == 5  # One row should be dropped
+    assert not cleaned_data.isnull().values.any()  # No NaNs should remain
+
+def test_split_data(sample_data):
+    """Test the data splitting function."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+
+def test_generate_features(sample_data):
+    """Test the feature generation function."""
+    X = sample_data.drop(columns=['target'])
+    scaled_data = generate_features(X)
+    assert scaled_data.shape == X.shape
+
+def test_select_features(sample_data):
+    """Test the feature selection function."""
+    X = sample_data.drop(columns=['target'])
+    y = sample_data['target']
+    selected_features = select_features(X, y)
+    assert selected_features.shape[1] <= X.shape[1]
+
+def test_train_model(sample_data):
+    """Test the model training function."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model(X_train, y_train)
+    assert model is not None
+
+def test_evaluate_model(sample_data):
+    """Test the model evaluation function."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model(X_train, y_train)
+    evaluation_results = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in evaluation_results
+    assert 'report' in evaluation_results
+
+def test_generate_report():
+    """Test the report generation function."""
+    evaluation_results = {'accuracy': 0.8, 'report': "Sample Report"}
+    report = generate_report(evaluation_results)
+    assert "Accuracy: 0.8" in report
+
+def test_deploy_model():
+    """Test the model deployment function."""
+    model = RandomForestClassifier()
+    deploy_model(model, platform="local")
+    # Check if the file exists
+    assert (Path('deployed_model.pkl').exists())
+```
+
+### (b) GitHub Actions Workflow
+
+Below is a GitHub Actions workflow file to automate testing using the pytest framework.
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+This workflow will run on every push and pull request to the main branch. It checks out the repository, sets up Python, installs necessary dependencies, and runs the tests using pytest.

@@ -1,0 +1,121 @@
+{
+  "n_python_blocks": 7,
+  "n_parse_ok": 7,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": false,
+  "is_iih": false,
+  "n_tests": 63,
+  "complete": true,
+  "uses_mlflow": false,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": true,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 9,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 26277,
+    "completion_tokens": 45039,
+    "errors": [],
+    "truncated_calls": 0,
+    "seconds": 489.74
+  }
+}

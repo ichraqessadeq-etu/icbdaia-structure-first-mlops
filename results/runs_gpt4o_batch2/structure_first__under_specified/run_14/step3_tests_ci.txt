@@ -1,0 +1,124 @@
+Certainly! Below is a complete Pytest test file for the implemented pipeline module followed by a GitHub Actions workflow configuration to automate the tests.
+
+### Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.data_preprocessing import load_data, clean_data, feature_engineering
+from fraud_detection.pipeline.model_training import split_data, train_model, save_model
+from fraud_detection.pipeline.model_evaluation import load_model, evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+import os
+
+@pytest.fixture
+def sample_data():
+    """Fixture for creating a sample dataframe."""
+    data = {
+        'feature1': [1, 2, 3, 4, 5, 100],  # Include an outlier
+        'feature2': [2, 3, 4, 5, 6, 200],  # Include an outlier
+        'target': [0, 1, 0, 1, 0, 1]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(tmp_path):
+    """Test data loading."""
+    # Create a temporary CSV file
+    file_path = tmp_path / "test_data.csv"
+    df = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
+    df.to_csv(file_path, index=False)
+
+    # Test loading the data
+    loaded_df = load_data(str(file_path))
+    pd.testing.assert_frame_equal(df, loaded_df)
+
+def test_clean_data(sample_data):
+    """Test data cleaning."""
+    cleaned_df = clean_data(sample_data)
+    assert cleaned_df.shape[0] == 4  # Expect outliers to be removed
+
+def test_feature_engineering(sample_data):
+    """Test feature engineering."""
+    engineered_df = feature_engineering(sample_data)
+    assert 'feature_sum' in engineered_df.columns
+
+def test_split_data(sample_data):
+    """Test data splitting."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, 'target')
+    assert len(X_train) + len(X_test) == 6
+    assert len(y_train) + len(y_test) == 6
+
+def test_train_model(sample_data):
+    """Test model training."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, 'target')
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_save_and_load_model(sample_data, tmp_path):
+    """Test saving and loading model."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, 'target')
+    model = train_model(X_train, y_train)
+    model_path = tmp_path / "model.joblib"
+    save_model(model, str(model_path))
+    loaded_model = load_model(str(model_path))
+    assert isinstance(loaded_model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    """Test model evaluation."""
+    X_train, X_test, y_train, y_test = split_data(sample_data, 'target')
+    model = train_model(X_train, y_train)
+    performance = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in performance
+    assert 'precision' in performance
+    assert 'recall' in performance
+```
+
+### GitHub Actions Workflow
+
+```yaml
+# .github/workflows/main.yml
+
+name: Python application
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Test with pytest
+      run: |
+        pytest tests/ --cov=fraud_detection --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v2
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-upload
+```
+
+This setup tests the functions in your pipeline using Pytest, and the GitHub Actions workflow automates the testing process each time code is pushed or a pull request is opened on the `main` branch.

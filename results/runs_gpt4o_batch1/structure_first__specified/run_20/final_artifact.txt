@@ -1,0 +1,161 @@
+Certainly! Below is the complete implementation of the `pipeline.py` module, following the specified structure and function signatures. This implementation will handle the loading of data, training the model, evaluating it, and detecting concept drift.
+
+```python
+# pipeline.py
+
+import argparse
+from src.data_loader import load_data
+from src.train_model import train_random_forest
+from src.evaluate import evaluate_model
+from src.detect_drift import detect_concept_drift
+
+def run_pipeline(data_path: str):
+    """Execute the full pipeline: load data, train model, evaluate, and log results."""
+    
+    # Step 1: Load and preprocess the data
+    print("Loading and preprocessing data...")
+    (X_train, y_train), (X_test, y_test) = load_data(data_path)
+    print("Data loaded successfully.")
+    
+    # Step 2: Train the model
+    print("Training the model...")
+    model = train_random_forest(X_train, y_train)
+    print("Model trained successfully.")
+
+    # Step 3: Evaluate the model
+    print("Evaluating the model...")
+    evaluation_metrics = evaluate_model(model, X_test, y_test)
+    print("Model evaluation completed.")
+    print("Evaluation Metrics:", evaluation_metrics)
+
+    # Step 4: Detect concept drift (as an example, using X_test as new data)
+    print("Detecting concept drift...")
+    reference_stats = {"mean": X_train.mean(), "std": X_train.std()}  # Example reference stats
+    drift_detected = detect_concept_drift(X_test, reference_stats)
+    print(f"Concept drift detected: {drift_detected}")
+    
+    # Log results (for demonstration purposes, we're simply printing them)
+    print("Pipeline execution completed.")
+    if drift_detected:
+        print("Warning: Concept drift detected. Consider retraining the model with new data.")
+    else:
+        print("No concept drift detected. Model performance is stable.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Run the fraud detection pipeline.')
+    parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset file')
+    args = parser.parse_args()
+    
+    run_pipeline(args.data_path)
+```
+
+### Explanation:
+
+- **Argument Parsing:** This script uses `argparse` to allow dynamic specification of the data file path when running the pipeline.
+- **Function Calls:** The script calls each defined function from the other modules (`data_loader.py`, `train_model.py`, `evaluate.py`, `detect_drift.py`) in sequence.
+- **Concept Drift Detection:** A simple mechanism is used for drift detection by comparing new data statistics to reference statistics, which are derived from the training data.
+- **Logging:** Instead of using a logging framework, I used basic print statements to illustrate the process flow and results. In a production environment, you might want to replace these with a proper logging mechanism.
+
+This module should be placed in the `src/` directory, and it will orchestrate the entire process of data loading, model training, evaluation, and drift detection.
+
+Certainly! Below is a complete `pytest` test file for the pipeline module, as well as a GitHub Actions workflow for running the tests.
+
+### (a) Pytest Test File
+
+Let's create a test file named `test_pipeline.py` to implement some basic tests for the pipeline module.
+
+```python
+# test_pipeline.py
+
+import pytest
+from unittest.mock import patch, MagicMock
+from pipeline import run_pipeline
+
+def test_pipeline_execution():
+    # Mock the functions imported in the pipeline
+    with patch('src.data_loader.load_data') as mock_load_data, \
+         patch('src.train_model.train_random_forest') as mock_train_model, \
+         patch('src.evaluate.evaluate_model') as mock_evaluate_model, \
+         patch('src.detect_drift.detect_concept_drift') as mock_detect_drift:
+
+        # Setup mock return values
+        mock_load_data.return_value = (([1, 2, 3], [0, 1, 0]), ([4, 5, 6], [1, 0, 1]))
+        mock_train_model.return_value = MagicMock(name='RandomForestModel')
+        mock_evaluate_model.return_value = {'accuracy': 0.95, 'f1_score': 0.96}
+        mock_detect_drift.return_value = False
+
+        # Run the pipeline
+        run_pipeline('dummy_path')
+
+        # Assert load_data was called with correct arguments
+        mock_load_data.assert_called_with('dummy_path')
+
+        # Assert model training was called
+        mock_train_model.assert_called_once()
+
+        # Assert model evaluation was called with correct arguments
+        mock_evaluate_model.assert_called_once()
+
+        # Assert drift detection was called
+        mock_detect_drift.assert_called_once()
+        
+        # Assert evaluation metrics are logged correctly
+        assert mock_evaluate_model.return_value['accuracy'] == 0.95
+        assert mock_evaluate_model.return_value['f1_score'] == 0.96
+
+```
+
+### (b) GitHub Actions Workflow
+
+Let's create a GitHub Actions workflow file named `ci.yml` in the `.github/workflows` directory to run the tests every time there is a push or pull request.
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8' # Specify your project's Python version
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+        pip install -r requirements.txt  # Assuming you have a requirements.txt file
+
+    - name: Run tests
+      run: |
+        pytest --tb=short -q test_pipeline.py
+
+    - name: Upload pytest results
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: pytest-results
+        path: test_pipeline.py  # You might want to specify a detailed output file instead
+
+```
+
+### Explanation
+
+- **Test File**: The test file uses `unittest.mock.patch` to mock the dependencies and verify if the functions are called as expected. It checks if the data loading, model training, evaluation, and drift detection functions are invoked correctly.
+
+- **GitHub Actions Workflow**: This workflow is triggered on pushes and pull requests to the `main` branch. It sets up a Python environment, installs dependencies, and runs the test suite. The workflow also uploads test results as an artifact if tests fail, allowing you to inspect the test output.

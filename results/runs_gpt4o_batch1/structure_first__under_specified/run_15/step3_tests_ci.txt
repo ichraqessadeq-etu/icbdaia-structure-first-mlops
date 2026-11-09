@@ -1,0 +1,118 @@
+Certainly! Below are the implementations for the pytest test file and the GitHub Actions workflow file. These are designed to test the pipeline modules and automate the testing process through continuous integration.
+
+### (a) Pytest Test File
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline.data_preprocessing import load_data, clean_data, feature_engineering
+from pipeline.model_training import split_data, train_model
+from pipeline.model_evaluation import evaluate_model
+from pipeline.model_deployment import save_model, load_model
+import os
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [0.5, 0.7, 0.8, 0.6],
+        'feature2': [1.5, 1.7, 1.8, 1.6],
+        'target': [0, 1, 0, 1]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data():
+    df = load_data('tests/sample_data.csv')
+    assert not df.empty
+
+def test_clean_data(sample_data):
+    df_clean = clean_data(sample_data)
+    assert df_clean.isnull().sum().sum() == 0
+
+def test_feature_engineering(sample_data):
+    df_fe = feature_engineering(sample_data.drop(columns=['target']))
+    assert df_fe.mean().round(6).all() == 0
+    assert df_fe.std().round(6).all() == 1
+
+def test_split_data(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.25, random_state=42)
+    assert len(X_train) == 3
+    assert len(X_test) == 1
+
+def test_train_model(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.25, random_state=42)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.25, random_state=42)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+
+def test_save_and_load_model(sample_data, tmp_path):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.25, random_state=42)
+    model = train_model(X_train, y_train)
+    model_path = os.path.join(tmp_path, 'model.joblib')
+    save_model(model, model_path)
+    loaded_model = load_model(model_path)
+    assert isinstance(loaded_model, RandomForestClassifier)
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn pytest joblib
+
+    - name: Test with pytest
+      run: |
+        pytest
+```
+
+### Explanation
+
+1. **Pytest Test File** (`test_pipeline.py`):
+   - **Fixtures**: Used for sample data setup.
+   - **Tests**: Each function tests a specific component of the pipeline, ensuring correct behavior for loading, cleaning, engineering, splitting, training, evaluating, and saving/loading the model.
+   - **Assertions**: Check conditions expected from each function to ensure they operate correctly.
+
+2. **GitHub Actions Workflow** (`python-app.yml`):
+   - **Trigger**: Runs on pushes and pull requests to the `main` branch.
+   - **Jobs**:
+     - **Checkout**: Retrieves the code from the repository.
+     - **Set up Python**: Installs Python 3.8 environment.
+     - **Install Dependencies**: Installs necessary Python packages.
+     - **Testing**: Runs the test suite using pytest to validate the pipeline's functionality. 
+
+This setup will ensure continuous testing of your pipeline every time changes are pushed to the repository, enhancing code reliability and quality.

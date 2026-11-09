@@ -1,0 +1,166 @@
+Here's a complete setup for a CI/CD pipeline for a fraud detection model using scikit-learn, MLflow, pytest, and GitHub Actions. This setup assumes that you have already set up MLflow tracking server and GitHub repository.
+
+### 1. Python Pipeline Script
+
+```python
+# pipeline.py
+
+import os
+import logging
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+import mlflow
+import mlflow.sklearn
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+DATA_PATH = 'data/creditcard.csv'
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
+
+def load_data(data_path):
+    try:
+        df = pd.read_csv(data_path)
+        logger.info("Data loaded successfully.")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load data: {e}")
+        raise
+
+def preprocess_data(df):
+    try:
+        X = df.drop('Class', axis=1)
+        y = df['Class']
+        return train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y)
+    except Exception as e:
+        logger.error(f"Data preprocessing failed: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=RANDOM_STATE)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed.")
+        return model
+    except Exception as e:
+        logger.error(f"Model training failed: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        report = classification_report(y_test, predictions)
+        logger.info(f"Model evaluation completed with accuracy: {accuracy}")
+        return accuracy, report
+    except Exception as e:
+        logger.error(f"Model evaluation failed: {e}")
+        raise
+
+def log_experiment(model, accuracy, report):
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.log_param("model_type", "RandomForestClassifier")
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.sklearn.log_model(model, "model")
+            logger.info("Experiment logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Logging to MLflow failed: {e}")
+        raise
+
+def main():
+    df = load_data(DATA_PATH)
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    model = train_model(X_train, y_train)
+    accuracy, report = evaluate_model(model, X_test, y_test)
+    log_experiment(model, accuracy, report)
+
+if __name__ == '__main__':
+    main()
+```
+
+### 2. Pytest Test File
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, preprocess_data, train_model
+
+def test_load_data():
+    df = load_data('data/creditcard.csv')
+    assert isinstance(df, pd.DataFrame)
+    assert 'Class' in df.columns
+    
+def test_preprocess_data():
+    df = load_data('data/creditcard.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+    
+def test_train_model():
+    df = load_data('data/creditcard.csv')
+    X_train, _, y_train, _ = preprocess_data(df)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, 'predict')
+```
+
+### 3. GitHub Actions YAML Workflow
+
+```yaml
+# .github/workflows/ci-cd.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 0 * * *"  # Every day at midnight
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest mlflow scikit-learn pandas
+
+    - name: Run Tests
+      run: |
+        pytest test_pipeline.py
+
+    - name: Run Pipeline
+      run: |
+        python pipeline.py
+```
+
+This setup includes a Python script for data loading, preprocessing, model training, evaluation, and experiment logging to MLflow, a test suite with three tests using pytest, and a GitHub Actions workflow for continuous integration and deployment. The pipeline is triggered on pushes to the main branch, pull requests to the main branch, and a scheduled run every day at midnight, as well as manual dispatches. Make sure to adjust paths and dependencies as needed and ensure that your MLflow server is correctly configured to receive logs from your pipeline.

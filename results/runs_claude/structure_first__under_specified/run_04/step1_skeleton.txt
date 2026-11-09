@@ -1,0 +1,484 @@
+# Fraud Detection Model CI/CD Pipeline - Structure
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ml-pipeline.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   └── config.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py
+│   └── fixtures.py
+├── models/
+│   └── .gitkeep
+├── data/
+│   ├── raw/
+│   └── processed/
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.py
+└── README.md
+```
+
+## Pipeline Module Structure
+
+```python
+# src/pipeline.py
+
+from typing import Tuple, Dict, Any
+import pandas as pd
+from sklearn.base import BaseEstimator
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load raw fraud detection data from specified path."""
+    ...
+
+def validate_data_schema(df: pd.DataFrame, schema: Dict[str, Any]) -> bool:
+    """Validate that dataframe matches expected schema and data types."""
+    ...
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply preprocessing transformations including missing value handling and feature engineering."""
+    ...
+
+def detect_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame, threshold: float = 0.05) -> Dict[str, Any]:
+    """Detect statistical drift between reference and current datasets."""
+    ...
+
+def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data into train and test sets with stratification on fraud label."""
+    ...
+
+def balance_dataset(X: pd.DataFrame, y: pd.Series, strategy: str = "smote") -> Tuple[pd.DataFrame, pd.Series]:
+    """Balance imbalanced fraud dataset using specified strategy."""
+    ...
+
+def extract_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Extract and engineer features for fraud detection."""
+    ...
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, hyperparameters: Dict[str, Any]) -> BaseEstimator:
+    """Train fraud detection model with given hyperparameters."""
+    ...
+
+def evaluate_model(model: BaseEstimator, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance using fraud-specific metrics (precision, recall, F1, AUC-ROC)."""
+    ...
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model metrics meet minimum performance thresholds."""
+    ...
+
+def compare_models(challenger_metrics: Dict[str, float], champion_metrics: Dict[str, float]) -> Dict[str, Any]:
+    """Compare challenger model against champion model for deployment decision."""
+    ...
+
+def save_model(model: BaseEstimator, model_path: str, metadata: Dict[str, Any]) -> None:
+    """Save trained model with versioning and metadata."""
+    ...
+
+def load_model(model_path: str) -> Tuple[BaseEstimator, Dict[str, Any]]:
+    """Load trained model and associated metadata."""
+    ...
+
+def generate_model_card(model: BaseEstimator, metrics: Dict[str, float], metadata: Dict[str, Any]) -> str:
+    """Generate model card documentation with performance metrics and metadata."""
+    ...
+
+def log_experiment(experiment_name: str, params: Dict[str, Any], metrics: Dict[str, float]) -> None:
+    """Log experiment parameters and metrics to tracking system."""
+    ...
+
+def run_pipeline(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute end-to-end ML pipeline for fraud detection model."""
+    ...
+```
+
+```python
+# src/config.py
+
+from typing import Dict, Any
+from pathlib import Path
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load pipeline configuration from YAML file."""
+    ...
+
+def get_default_config() -> Dict[str, Any]:
+    """Return default pipeline configuration."""
+    ...
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """Validate configuration parameters."""
+    ...
+```
+
+## Test File Structure
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from src.pipeline import *
+
+def test_load_data_success():
+    """Test successful data loading from valid CSV file."""
+    ...
+
+def test_load_data_file_not_found():
+    """Test that FileNotFoundError is raised when data file doesn't exist."""
+    ...
+
+def test_validate_data_schema_valid():
+    """Test schema validation passes with correct data types and columns."""
+    ...
+
+def test_validate_data_schema_missing_columns():
+    """Test schema validation fails when required columns are missing."""
+    ...
+
+def test_validate_data_schema_wrong_types():
+    """Test schema validation fails when column types are incorrect."""
+    ...
+
+def test_preprocess_data_handles_missing_values():
+    """Test preprocessing correctly handles missing values."""
+    ...
+
+def test_preprocess_data_removes_duplicates():
+    """Test preprocessing removes duplicate records."""
+    ...
+
+def test_detect_data_drift_no_drift():
+    """Test drift detection returns no drift when data is similar."""
+    ...
+
+def test_detect_data_drift_detected():
+    """Test drift detection identifies significant distribution changes."""
+    ...
+
+def test_split_data_correct_proportions():
+    """Test data splitting maintains correct train/test proportions."""
+    ...
+
+def test_split_data_stratification():
+    """Test data splitting maintains class distribution in both sets."""
+    ...
+
+def test_balance_dataset_smote():
+    """Test SMOTE balancing increases minority class samples."""
+    ...
+
+def test_balance_dataset_undersample():
+    """Test undersampling reduces majority class samples."""
+    ...
+
+def test_extract_features_creates_expected_columns():
+    """Test feature extraction creates all expected feature columns."""
+    ...
+
+def test_extract_features_no_data_leakage():
+    """Test feature engineering doesn't leak target information."""
+    ...
+
+def test_train_model_returns_fitted_model():
+    """Test model training returns a fitted estimator."""
+    ...
+
+def test_train_model_with_hyperparameters():
+    """Test model training applies specified hyperparameters."""
+    ...
+
+def test_evaluate_model_returns_all_metrics():
+    """Test evaluation returns all required metrics (precision, recall, F1, AUC)."""
+    ...
+
+def test_evaluate_model_metrics_in_valid_range():
+    """Test all evaluation metrics are between 0 and 1."""
+    ...
+
+def test_validate_model_performance_passes():
+    """Test performance validation passes when metrics exceed thresholds."""
+    ...
+
+def test_validate_model_performance_fails():
+    """Test performance validation fails when metrics below thresholds."""
+    ...
+
+def test_compare_models_challenger_better():
+    """Test model comparison correctly identifies superior challenger model."""
+    ...
+
+def test_compare_models_champion_better():
+    """Test model comparison retains champion when challenger is inferior."""
+    ...
+
+def test_save_model_creates_file():
+    """Test model saving creates file at specified path."""
+    ...
+
+def test_save_model_includes_metadata():
+    """Test saved model includes all metadata."""
+    ...
+
+def test_load_model_restores_correctly():
+    """Test model loading restores model and metadata correctly."""
+    ...
+
+def test_load_model_file_not_found():
+    """Test model loading raises error when file doesn't exist."""
+    ...
+
+def test_generate_model_card_contains_metrics():
+    """Test model card includes all performance metrics."""
+    ...
+
+def test_generate_model_card_contains_metadata():
+    """Test model card includes model metadata and versioning info."""
+    ...
+
+def test_log_experiment_records_params():
+    """Test experiment logging records all parameters."""
+    ...
+
+def test_log_experiment_records_metrics():
+    """Test experiment logging records all metrics."""
+    ...
+
+def test_run_pipeline_end_to_end():
+    """Test complete pipeline execution from data loading to model saving."""
+    ...
+
+def test_run_pipeline_with_invalid_config():
+    """Test pipeline fails gracefully with invalid configuration."""
+    ...
+
+def test_config_load_valid_yaml():
+    """Test configuration loading from valid YAML file."""
+    ...
+
+def test_config_validation_success():
+    """Test configuration validation passes with valid parameters."""
+    ...
+
+def test_config_validation_failure():
+    """Test configuration validation fails with invalid parameters."""
+    ...
+```
+
+```python
+# tests/fixtures.py
+
+import pytest
+import pandas as pd
+import numpy as np
+
+@pytest.fixture
+def sample_fraud_data():
+    """Create sample fraud detection dataset for testing."""
+    ...
+
+@pytest.fixture
+def sample_config():
+    """Create sample pipeline configuration."""
+    ...
+
+@pytest.fixture
+def trained_model():
+    """Create a pre-trained model for testing."""
+    ...
+
+@pytest.fixture
+def sample_schema():
+    """Create sample data schema for validation."""
+    ...
+
+@pytest.fixture
+def temp_model_path(tmp_path):
+    """Create temporary path for model saving/loading tests."""
+    ...
+```
+
+## GitHub Actions Workflow Structure
+
+```yaml
+# .github/workflows/ml-pipeline.yml
+
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly retraining
+
+env:
+  PYTHON_VERSION: '3.9'
+  MODEL_REGISTRY: 's3://fraud-models'
+
+jobs:
+  
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Run black formatter check
+      - name: Run flake8 linter
+      - name: Run isort import check
+      - name: Run mypy type checking
+      - name: Run bandit security scan
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Run pytest with coverage
+      - name: Upload coverage to Codecov
+      - name: Check coverage threshold
+
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download latest training data
+      - name: Validate data schema
+      - name: Check data quality metrics
+      - name: Detect data drift
+      - name: Generate data report
+
+  model-training:
+    name: Model Training
+    runs-on: ubuntu-latest
+    needs: [unit-tests, data-validation]
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download training data
+      - name: Run training pipeline
+      - name: Log experiment to MLflow
+      - name: Save model artifacts
+      - name: Upload model to artifact storage
+
+  model-evaluation:
+    name: Model Evaluation
+    runs-on: ubuntu-latest
+    needs: model-training
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Download trained model
+      - name: Download test data
+      - name: Evaluate model performance
+      - name: Validate performance thresholds
+      - name: Compare with champion model
+      - name: Generate evaluation report
+      - name: Upload metrics
+
+  model-testing:
+    name: Model Testing
+    runs-on: ubuntu-latest
+    needs: model-training
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Download trained model
+      - name: Run model inference tests
+      - name: Test model serialization
+      - name: Test prediction latency
+      - name: Test batch prediction
+      - name: Validate output format
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout code
+      - name: Run Trivy vulnerability scan
+      - name: Scan dependencies for vulnerabilities
+      - name: Check for secrets in code
+      - name: Generate security report
+
+  build-container:
+    name: Build Docker Container
+    runs-on: ubuntu-latest
+    needs: [model-evaluation, model-testing]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Set up Docker Buildx
+      - name: Login to container registry
+      - name: Download model artifacts
+      - name: Build Docker image
+      - name: Scan image for vulnerabilities
+      - name: Push image to registry
+      - name: Tag image with version
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-container
+    environment: staging
+    steps:
+      - name: Checkout code
+      - name: Configure AWS credentials
+      - name: Download model from registry
+      - name: Deploy to staging endpoint
+      - name: Run smoke tests
+      - name: Validate endpoint health
+      - name: Run integration tests
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Configure AWS credentials
+      - name: Download approved model
+      - name: Deploy canary release
+      - name: Monitor canary metrics
+      - name: Promote to full production
+      - name: Update model registry
+      - name: Generate model card
+      - name: Notify stakeholders
+
+  monitoring-setup:
+    name: Setup Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    steps:
+      - name: Checkout code
+      - name: Configure monitoring dashboards
+      - name: Set up performance alerts
+      - name: Set up drift detection alerts
+      - name: Configure logging
+      - name: Verify monitoring endpoints
+```
+
+---
+
+**Structure complete.** Ready for Step 2: implementation upon your approval.

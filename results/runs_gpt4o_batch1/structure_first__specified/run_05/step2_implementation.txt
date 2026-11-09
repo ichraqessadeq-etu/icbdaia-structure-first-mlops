@@ -1,0 +1,43 @@
+```python
+# src/pipeline.py
+
+from src.data_loader import load_data, preprocess_data, detect_concept_drift
+from src.model_trainer import train_model, save_model
+from src.evaluator import evaluate_model, log_to_mlflow
+
+def main() -> None:
+    """Execute the entire pipeline: loading data, training model, evaluating, and logging."""
+
+    # Step 1: Load and preprocess the data
+    file_path = 'path/to/your/dataset.csv'  # Replace with the actual file path
+    data = load_data(file_path)
+    preprocessed_data = preprocess_data(data)
+
+    # Step 2: Detect concept drift
+    drift_detected = detect_concept_drift()
+    if not drift_detected:
+        print("No concept drift detected. Skipping model retraining.")
+        return
+
+    # Step 3: Train the model
+    model = train_model(preprocessed_data)
+
+    # Step 4: Save the model
+    model_save_path = 'path/to/save/your/model.pkl'  # Replace with the actual save path
+    save_model(model, model_save_path)
+
+    # Step 5: Evaluate the model
+    test_data = load_data('path/to/your/test_dataset.csv')  # Replace with the actual test data file path
+    preprocessed_test_data = preprocess_data(test_data)
+    evaluation_metrics = evaluate_model(model, preprocessed_test_data)
+
+    # Step 6: Log the results to MLflow
+    log_to_mlflow(evaluation_metrics, model)
+
+    print("Pipeline execution completed successfully!")
+
+if __name__ == "__main__":
+    main()
+```
+
+This implementation of the `pipeline.py` module adheres to the specified structure and leverages the functions provided by the other modules to orchestrate the entire pipeline process. The main function coordinates the loading, preprocessing, drift detection, model training, model saving, evaluation, and logging steps. Adjust the file paths as needed to suit your environment.

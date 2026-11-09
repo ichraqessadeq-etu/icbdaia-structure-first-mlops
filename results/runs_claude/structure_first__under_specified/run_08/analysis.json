@@ -1,0 +1,51 @@
+{
+  "n_python_blocks": 2,
+  "n_parse_ok": 2,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": false,
+  "is_iih": false,
+  "n_tests": 43,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": true,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 8,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 21990,
+    "completion_tokens": 37430,
+    "errors": [],
+    "truncated_calls": 0,
+    "seconds": 403.47
+  }
+}

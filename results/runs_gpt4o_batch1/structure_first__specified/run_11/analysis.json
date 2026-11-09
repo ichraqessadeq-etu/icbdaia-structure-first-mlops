@@ -1,0 +1,106 @@
+{
+  "n_python_blocks": 6,
+  "n_parse_ok": 6,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": false,
+  "is_iih": false,
+  "n_tests": 3,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": false,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 11,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 1625,
+    "completion_tokens": 2267,
+    "errors": [],
+    "seconds": 16.12
+  }
+}

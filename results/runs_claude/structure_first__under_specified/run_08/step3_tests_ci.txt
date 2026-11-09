@@ -1,0 +1,1702 @@
+# (a) Complete Pytest Test File
+
+```python
+# tests/test_pipeline.py
+"""Comprehensive test suite for fraud detection MLOps pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import json
+import tempfile
+import shutil
+from unittest.mock import Mock, patch, MagicMock
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+import joblib
+
+from src.pipeline import (
+    validate_data_pipeline,
+    run_training_pipeline,
+    generate_evaluation_report,
+    register_model,
+    promote_model_to_stage,
+    deploy_to_staging,
+    deploy_to_production,
+)
+from src.pipeline.data_validation import (
+    validate_schema,
+    check_data_quality,
+    validate_feature_distributions,
+    check_target_balance,
+)
+from src.pipeline.model_training import (
+    prepare_features,
+    create_model,
+    train_model,
+    save_model_artifacts,
+)
+from src.pipeline.model_evaluation import (
+    calculate_classification_metrics,
+    evaluate_at_thresholds,
+    calculate_business_metrics,
+    compare_with_baseline,
+)
+from src.pipeline.model_registry import (
+    get_latest_model_version,
+    compare_model_versions,
+    archive_old_models,
+)
+from src.pipeline.deployment import (
+    build_model_container,
+    validate_deployment_endpoint,
+    run_smoke_tests,
+    rollback_deployment,
+)
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@pytest.fixture
+def sample_data():
+    """Create sample fraud detection dataset."""
+    np.random.seed(42)
+    n_samples = 1000
+    
+    data = pd.DataFrame({
+        'transaction_id': range(n_samples),
+        'amount': np.random.exponential(100, n_samples),
+        'merchant_category': np.random.choice(['retail', 'online', 'restaurant', 'gas'], n_samples),
+        'transaction_hour': np.random.randint(0, 24, n_samples),
+        'days_since_last_transaction': np.random.exponential(5, n_samples),
+        'num_transactions_24h': np.random.poisson(3, n_samples),
+        'avg_transaction_amount': np.random.exponential(80, n_samples),
+        'is_international': np.random.choice([0, 1], n_samples, p=[0.9, 0.1]),
+        'is_fraud': np.random.choice([0, 1], n_samples, p=[0.95, 0.05])
+    })
+    
+    return data
+
+
+@pytest.fixture
+def expected_schema():
+    """Define expected data schema."""
+    return {
+        'transaction_id': 'numeric',
+        'amount': 'numeric',
+        'merchant_category': 'categorical',
+        'transaction_hour': 'numeric',
+        'days_since_last_transaction': 'numeric',
+        'num_transactions_24h': 'numeric',
+        'avg_transaction_amount': 'numeric',
+        'is_international': 'numeric',
+        'is_fraud': 'numeric'
+    }
+
+
+@pytest.fixture
+def reference_stats(sample_data):
+    """Create reference statistics for drift detection."""
+    numeric_cols = sample_data.select_dtypes(include=[np.number]).columns
+    
+    stats = {
+        'drift_threshold': 0.05,
+        'features': {}
+    }
+    
+    for col in numeric_cols:
+        if col != 'is_fraud':
+            stats['features'][col] = {
+                'mean': float(sample_data[col].mean()),
+                'std': float(sample_data[col].std())
+            }
+    
+    # Add categorical distribution
+    stats['features']['merchant_category'] = {
+        'distribution': sample_data['merchant_category'].value_counts(normalize=True).to_dict()
+    }
+    
+    return stats
+
+
+@pytest.fixture
+def temp_dir():
+    """Create temporary directory for test artifacts."""
+    temp_path = tempfile.mkdtemp()
+    yield temp_path
+    shutil.rmtree(temp_path)
+
+
+@pytest.fixture
+def trained_model(sample_data):
+    """Create a trained model for testing."""
+    X = sample_data.drop(columns=['is_fraud', 'transaction_id'])
+    y = sample_data['is_fraud']
+    
+    # Encode categorical
+    X_encoded = X.copy()
+    X_encoded['merchant_category'] = X_encoded['merchant_category'].astype('category').cat.codes
+    
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    model.fit(X_encoded, y)
+    
+    return model
+
+
+# ============================================================================
+# Data Validation Tests
+# ============================================================================
+
+class TestDataValidation:
+    """Test suite for data validation module."""
+    
+    def test_validate_schema_success(self, sample_data, expected_schema):
+        """Test successful schema validation."""
+        result = validate_schema(sample_data, expected_schema)
+        assert result is True
+    
+    def test_validate_schema_missing_column(self, sample_data, expected_schema):
+        """Test schema validation with missing column."""
+        data_missing_col = sample_data.drop(columns=['amount'])
+        result = validate_schema(data_missing_col, expected_schema)
+        assert result is False
+    
+    def test_validate_schema_wrong_type(self, sample_data, expected_schema):
+        """Test schema validation with wrong data type."""
+        data_wrong_type = sample_data.copy()
+        data_wrong_type['amount'] = data_wrong_type['amount'].astype(str)
+        result = validate_schema(data_wrong_type, expected_schema)
+        assert result is False
+    
+    def test_check_data_quality(self, sample_data):
+        """Test data quality check."""
+        quality_metrics = check_data_quality(sample_data)
+        
+        assert 'total_rows' in quality_metrics
+        assert quality_metrics['total_rows'] == len(sample_data)
+        assert 'quality_score' in quality_metrics
+        assert 0 <= quality_metrics['quality_score'] <= 100
+        assert 'missing_values' in quality_metrics
+        assert 'outliers' in quality_metrics
+    
+    def test_check_data_quality_with_missing(self, sample_data):
+        """Test data quality check with missing values."""
+        data_with_missing = sample_data.copy()
+        data_with_missing.loc[0:10, 'amount'] = np.nan
+        
+        quality_metrics = check_data_quality(data_with_missing)
+        assert quality_metrics['missing_values']['amount'] > 0
+        assert quality_metrics['quality_score'] < 100
+    
+    def test_validate_feature_distributions_no_drift(self, sample_data, reference_stats):
+        """Test feature distribution validation with no drift."""
+        result = validate_feature_distributions(sample_data, reference_stats)
+        assert result is True
+    
+    def test_validate_feature_distributions_with_drift(self, sample_data, reference_stats):
+        """Test feature distribution validation with drift."""
+        drifted_data = sample_data.copy()
+        drifted_data['amount'] = drifted_data['amount'] * 10  # Significant drift
+        
+        result = validate_feature_distributions(drifted_data, reference_stats)
+        assert result is False
+    
+    def test_check_target_balance(self, sample_data):
+        """Test target balance check."""
+        balance_metrics = check_target_balance(sample_data, 'is_fraud')
+        
+        assert 'total_samples' in balance_metrics
+        assert 'class_counts' in balance_metrics
+        assert 'imbalance_ratio' in balance_metrics
+        assert balance_metrics['total_samples'] == len(sample_data)
+    
+    def test_check_target_balance_invalid_column(self, sample_data):
+        """Test target balance check with invalid column."""
+        with pytest.raises(ValueError):
+            check_target_balance(sample_data, 'nonexistent_column')
+    
+    def test_validate_data_pipeline_success(self, sample_data, expected_schema, reference_stats, temp_dir):
+        """Test complete data validation pipeline."""
+        data_path = Path(temp_dir) / 'test_data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        config = {
+            'expected_schema': expected_schema,
+            'reference_stats': reference_stats,
+            'target_column': 'is_fraud',
+            'quality_threshold': 70.0,
+            'max_imbalance_ratio': 100.0
+        }
+        
+        validated_data, results = validate_data_pipeline(str(data_path), config)
+        
+        assert results['validation_passed'] is True
+        assert results['schema_valid'] is True
+        assert len(validated_data) == len(sample_data)
+    
+    def test_validate_data_pipeline_parquet(self, sample_data, expected_schema, temp_dir):
+        """Test data validation pipeline with parquet format."""
+        data_path = Path(temp_dir) / 'test_data.parquet'
+        sample_data.to_parquet(data_path, index=False)
+        
+        config = {
+            'expected_schema': expected_schema,
+            'target_column': 'is_fraud'
+        }
+        
+        validated_data, results = validate_data_pipeline(str(data_path), config)
+        assert len(validated_data) == len(sample_data)
+
+
+# ============================================================================
+# Model Training Tests
+# ============================================================================
+
+class TestModelTraining:
+    """Test suite for model training module."""
+    
+    def test_prepare_features(self, sample_data):
+        """Test feature preparation."""
+        config = {
+            'target_column': 'is_fraud',
+            'exclude_columns': ['transaction_id'],
+            'missing_strategy': 'drop'
+        }
+        
+        X, y = prepare_features(sample_data, config)
+        
+        assert len(X) == len(y)
+        assert 'is_fraud' not in X.columns
+        assert 'transaction_id' not in X.columns
+        assert len(X.columns) > 0
+    
+    def test_prepare_features_with_scaling(self, sample_data):
+        """Test feature preparation with scaling."""
+        config = {
+            'target_column': 'is_fraud',
+            'exclude_columns': ['transaction_id'],
+            'scale_features': True
+        }
+        
+        X, y = prepare_features(sample_data, config)
+        
+        # Check that numeric features are scaled
+        for col in X.select_dtypes(include=[np.number]).columns:
+            assert abs(X[col].mean()) < 1.0  # Should be close to 0
+    
+    def test_create_model_random_forest(self):
+        """Test random forest model creation."""
+        config = {
+            'model_type': 'random_forest',
+            'model_params': {'n_estimators': 50, 'max_depth': 10},
+            'random_state': 42
+        }
+        
+        model = create_model(config)
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert model.n_estimators == 50
+        assert model.max_depth == 10
+    
+    def test_create_model_logistic_regression(self):
+        """Test logistic regression model creation."""
+        config = {
+            'model_type': 'logistic_regression',
+            'model_params': {'max_iter': 1000},
+            'random_state': 42
+        }
+        
+        model = create_model(config)
+        
+        assert isinstance(model, LogisticRegression)
+        assert model.max_iter == 1000
+    
+    def test_create_model_invalid_type(self):
+        """Test model creation with invalid type."""
+        config = {
+            'model_type': 'invalid_model',
+            'random_state': 42
+        }
+        
+        with pytest.raises(ValueError):
+            create_model(config)
+    
+    def test_train_model(self, sample_data):
+        """Test model training."""
+        X = sample_data.drop(columns=['is_fraud', 'transaction_id'])
+        X['merchant_category'] = X['merchant_category'].astype('category').cat.codes
+        y = sample_data['is_fraud']
+        
+        model = RandomForestClassifier(n_estimators=10, random_state=42)
+        config = {}
+        
+        trained_model = train_model(X, y, model, config)
+        
+        assert hasattr(trained_model, 'predict')
+        score = trained_model.score(X, y)
+        assert score > 0.5  # Should have reasonable accuracy
+    
+    def test_save_model_artifacts(self, trained_model, temp_dir):
+        """Test saving model artifacts."""
+        feature_names = ['feature1', 'feature2', 'feature3']
+        
+        save_model_artifacts(trained_model, feature_names, temp_dir)
+        
+        # Check that files were created
+        assert (Path(temp_dir) / 'model.joblib').exists()
+        assert (Path(temp_dir) / 'feature_names.json').exists()
+        assert (Path(temp_dir) / 'metadata.json').exists()
+        
+        # Verify model can be loaded
+        loaded_model = joblib.load(Path(temp_dir) / 'model.joblib')
+        assert isinstance(loaded_model, RandomForestClassifier)
+    
+    def test_run_training_pipeline(self, sample_data, temp_dir):
+        """Test complete training pipeline."""
+        data_path = Path(temp_dir) / 'train_data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        config = {
+            'target_column': 'is_fraud',
+            'exclude_columns': ['transaction_id'],
+            'model_type': 'random_forest',
+            'model_params': {'n_estimators': 10, 'max_depth': 5},
+            'validation_split': 0.2,
+            'random_state': 42,
+            'output_path': str(Path(temp_dir) / 'models')
+        }
+        
+        results = run_training_pipeline(str(data_path), config)
+        
+        assert results['success'] is True
+        assert results['training_samples'] > 0
+        assert results['validation_samples'] > 0
+        assert 'train_accuracy' in results
+        assert 'validation_accuracy' in results
+        assert Path(results['model_path']).exists()
+
+
+# ============================================================================
+# Model Evaluation Tests
+# ============================================================================
+
+class TestModelEvaluation:
+    """Test suite for model evaluation module."""
+    
+    def test_calculate_classification_metrics(self):
+        """Test classification metrics calculation."""
+        y_true = pd.Series([0, 0, 1, 1, 0, 1, 1, 0])
+        y_pred = pd.Series([0, 0, 1, 0, 0, 1, 1, 0])
+        y_pred_proba = pd.Series([0.1, 0.2, 0.9, 0.4, 0.1, 0.8, 0.95, 0.15])
+        
+        metrics = calculate_classification_metrics(y_true, y_pred, y_pred_proba)
+        
+        assert 'accuracy' in metrics
+        assert 'precision' in metrics
+        assert 'recall' in metrics
+        assert 'f1_score' in metrics
+        assert 'roc_auc' in metrics
+        assert 0 <= metrics['accuracy'] <= 1
+        assert 0 <= metrics['f1_score'] <= 1
+    
+    def test_evaluate_at_thresholds(self):
+        """Test evaluation at multiple thresholds."""
+        y_true = pd.Series([0, 0, 1, 1, 0, 1, 1, 0] * 10)
+        y_pred_proba = pd.Series([0.1, 0.2, 0.9, 0.4, 0.1, 0.8, 0.95, 0.15] * 10)
+        
+        thresholds = [0.3, 0.5, 0.7]
+        results_df = evaluate_at_thresholds(y_true, y_pred_proba, thresholds)
+        
+        assert len(results_df) == len(thresholds)
+        assert 'threshold' in results_df.columns
+        assert 'precision' in results_df.columns
+        assert 'recall' in results_df.columns
+    
+    def test_calculate_business_metrics(self):
+        """Test business metrics calculation."""
+        y_true = pd.Series([0, 0, 1, 1, 0, 1, 1, 0])
+        y_pred = pd.Series([0, 0, 1, 0, 0, 1, 1, 0])
+        transaction_amounts = pd.Series([100, 200, 500, 300, 150, 400, 600, 250])
+        
+        business_metrics = calculate_business_metrics(y_true, y_pred, transaction_amounts)
+        
+        assert 'total_fraud_amount' in business_metrics
+        assert 'detected_fraud_amount' in business_metrics
+        assert 'missed_fraud_amount' in business_metrics
+        assert 'fraud_detection_rate' in business_metrics
+        assert 'net_benefit' in business_metrics
+    
+    def test_compare_with_baseline_pass(self):
+        """Test baseline comparison that passes."""
+        current_metrics = {
+            'f1_score': 0.85,
+            'roc_auc': 0.90,
+            'precision': 0.82,
+            'recall': 0.88
+        }
+        
+        baseline_metrics = {
+            'f1_score': 0.80,
+            'roc_auc': 0.85,
+            'precision': 0.78,
+            'recall': 0.82
+        }
+        
+        result = compare_with_baseline(current_metrics, baseline_metrics, tolerance=0.05)
+        assert result is True
+    
+    def test_compare_with_baseline_fail(self):
+        """Test baseline comparison that fails."""
+        current_metrics = {
+            'f1_score': 0.70,
+            'roc_auc': 0.75,
+            'precision': 0.68,
+            'recall': 0.72
+        }
+        
+        baseline_metrics = {
+            'f1_score': 0.80,
+            'roc_auc': 0.85,
+            'precision': 0.78,
+            'recall': 0.82
+        }
+        
+        result = compare_with_baseline(current_metrics, baseline_metrics, tolerance=0.05)
+        assert result is False
+    
+    def test_generate_evaluation_report(self, trained_model, sample_data):
+        """Test complete evaluation report generation."""
+        X = sample_data.drop(columns=['is_fraud', 'transaction_id'])
+        X['merchant_category'] = X['merchant_category'].astype('category').cat.codes
+        y = sample_data['is_fraud']
+        
+        config = {
+            'evaluation_thresholds': [0.3, 0.5, 0.7],
+            'transaction_amounts': sample_data['amount']
+        }
+        
+        report = generate_evaluation_report(trained_model, X, y, config)
+        
+        assert 'test_samples' in report
+        assert 'classification_metrics' in report
+        assert 'threshold_analysis' in report
+        assert 'business_metrics' in report
+        assert report['test_samples'] == len(X)
+
+
+# ============================================================================
+# Model Registry Tests
+# ============================================================================
+
+class TestModelRegistry:
+    """Test suite for model registry module."""
+    
+    def test_register_model_local(self, trained_model, temp_dir):
+        """Test model registration with local registry."""
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        metrics = {'f1_score': 0.85, 'roc_auc': 0.90}
+        metadata = {'model_name': 'test-model', 'version': '1'}
+        
+        version = register_model(
+            str(model_path),
+            metrics,
+            metadata,
+            str(temp_dir)
+        )
+        
+        assert version is not None
+        assert (Path(temp_dir) / 'test-model' / 'versions' / version).exists()
+    
+    def test_get_latest_model_version(self, trained_model, temp_dir):
+        """Test getting latest model version."""
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        metrics = {'f1_score': 0.85}
+        metadata = {'model_name': 'test-model'}
+        
+        # Register two versions
+        register_model(str(model_path), metrics, metadata, str(temp_dir))
+        register_model(str(model_path), metrics, metadata, str(temp_dir))
+        
+        latest_version = get_latest_model_version('test-model', str(temp_dir))
+        
+        assert latest_version == '2'
+    
+    def test_promote_model_to_stage(self, trained_model, temp_dir):
+        """Test model promotion to stage."""
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        metrics = {'f1_score': 0.85}
+        metadata = {'model_name': 'test-model'}
+        
+        version = register_model(str(model_path), metrics, metadata, str(temp_dir))
+        
+        promote_model_to_stage('test-model', version, 'production', str(temp_dir))
+        
+        # Check metadata was updated
+        metadata_path = Path(temp_dir) / 'test-model' / 'versions' / version / 'metadata.json'
+        with open(metadata_path, 'r') as f:
+            updated_metadata = json.load(f)
+        
+        assert updated_metadata['stage'] == 'production'
+    
+    def test_compare_model_versions(self, trained_model, temp_dir):
+        """Test comparing two model versions."""
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        metrics1 = {'f1_score': 0.80, 'roc_auc': 0.85}
+        metrics2 = {'f1_score': 0.85, 'roc_auc': 0.90}
+        metadata = {'model_name': 'test-model'}
+        
+        v1 = register_model(str(model_path), metrics1, metadata, str(temp_dir))
+        v2 = register_model(str(model_path), metrics2, metadata, str(temp_dir))
+        
+        comparison = compare_model_versions('test-model', v1, v2, str(temp_dir))
+        
+        assert comparison['winner'] == v2
+        assert 'metrics_comparison' in comparison
+    
+    def test_archive_old_models(self, trained_model, temp_dir):
+        """Test archiving old model versions."""
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        metrics = {'f1_score': 0.85}
+        metadata = {'model_name': 'test-model'}
+        
+        # Register 5 versions
+        for _ in range(5):
+            register_model(str(model_path), metrics, metadata, str(temp_dir))
+        
+        # Archive, keeping only 2 recent
+        archive_old_models('test-model', keep_n_versions=2, registry_uri=str(temp_dir))
+        
+        versions_dir = Path(temp_dir) / 'test-model' / 'versions'
+        remaining_versions = [d for d in versions_dir.iterdir() if d.is_dir()]
+        
+        assert len(remaining_versions) == 2
+
+
+# ============================================================================
+# Deployment Tests
+# ============================================================================
+
+class TestDeployment:
+    """Test suite for deployment module."""
+    
+    @patch('subprocess.run')
+    def test_build_model_container(self, mock_run, temp_dir):
+        """Test Docker container building."""
+        mock_run.return_value = Mock(stdout='Build successful', returncode=0)
+        
+        config = {
+            'image_name': 'fraud-detection',
+            'image_tag': 'v1.0',
+            'dockerfile_path': str(Path(temp_dir) / 'Dockerfile')
+        }
+        
+        image_tag = build_model_container(str(temp_dir), config)
+        
+        assert image_tag == 'fraud-detection:v1.0'
+        assert mock_run.called
+    
+    @patch('requests.get')
+    @patch('requests.post')
+    def test_validate_deployment_endpoint(self, mock_post, mock_get):
+        """Test deployment endpoint validation."""
+        mock_get.return_value = Mock(status_code=200)
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {'predictions': [0, 1]}
+        )
+        
+        test_data = {'features': [[1, 2, 3]]}
+        result = validate_deployment_endpoint('http://localhost:8080', test_data)
+        
+        assert result is True
+        assert mock_get.called
+        assert mock_post.called
+    
+    @patch('requests.post')
+    def test_run_smoke_tests(self, mock_post):
+        """Test smoke tests execution."""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {'prediction': 0}
+        )
+        
+        test_cases = [
+            {
+                'name': 'legitimate_transaction',
+                'input': {'features': [[100, 0, 10]]},
+                'expected_output': {'prediction': 0}
+            },
+            {
+                'name': 'fraud_transaction',
+                'input': {'features': [[10000, 1, 2]]},
+                'expected_output': {'prediction': 1}
+            }
+        ]
+        
+        results = run_smoke_tests('http://localhost:8080', test_cases)
+        
+        assert results['total_tests'] == 2
+        assert results['passed'] + results['failed'] == 2
+    
+    @patch('subprocess.run')
+    @patch('time.sleep')
+    def test_deploy_to_staging(self, mock_sleep, mock_run, temp_dir):
+        """Test deployment to staging environment."""
+        mock_run.return_value = Mock(stdout='Deployed', returncode=0)
+        
+        config = {
+            'platform': 'local',
+            'container_name': 'fraud-detection-staging'
+        }
+        
+        endpoint = deploy_to_staging('fraud-detection:v1.0', config)
+        
+        assert endpoint == 'http://localhost:8080'
+        assert mock_run.called
+    
+    @patch('subprocess.run')
+    def test_deploy_to_production(self, mock_run, temp_dir):
+        """Test deployment to production environment."""
+        mock_run.return_value = Mock(stdout='Deployed', returncode=0)
+        
+        config = {
+            'platform': 'local',
+            'container_name': 'fraud-detection-production'
+        }
+        
+        endpoint = deploy_to_production(
+            'fraud-detection:v1.0',
+            config,
+            approval_required=False
+        )
+        
+        assert endpoint == 'http://localhost:8081'
+        assert mock_run.called
+    
+    @patch('subprocess.run')
+    def test_rollback_deployment(self, mock_run):
+        """Test deployment rollback."""
+        mock_run.return_value = Mock(returncode=0)
+        
+        result = rollback_deployment('fraud-detection-production', 'v0.9')
+        
+        assert result is True
+        assert mock_run.called
+
+
+# ============================================================================
+# Integration Tests
+# ============================================================================
+
+class TestIntegration:
+    """Integration tests for complete pipeline."""
+    
+    def test_full_pipeline_flow(self, sample_data, expected_schema, reference_stats, temp_dir):
+        """Test complete pipeline from validation to training."""
+        # Save test data
+        data_path = Path(temp_dir) / 'data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        # Step 1: Data Validation
+        validation_config = {
+            'expected_schema': expected_schema,
+            'reference_stats': reference_stats,
+            'target_column': 'is_fraud',
+            'quality_threshold': 70.0
+        }
+        
+        validated_data, validation_results = validate_data_pipeline(
+            str(data_path),
+            validation_config
+        )
+        
+        assert validation_results['validation_passed'] is True
+        
+        # Step 2: Model Training
+        training_config = {
+            'target_column': 'is_fraud',
+            'exclude_columns': ['transaction_id'],
+            'model_type': 'random_forest',
+            'model_params': {'n_estimators': 10},
+            'validation_split': 0.2,
+            'random_state': 42,
+            'output_path': str(Path(temp_dir) / 'models')
+        }
+        
+        training_results = run_training_pipeline(str(data_path), training_config)
+        
+        assert training_results['success'] is True
+        assert Path(training_results['model_path']).exists()
+        
+        # Step 3: Model Evaluation
+        model = joblib.load(training_results['model_path'])
+        X = validated_data.drop(columns=['is_fraud', 'transaction_id'])
+        X['merchant_category'] = X['merchant_category'].astype('category').cat.codes
+        y = validated_data['is_fraud']
+        
+        eval_config = {
+            'evaluation_thresholds': [0.5],
+            'transaction_amounts': validated_data['amount']
+        }
+        
+        eval_report = generate_evaluation_report(model, X, y, eval_config)
+        
+        assert 'classification_metrics' in eval_report
+        assert eval_report['test_samples'] > 0
+    
+    def test_model_registry_workflow(self, trained_model, temp_dir):
+        """Test model registry workflow."""
+        # Save model
+        model_path = Path(temp_dir) / 'model.joblib'
+        joblib.dump(trained_model, model_path)
+        
+        # Register model
+        metrics = {'f1_score': 0.85, 'roc_auc': 0.90}
+        metadata = {'model_name': 'fraud-detection'}
+        
+        version = register_model(
+            str(model_path),
+            metrics,
+            metadata,
+            str(temp_dir)
+        )
+        
+        assert version is not None
+        
+        # Promote to staging
+        promote_model_to_stage('fraud-detection', version, 'staging', str(temp_dir))
+        
+        # Promote to production
+        promote_model_to_stage('fraud-detection', version, 'production', str(temp_dir))
+        
+        # Verify latest version
+        latest = get_latest_model_version('fraud-detection', str(temp_dir))
+        assert latest == version
+
+
+# ============================================================================
+# Performance Tests
+# ============================================================================
+
+class TestPerformance:
+    """Performance tests for pipeline components."""
+    
+    def test_validation_performance(self, temp_dir):
+        """Test data validation performance on large dataset."""
+        # Create larger dataset
+        n_samples = 100000
+        large_data = pd.DataFrame({
+            'feature1': np.random.randn(n_samples),
+            'feature2': np.random.randn(n_samples),
+            'feature3': np.random.choice(['A', 'B', 'C'], n_samples),
+            'target': np.random.choice([0, 1], n_samples)
+        })
+        
+        data_path = Path(temp_dir) / 'large_data.csv'
+        large_data.to_csv(data_path, index=False)
+        
+        config = {
+            'target_column': 'target',
+            'quality_threshold': 70.0
+        }
+        
+        import time
+        start = time.time()
+        validated_data, results = validate_data_pipeline(str(data_path), config)
+        duration = time.time() - start
+        
+        # Should complete in reasonable time (< 10 seconds for 100k rows)
+        assert duration < 10.0
+        assert len(validated_data) == n_samples
+    
+    def test_training_performance(self, temp_dir):
+        """Test model training performance."""
+        # Create training dataset
+        n_samples = 10000
+        data = pd.DataFrame({
+            'f1': np.random.randn(n_samples),
+            'f2': np.random.randn(n_samples),
+            'f3': np.random.randn(n_samples),
+            'target': np.random.choice([0, 1], n_samples)
+        })
+        
+        data_path = Path(temp_dir) / 'train_data.csv'
+        data.to_csv(data_path, index=False)
+        
+        config = {
+            'target_column': 'target',
+            'model_type': 'random_forest',
+            'model_params': {'n_estimators': 50},
+            'validation_split': 0.2,
+            'random_state': 42,
+            'output_path': str(Path(temp_dir) / 'models')
+        }
+        
+        import time
+        start = time.time()
+        results = run_training_pipeline(str(data_path), config)
+        duration = time.time() - start
+        
+        # Should complete in reasonable time
+        assert duration < 30.0
+        assert results['success'] is True
+
+
+# ============================================================================
+# Error Handling Tests
+# ============================================================================
+
+class TestErrorHandling:
+    """Test error handling in pipeline components."""
+    
+    def test_validation_invalid_file_format(self, temp_dir):
+        """Test validation with invalid file format."""
+        invalid_path = Path(temp_dir) / 'data.txt'
+        invalid_path.write_text('invalid data')
+        
+        config = {'target_column': 'target'}
+        
+        with pytest.raises(ValueError):
+            validate_data_pipeline(str(invalid_path), config)
+    
+    def test_training_missing_target(self, sample_data, temp_dir):
+        """Test training with missing target column."""
+        data_path = Path(temp_dir) / 'data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        config = {
+            'target_column': 'nonexistent_column',
+            'model_type': 'random_forest',
+            'output_path': str(temp_dir)
+        }
+        
+        with pytest.raises(Exception):
+            run_training_pipeline(str(data_path), config)
+    
+    def test_evaluation_empty_data(self, trained_model):
+        """Test evaluation with empty data."""
+        X_empty = pd.DataFrame()
+        y_empty = pd.Series(dtype=int)
+        
+        config = {}
+        
+        with pytest.raises(Exception):
+            generate_evaluation_report(trained_model, X_empty, y_empty, config)
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v', '--tb=short'])
+```
+
+# (b) Complete GitHub Actions Workflow
+
+```yaml
+name: MLOps Pipeline CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Deploy to production'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: '3.10'
+  MODEL_REGISTRY_PATH: './model_registry'
+  MLFLOW_TRACKING_URI: 'sqlite:///mlflow.db'
+
+jobs:
+  # ============================================================================
+  # Code Quality and Linting
+  # ============================================================================
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort mypy pylint bandit
+          pip install -r requirements.txt
+      
+      - name: Run Black formatter check
+        run: black --check src/ tests/
+      
+      - name: Run isort import check
+        run: isort --check-only src/ tests/
+      
+      - name: Run Flake8 linting
+        run: flake8 src/ tests/ --max-line-length=100 --ignore=E203,W503
+      
+      - name: Run Pylint
+        run: pylint src/ --disable=C0111,R0913,R0914
+        continue-on-error: true
+      
+      - name: Run Bandit security check
+        run: bandit -r src/ -ll
+      
+      - name: Run MyPy type checking
+        run: mypy src/ --ignore-missing-imports
+        continue-on-error: true
+
+  # ============================================================================
+  # Unit and Integration Tests
+  # ============================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/test_pipeline.py \
+            -v \
+            --cov=src/pipeline \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --junit-xml=test-results/junit.xml \
+            --timeout=300 \
+            -n auto
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-${{ matrix.python-version }}
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: |
+            test-results/
+            htmlcov/
+      
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && matrix.python-version == '3.10'
+        with:
+          files: test-results/junit.xml
+
+  # ============================================================================
+  # Data Validation
+  # ============================================================================
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download training data
+        run: |
+          # In production, this would download from S3/GCS/Azure Blob
+          mkdir -p data
+          # Simulate data download
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          n = 10000
+          data = pd.DataFrame({
+              'amount': np.random.exponential(100, n),
+              'merchant_category': np.random.choice(['retail', 'online', 'restaurant'], n),
+              'transaction_hour': np.random.randint(0, 24, n),
+              'days_since_last': np.random.exponential(5, n),
+              'num_transactions_24h': np.random.poisson(3, n),
+              'is_fraud': np.random.choice([0, 1], n, p=[0.95, 0.05])
+          })
+          data.to_csv('data/train_data.csv', index=False)
+          "
+      
+      - name: Run data validation
+        run: |
+          python -c "
+          from src.pipeline import validate_data_pipeline
+          import json
+          
+          config = {
+              'target_column': 'is_fraud',
+              'quality_threshold': 70.0,
+              'max_imbalance_ratio': 100.0
+          }
+          
+          data, results = validate_data_pipeline('data/train_data.csv', config)
+          
+          with open('validation_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          if not results['validation_passed']:
+              raise ValueError('Data validation failed')
+          
+          print('Data validation passed!')
+          "
+      
+      - name: Upload validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: validation-results
+          path: validation_results.json
+
+  # ============================================================================
+  # Model Training
+  # ============================================================================
+  train-model:
+    name: Train Model
+    runs-on: ubuntu-latest
+    needs: data-validation
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download validation results
+        uses: actions/download-artifact@v3
+        with:
+          name: validation-results
+      
+      - name: Generate training data
+        run: |
+          mkdir -p data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          n = 10000
+          data = pd.DataFrame({
+              'amount': np.random.exponential(100, n),
+              'merchant_category': np.random.choice(['retail', 'online', 'restaurant'], n),
+              'transaction_hour': np.random.randint(0, 24, n),
+              'days_since_last': np.random.exponential(5, n),
+              'num_transactions_24h': np.random.poisson(3, n),
+              'is_fraud': np.random.choice([0, 1], n, p=[0.95, 0.05])
+          })
+          data.to_csv('data/train_data.csv', index=False)
+          "
+      
+      - name: Train model
+        run: |
+          python -c "
+          from src.pipeline import run_training_pipeline
+          import json
+          
+          config = {
+              'target_column': 'is_fraud',
+              'model_type': 'random_forest',
+              'model_params': {
+                  'n_estimators': 100,
+                  'max_depth': 10,
+                  'min_samples_split': 5
+              },
+              'validation_split': 0.2,
+              'random_state': 42,
+              'output_path': './models',
+              'class_weight': 'balanced'
+          }
+          
+          results = run_training_pipeline('data/train_data.csv', config)
+          
+          with open('training_results.json', 'w') as f:
+              json.dump(results, f, indent=2, default=str)
+          
+          if not results['success']:
+              raise ValueError('Model training failed')
+          
+          print(f\"Training completed: Accuracy={results['validation_accuracy']:.4f}\")
+          "
+      
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-artifacts
+          path: |
+            models/
+            training_results.json
+
+  # ============================================================================
+  # Model Evaluation
+  # ============================================================================
+  evaluate-model:
+    name: Evaluate Model
+    runs-on: ubuntu-latest
+    needs: train-model
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: model-artifacts
+      
+      - name: Generate test data
+        run: |
+          mkdir -p data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(123)
+          n = 2000
+          data = pd.DataFrame({
+              'amount': np.random.exponential(100, n),
+              'merchant_category': np.random.choice(['retail', 'online', 'restaurant'], n),
+              'transaction_hour': np.random.randint(0, 24, n),
+              'days_since_last': np.random.exponential(5, n),
+              'num_transactions_24h': np.random.poisson(3, n),
+              'is_fraud': np.random.choice([0, 1], n, p=[0.95, 0.05])
+          })
+          data.to_csv('data/test_data.csv', index=False)
+          "
+      
+      - name: Evaluate model
+        run: |
+          python -c "
+          from src.pipeline import generate_evaluation_report
+          import pandas as pd
+          import joblib
+          import json
+          
+          # Load model
+          model = joblib.load('models/model.joblib')
+          
+          # Load test data
+          data = pd.read_csv('data/test_data.csv')
+          X = data.drop(columns=['is_fraud'])
+          X['merchant_category'] = X['merchant_category'].astype('category').cat.codes
+          y = data['is_fraud']
+          
+          # Baseline metrics (from previous version)
+          baseline_metrics = {
+              'f1_score': 0.75,
+              'roc_auc': 0.80,
+              'precision': 0.70,
+              'recall': 0.80
+          }
+          
+          config = {
+              'evaluation_thresholds': [0.3, 0.5, 0.7],
+              'transaction_amounts': data['amount'],
+              'baseline_metrics': baseline_metrics,
+              'baseline_tolerance': 0.05
+          }
+          
+          report = generate_evaluation_report(model, X, y, config)
+          
+          with open('evaluation_report.json', 'w') as f:
+              json.dump(report, f, indent=2, default=str)
+          
+          if not report['passed_baseline']:
+              raise ValueError('Model performance below baseline')
+          
+          print('Model evaluation passed!')
+          print(f\"F1 Score: {report['classification_metrics']['f1_score']:.4f}\")
+          print(f\"ROC-AUC: {report['classification_metrics']['roc_auc']:.4f}\")
+          "
+      
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v3
+        with:
+          name: evaluation-report
+          path: evaluation_report.json
+      
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('evaluation_report.json', 'utf8'));
+            const metrics = report.classification_metrics;
+            
+            const comment = `## Model Evaluation Results
+            
+            | Metric | Value |
+            |--------|-------|
+            | F1 Score | ${metrics.f1_score.toFixed(4)} |
+            | ROC-AUC | ${metrics.roc_auc.toFixed(4)} |
+            | Precision | ${metrics.precision.toFixed(4)} |
+            | Recall | ${metrics.recall.toFixed(4)} |
+            | Accuracy | ${metrics.accuracy.toFixed(4)} |
+            
+            **Baseline Comparison:** ${report.passed_baseline ? '✅ Passed' : '❌ Failed'}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # ============================================================================
+  # Model Registry
+  # ============================================================================
+  register-model:
+    name: Register Model
+    runs-on: ubuntu-latest
+    needs: evaluate-model
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: model-artifacts
+      
+      - name: Download evaluation report
+        uses: actions/download-artifact@v3
+        with:
+          name: evaluation-report
+      
+      - name: Register model
+        run: |
+          python -c "
+          from src.pipeline import register_model
+          import json
+          
+          # Load evaluation metrics
+          with open('evaluation_report.json', 'r') as f:
+              report = json.load(f)
+          
+          metrics = report['classification_metrics']
+          
+          metadata = {
+              'model_name': 'fraud-detection-model',
+              'git_commit': '${{ github.sha }}',
+              'git_branch': '${{ github.ref_name }}',
+              'training_date': '${{ github.event.head_commit.timestamp }}',
+              'author': '${{ github.actor }}'
+          }
+          
+          version = register_model(
+              'models/model.joblib',
+              metrics,
+              metadata,
+              '${{ env.MODEL_REGISTRY_PATH }}'
+          )
+          
+          print(f'Model registered with version: {version}')
+          
+          with open('model_version.txt', 'w') as f:
+              f.write(version)
+          "
+      
+      - name: Upload model version
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-version
+          path: model_version.txt
+
+  # ============================================================================
+  # Build Container
+  # ============================================================================
+  build-container:
+    name: Build Docker Container
+    runs-on: ubuntu-latest
+    needs: register-model
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: model-artifacts
+      
+      - name: Download model version
+        uses: actions/download-artifact@v3
+        with:
+          name: model-version
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract model version
+        id: version
+        run: |
+          VERSION=$(cat model_version.txt)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/fraud-detection:latest
+            ${{ secrets.DOCKER_USERNAME }}/fraud-detection:v${{ steps.version.outputs.version }}
+            ${{ secrets.DOCKER_USERNAME }}/fraud-detection:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================================
+  # Deploy to Staging
+  # ============================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-container
+    environment:
+      name: staging
+      url: http://staging.fraud-detection.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download model version
+        uses: actions/download-artifact@v3
+        with:
+          name: model-version
+      
+      - name: Deploy to staging
+        run: |
+          python -c "
+          from src.pipeline import deploy_to_staging
+          
+          version = open('model_version.txt').read().strip()
+          model_uri = f'${{ secrets.DOCKER_USERNAME }}/fraud-detection:v{version}'
+          
+          config = {
+              'platform': 'local',
+              'container_name': 'fraud-detection-staging',
+              'staging_replicas': 2
+          }
+          
+          endpoint = deploy_to_staging(model_uri, config)
+          print(f'Deployed to staging: {endpoint}')
+          
+          with open('staging_endpoint.txt', 'w') as f:
+              f.write(endpoint)
+          "
+      
+      - name: Run smoke tests
+        run: |
+          python -c "
+          from src.pipeline.deployment import run_smoke_tests
+          import json
+          
+          endpoint = open('staging_endpoint.txt').read().strip()
+          
+          test_cases = [
+              {
+                  'name': 'legitimate_transaction',
+                  'input': {'features': [[100, 0, 10, 5, 3]]},
+              },
+              {
+                  'name': 'suspicious_transaction',
+                  'input': {'features': [[10000, 1, 2, 0.5, 15]]},
+              }
+          ]
+          
+          results = run_smoke_tests(endpoint, test_cases)
+          
+          with open('smoke_test_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          if results['failed'] > 0:
+              raise ValueError(f\"Smoke tests failed: {results['failed']}/{results['total_tests']}\")
+          
+          print('All smoke tests passed!')
+          "
+      
+      - name: Upload staging endpoint
+        uses: actions/upload-artifact@v3
+        with:
+          name: staging-endpoint
+          path: staging_endpoint.txt
+
+  # ============================================================================
+  # Deploy to Production
+  # ============================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.deploy_to_production == 'true')
+    environment:
+      name: production
+      url: http://production.fraud-detection.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Download model version
+        uses: actions/download-artifact@v3
+        with:
+          name: model-version
+      
+      - name: Promote model to production
+        run: |
+          python -c "
+          from src.pipeline import promote_model_to_stage
+          
+          version = open('model_version.txt').read().strip()
+          
+          promote_model_to_stage(
+              'fraud-detection-model',
+              version,
+              'production',
+              '${{ env.MODEL_REGISTRY_PATH }}'
+          )
+          
+          print(f'Model version {version} promoted to production')
+          "
+      
+      - name: Deploy to production
+        run: |
+          python -c "
+          from src.pipeline import deploy_to_production
+          
+          version = open('model_version.txt').read().strip()
+          model_uri = f'${{ secrets.DOCKER_USERNAME }}/fraud-detection:v{version}'
+          
+          config = {
+              'platform': 'local',
+              'container_name': 'fraud-detection-production',
+              'production_replicas': 3
+          }
+          
+          endpoint = deploy_to_production(model_uri, config, approval_required=False)
+          print(f'Deployed to production: {endpoint}')
+          
+          with open('production_endpoint.txt', 'w') as f:
+              f.write(endpoint)
+          "
+      
+      - name: Validate production deployment
+        run: |
+          python -c "
+          from src.pipeline.deployment import validate_deployment_endpoint
+          
+          endpoint = open('production_endpoint.txt').read().strip()
+          test_data = {'features': [[100, 0, 10, 5, 3]]}
+          
+          if not validate_deployment_endpoint(endpoint, test_data):
+              raise ValueError('Production deployment validation failed')
+          
+          print('Production deployment validated successfully!')
+          "
+      
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Production Release v${{ github.run_number }}
+          body: |
+            ## Production Deployment
+            
+            Model version deployed to production.
+            
+            **Commit:** ${{ github.sha }}
+            **Author:** ${{ github.actor }}
+            **Timestamp:** ${{ github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: false
+
+  # ============================================================================
+  # Monitoring and Alerts
+  # ============================================================================
+  setup-monitoring:
+    name: Setup Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Configure monitoring alerts
+        run: |
+          echo "Setting up monitoring for production deployment..."
+          # In production, this would configure Prometheus, Grafana, DataDog, etc.
+          echo "Monitoring configured successfully"
+      
+      - name: Send deployment notification
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          text: |
+            Production deployment ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ============================================================================
+  # Cleanup
+  # ============================================================================
+  cleanup:
+    name: Cleanup Old Artifacts
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Archive old models
+        run: |
+          python -c "
+          from src.pipeline.model_registry import archive_old_models
+          
+          archive_old_models(
+              'fraud-detection-model',
+              keep_n_versions=5,
+              registry_uri='${{ env.MODEL_REGISTRY_PATH }}'
+          )
+          
+          print('Old models archived successfully')
+          "
+```

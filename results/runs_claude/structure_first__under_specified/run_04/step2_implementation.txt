@@ -1,0 +1,894 @@
+```python
+# src/pipeline.py
+
+from typing import Tuple, Dict, Any
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report
+)
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from scipy import stats
+import joblib
+import json
+import yaml
+from pathlib import Path
+from datetime import datetime
+import logging
+import warnings
+
+warnings.filterwarnings('ignore')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load raw fraud detection data from specified path."""
+    try:
+        logger.info(f"Loading data from {data_path}")
+        path = Path(data_path)
+        
+        if not path.exists():
+            raise FileNotFoundError(f"Data file not found: {data_path}")
+        
+        if path.suffix == '.csv':
+            df = pd.read_csv(data_path)
+        elif path.suffix in ['.xlsx', '.xls']:
+            df = pd.read_excel(data_path)
+        elif path.suffix == '.parquet':
+            df = pd.read_parquet(data_path)
+        elif path.suffix == '.json':
+            df = pd.read_json(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+        
+        logger.info(f"Successfully loaded {len(df)} records with {len(df.columns)} columns")
+        return df
+    
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data_schema(df: pd.DataFrame, schema: Dict[str, Any]) -> bool:
+    """Validate that dataframe matches expected schema and data types."""
+    try:
+        logger.info("Validating data schema")
+        
+        # Check required columns
+        required_columns = schema.get('required_columns', [])
+        missing_columns = set(required_columns) - set(df.columns)
+        if missing_columns:
+            logger.error(f"Missing required columns: {missing_columns}")
+            return False
+        
+        # Check data types
+        expected_types = schema.get('column_types', {})
+        for column, expected_type in expected_types.items():
+            if column not in df.columns:
+                continue
+            
+            actual_type = df[column].dtype
+            
+            # Map expected types to pandas dtypes
+            type_mapping = {
+                'int': ['int64', 'int32', 'int16', 'int8'],
+                'float': ['float64', 'float32', 'float16'],
+                'string': ['object', 'string'],
+                'bool': ['bool'],
+                'datetime': ['datetime64[ns]']
+            }
+            
+            valid_types = type_mapping.get(expected_type, [expected_type])
+            if str(actual_type) not in valid_types:
+                logger.error(f"Column '{column}' has type {actual_type}, expected {expected_type}")
+                return False
+        
+        # Check value ranges if specified
+        value_ranges = schema.get('value_ranges', {})
+        for column, range_spec in value_ranges.items():
+            if column not in df.columns:
+                continue
+            
+            if 'min' in range_spec:
+                if df[column].min() < range_spec['min']:
+                    logger.error(f"Column '{column}' has values below minimum {range_spec['min']}")
+                    return False
+            
+            if 'max' in range_spec:
+                if df[column].max() > range_spec['max']:
+                    logger.error(f"Column '{column}' has values above maximum {range_spec['max']}")
+                    return False
+        
+        # Check for null constraints
+        non_null_columns = schema.get('non_null_columns', [])
+        for column in non_null_columns:
+            if column in df.columns and df[column].isnull().any():
+                logger.error(f"Column '{column}' contains null values but should not")
+                return False
+        
+        logger.info("Schema validation passed")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error validating schema: {str(e)}")
+        return False
+
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply preprocessing transformations including missing value handling and feature engineering."""
+    try:
+        logger.info("Preprocessing data")
+        df_processed = df.copy()
+        
+        # Remove duplicates
+        initial_rows = len(df_processed)
+        df_processed = df_processed.drop_duplicates()
+        duplicates_removed = initial_rows - len(df_processed)
+        if duplicates_removed > 0:
+            logger.info(f"Removed {duplicates_removed} duplicate records")
+        
+        # Handle missing values
+        for column in df_processed.columns:
+            if df_processed[column].isnull().any():
+                if df_processed[column].dtype in ['int64', 'float64']:
+                    # Fill numeric columns with median
+                    median_value = df_processed[column].median()
+                    df_processed[column].fillna(median_value, inplace=True)
+                    logger.info(f"Filled missing values in '{column}' with median: {median_value}")
+                else:
+                    # Fill categorical columns with mode
+                    mode_value = df_processed[column].mode()[0] if not df_processed[column].mode().empty else 'Unknown'
+                    df_processed[column].fillna(mode_value, inplace=True)
+                    logger.info(f"Filled missing values in '{column}' with mode: {mode_value}")
+        
+        # Remove any remaining rows with missing values
+        rows_before = len(df_processed)
+        df_processed = df_processed.dropna()
+        rows_after = len(df_processed)
+        if rows_before > rows_after:
+            logger.info(f"Removed {rows_before - rows_after} rows with remaining missing values")
+        
+        # Basic data cleaning
+        # Remove any infinite values
+        numeric_columns = df_processed.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            df_processed = df_processed[~np.isinf(df_processed[col])]
+        
+        logger.info(f"Preprocessing complete. Final dataset: {len(df_processed)} records")
+        return df_processed
+    
+    except Exception as e:
+        logger.error(f"Error preprocessing data: {str(e)}")
+        raise
+
+
+def detect_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame, threshold: float = 0.05) -> Dict[str, Any]:
+    """Detect statistical drift between reference and current datasets."""
+    try:
+        logger.info("Detecting data drift")
+        drift_report = {
+            'drift_detected': False,
+            'drifted_features': [],
+            'drift_scores': {},
+            'threshold': threshold
+        }
+        
+        # Get common numeric columns
+        numeric_cols = reference_data.select_dtypes(include=[np.number]).columns
+        common_cols = [col for col in numeric_cols if col in current_data.columns]
+        
+        for column in common_cols:
+            # Perform Kolmogorov-Smirnov test
+            ref_values = reference_data[column].dropna()
+            curr_values = current_data[column].dropna()
+            
+            if len(ref_values) > 0 and len(curr_values) > 0:
+                statistic, p_value = stats.ks_2samp(ref_values, curr_values)
+                
+                drift_report['drift_scores'][column] = {
+                    'statistic': float(statistic),
+                    'p_value': float(p_value)
+                }
+                
+                # Drift detected if p-value is below threshold
+                if p_value < threshold:
+                    drift_report['drift_detected'] = True
+                    drift_report['drifted_features'].append(column)
+                    logger.warning(f"Drift detected in '{column}': p-value={p_value:.4f}")
+        
+        # Check categorical columns
+        categorical_cols = reference_data.select_dtypes(include=['object', 'category']).columns
+        common_cat_cols = [col for col in categorical_cols if col in current_data.columns]
+        
+        for column in common_cat_cols:
+            ref_dist = reference_data[column].value_counts(normalize=True)
+            curr_dist = current_data[column].value_counts(normalize=True)
+            
+            # Chi-square test for categorical variables
+            all_categories = set(ref_dist.index) | set(curr_dist.index)
+            ref_freq = [ref_dist.get(cat, 0) * len(reference_data) for cat in all_categories]
+            curr_freq = [curr_dist.get(cat, 0) * len(current_data) for cat in all_categories]
+            
+            if sum(ref_freq) > 0 and sum(curr_freq) > 0:
+                try:
+                    chi2, p_value = stats.chisquare(curr_freq, ref_freq)
+                    drift_report['drift_scores'][column] = {
+                        'statistic': float(chi2),
+                        'p_value': float(p_value)
+                    }
+                    
+                    if p_value < threshold:
+                        drift_report['drift_detected'] = True
+                        drift_report['drifted_features'].append(column)
+                        logger.warning(f"Drift detected in categorical '{column}': p-value={p_value:.4f}")
+                except:
+                    logger.warning(f"Could not perform drift test on '{column}'")
+        
+        logger.info(f"Drift detection complete. Drift detected: {drift_report['drift_detected']}")
+        return drift_report
+    
+    except Exception as e:
+        logger.error(f"Error detecting data drift: {str(e)}")
+        raise
+
+
+def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data into train and test sets with stratification on fraud label."""
+    try:
+        logger.info(f"Splitting data with test_size={test_size}")
+        
+        # Identify target column (common fraud detection target names)
+        target_candidates = ['is_fraud', 'fraud', 'is_fraudulent', 'Class', 'isFraud']
+        target_column = None
+        
+        for candidate in target_candidates:
+            if candidate in df.columns:
+                target_column = candidate
+                break
+        
+        if target_column is None:
+            # Assume last column is target
+            target_column = df.columns[-1]
+            logger.warning(f"Target column not found in standard names, using last column: {target_column}")
+        
+        X = df.drop(columns=[target_column])
+        y = df[target_column]
+        
+        # Perform stratified split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=y
+        )
+        
+        logger.info(f"Train set: {len(X_train)} samples, Test set: {len(X_test)} samples")
+        logger.info(f"Train fraud rate: {y_train.mean():.4f}, Test fraud rate: {y_test.mean():.4f}")
+        
+        return X_train, X_test, y_train, y_test
+    
+    except Exception as e:
+        logger.error(f"Error splitting data: {str(e)}")
+        raise
+
+
+def balance_dataset(X: pd.DataFrame, y: pd.Series, strategy: str = "smote") -> Tuple[pd.DataFrame, pd.Series]:
+    """Balance imbalanced fraud dataset using specified strategy."""
+    try:
+        logger.info(f"Balancing dataset using strategy: {strategy}")
+        
+        initial_fraud_rate = y.mean()
+        logger.info(f"Initial fraud rate: {initial_fraud_rate:.4f} ({y.sum()} fraud cases out of {len(y)})")
+        
+        if strategy.lower() == "smote":
+            # Use SMOTE for oversampling minority class
+            smote = SMOTE(random_state=42, k_neighbors=min(5, y.sum() - 1))
+            X_balanced, y_balanced = smote.fit_resample(X, y)
+        
+        elif strategy.lower() == "undersample":
+            # Use random undersampling of majority class
+            undersampler = RandomUnderSampler(random_state=42)
+            X_balanced, y_balanced = undersampler.fit_resample(X, y)
+        
+        elif strategy.lower() == "combined":
+            # First oversample, then undersample
+            smote = SMOTE(random_state=42, k_neighbors=min(5, y.sum() - 1))
+            X_temp, y_temp = smote.fit_resample(X, y)
+            undersampler = RandomUnderSampler(random_state=42, sampling_strategy=0.8)
+            X_balanced, y_balanced = undersampler.fit_resample(X_temp, y_temp)
+        
+        else:
+            logger.warning(f"Unknown strategy '{strategy}', returning original data")
+            return X, y
+        
+        final_fraud_rate = y_balanced.mean()
+        logger.info(f"Balanced fraud rate: {final_fraud_rate:.4f} ({y_balanced.sum()} fraud cases out of {len(y_balanced)})")
+        logger.info(f"Dataset size changed from {len(X)} to {len(X_balanced)}")
+        
+        return pd.DataFrame(X_balanced, columns=X.columns), pd.Series(y_balanced, name=y.name)
+    
+    except Exception as e:
+        logger.error(f"Error balancing dataset: {str(e)}")
+        raise
+
+
+def extract_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Extract and engineer features for fraud detection."""
+    try:
+        logger.info("Extracting features")
+        df_features = df.copy()
+        
+        # Identify numeric columns for feature engineering
+        numeric_cols = df_features.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Create interaction features (for first few numeric columns to avoid explosion)
+        if len(numeric_cols) >= 2:
+            for i in range(min(3, len(numeric_cols))):
+                for j in range(i + 1, min(3, len(numeric_cols))):
+                    col1, col2 = numeric_cols[i], numeric_cols[j]
+                    # Product feature
+                    df_features[f'{col1}_x_{col2}'] = df_features[col1] * df_features[col2]
+                    # Ratio feature (avoid division by zero)
+                    df_features[f'{col1}_div_{col2}'] = df_features[col1] / (df_features[col2] + 1e-6)
+        
+        # Create aggregation features if there are enough numeric columns
+        if len(numeric_cols) >= 3:
+            # Sum of first few features
+            df_features['sum_features'] = df_features[numeric_cols[:5]].sum(axis=1)
+            # Mean of first few features
+            df_features['mean_features'] = df_features[numeric_cols[:5]].mean(axis=1)
+            # Standard deviation
+            df_features['std_features'] = df_features[numeric_cols[:5]].std(axis=1)
+        
+        # Create polynomial features for important columns
+        for col in numeric_cols[:3]:  # Limit to first 3 to avoid too many features
+            df_features[f'{col}_squared'] = df_features[col] ** 2
+            df_features[f'{col}_sqrt'] = np.sqrt(np.abs(df_features[col]))
+        
+        # Create binned features
+        for col in numeric_cols[:3]:
+            try:
+                df_features[f'{col}_binned'] = pd.qcut(
+                    df_features[col], 
+                    q=5, 
+                    labels=False, 
+                    duplicates='drop'
+                )
+            except:
+                # If qcut fails, use cut instead
+                try:
+                    df_features[f'{col}_binned'] = pd.cut(
+                        df_features[col], 
+                        bins=5, 
+                        labels=False
+                    )
+                except:
+                    pass
+        
+        # Handle any infinite or NaN values created during feature engineering
+        df_features = df_features.replace([np.inf, -np.inf], np.nan)
+        
+        # Fill NaN values with 0 for engineered features
+        engineered_cols = [col for col in df_features.columns if col not in df.columns]
+        df_features[engineered_cols] = df_features[engineered_cols].fillna(0)
+        
+        logger.info(f"Feature extraction complete. Created {len(df_features.columns) - len(df.columns)} new features")
+        logger.info(f"Total features: {len(df_features.columns)}")
+        
+        return df_features
+    
+    except Exception as e:
+        logger.error(f"Error extracting features: {str(e)}")
+        raise
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, hyperparameters: Dict[str, Any]) -> BaseEstimator:
+    """Train fraud detection model with given hyperparameters."""
+    try:
+        logger.info("Training model")
+        logger.info(f"Hyperparameters: {hyperparameters}")
+        
+        # Extract model type from hyperparameters, default to RandomForest
+        model_type = hyperparameters.get('model_type', 'random_forest')
+        
+        # Remove model_type from hyperparameters before passing to model
+        model_params = {k: v for k, v in hyperparameters.items() if k != 'model_type'}
+        
+        # Initialize model based on type
+        if model_type == 'random_forest':
+            model = RandomForestClassifier(
+                random_state=42,
+                **model_params
+            )
+        else:
+            # Default to RandomForest
+            logger.warning(f"Unknown model type '{model_type}', using RandomForest")
+            model = RandomForestClassifier(
+                random_state=42,
+                **model_params
+            )
+        
+        # Train the model
+        logger.info(f"Training on {len(X_train)} samples with {len(X_train.columns)} features")
+        model.fit(X_train, y_train)
+        
+        logger.info("Model training complete")
+        return model
+    
+    except Exception as e:
+        logger.error(f"Error training model: {str(e)}")
+        raise
+
+
+def evaluate_model(model: BaseEstimator, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance using fraud-specific metrics (precision, recall, F1, AUC-ROC)."""
+    try:
+        logger.info("Evaluating model")
+        
+        # Make predictions
+        y_pred = model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else y_pred
+        
+        # Calculate metrics
+        metrics = {
+            'precision': float(precision_score(y_test, y_pred, zero_division=0)),
+            'recall': float(recall_score(y_test, y_pred, zero_division=0)),
+            'f1_score': float(f1_score(y_test, y_pred, zero_division=0)),
+            'roc_auc': float(roc_auc_score(y_test, y_pred_proba))
+        }
+        
+        # Calculate confusion matrix
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+        metrics.update({
+            'true_negatives': int(tn),
+            'false_positives': int(fp),
+            'false_negatives': int(fn),
+            'true_positives': int(tp),
+            'accuracy': float((tp + tn) / (tp + tn + fp + fn))
+        })
+        
+        # Calculate additional fraud-specific metrics
+        metrics['specificity'] = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+        metrics['false_positive_rate'] = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+        
+        logger.info(f"Evaluation complete - Precision: {metrics['precision']:.4f}, "
+                   f"Recall: {metrics['recall']:.4f}, F1: {metrics['f1_score']:.4f}, "
+                   f"AUC-ROC: {metrics['roc_auc']:.4f}")
+        
+        return metrics
+    
+    except Exception as e:
+        logger.error(f"Error evaluating model: {str(e)}")
+        raise
+
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model metrics meet minimum performance thresholds."""
+    try:
+        logger.info("Validating model performance against thresholds")
+        
+        validation_passed = True
+        
+        for metric_name, threshold_value in thresholds.items():
+            if metric_name in metrics:
+                actual_value = metrics[metric_name]
+                
+                if actual_value < threshold_value:
+                    logger.warning(f"Metric '{metric_name}' ({actual_value:.4f}) below threshold ({threshold_value:.4f})")
+                    validation_passed = False
+                else:
+                    logger.info(f"Metric '{metric_name}' ({actual_value:.4f}) meets threshold ({threshold_value:.4f})")
+            else:
+                logger.warning(f"Metric '{metric_name}' not found in evaluation results")
+                validation_passed = False
+        
+        if validation_passed:
+            logger.info("All performance thresholds met")
+        else:
+            logger.warning("Performance validation failed")
+        
+        return validation_passed
+    
+    except Exception as e:
+        logger.error(f"Error validating model performance: {str(e)}")
+        return False
+
+
+def compare_models(challenger_metrics: Dict[str, float], champion_metrics: Dict[str, float]) -> Dict[str, Any]:
+    """Compare challenger model against champion model for deployment decision."""
+    try:
+        logger.info("Comparing challenger model against champion model")
+        
+        comparison = {
+            'deploy_challenger': False,
+            'primary_metric': 'f1_score',
+            'improvements': {},
+            'degradations': {},
+            'recommendation': ''
+        }
+        
+        # Define weights for different metrics (higher weight = more important)
+        metric_weights = {
+            'f1_score': 0.3,
+            'precision': 0.25,
+            'recall': 0.25,
+            'roc_auc': 0.2
+        }
+        
+        weighted_score_challenger = 0.0
+        weighted_score_champion = 0.0
+        
+        # Compare each metric
+        for metric_name in ['precision', 'recall', 'f1_score', 'roc_auc']:
+            if metric_name in challenger_metrics and metric_name in champion_metrics:
+                challenger_value = challenger_metrics[metric_name]
+                champion_value = champion_metrics[metric_name]
+                difference = challenger_value - champion_value
+                
+                weight = metric_weights.get(metric_name, 0.1)
+                weighted_score_challenger += challenger_value * weight
+                weighted_score_champion += champion_value * weight
+                
+                if difference > 0:
+                    comparison['improvements'][metric_name] = {
+                        'challenger': challenger_value,
+                        'champion': champion_value,
+                        'improvement': difference,
+                        'improvement_pct': (difference / champion_value * 100) if champion_value > 0 else 0
+                    }
+                    logger.info(f"{metric_name}: Challenger improved by {difference:.4f} ({comparison['improvements'][metric_name]['improvement_pct']:.2f}%)")
+                elif difference < 0:
+                    comparison['degradations'][metric_name] = {
+                        'challenger': challenger_value,
+                        'champion': champion_value,
+                        'degradation': abs(difference),
+                        'degradation_pct': (abs(difference) / champion_value * 100) if champion_value > 0 else 0
+                    }
+                    logger.info(f"{metric_name}: Challenger degraded by {abs(difference):.4f} ({comparison['degradations'][metric_name]['degradation_pct']:.2f}%)")
+        
+        comparison['weighted_score_challenger'] = weighted_score_challenger
+        comparison['weighted_score_champion'] = weighted_score_champion
+        
+        # Decision logic: deploy if weighted score is better
+        if weighted_score_challenger > weighted_score_champion:
+            comparison['deploy_challenger'] = True
+            comparison['recommendation'] = f"Deploy challenger model - weighted score improved from {weighted_score_champion:.4f} to {weighted_score_challenger:.4f}"
+            logger.info(comparison['recommendation'])
+        else:
+            comparison['recommendation'] = f"Retain champion model - weighted score {weighted_score_champion:.4f} vs challenger {weighted_score_challenger:.4f}"
+            logger.info(comparison['recommendation'])
+        
+        return comparison
+    
+    except Exception as e:
+        logger.error(f"Error comparing models: {str(e)}")
+        raise
+
+
+def save_model(model: BaseEstimator, model_path: str, metadata: Dict[str, Any]) -> None:
+    """Save trained model with versioning and metadata."""
+    try:
+        logger.info(f"Saving model to {model_path}")
+        
+        # Create directory if it doesn't exist
+        path = Path(model_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Add timestamp to metadata
+        metadata['saved_at'] = datetime.now().isoformat()
+        metadata['model_path'] = str(model_path)
+        
+        # Save model using joblib
+        model_file = path.with_suffix('.joblib')
+        joblib.dump(model, model_file)
+        logger.info(f"Model saved to {model_file}")
+        
+        # Save metadata as JSON
+        metadata_file = path.with_suffix('.json')
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Metadata saved to {metadata_file}")
+        
+        logger.info("Model and metadata saved successfully")
+    
+    except Exception as e:
+        logger.error(f"Error saving model: {str(e)}")
+        raise
+
+
+def load_model(model_path: str) -> Tuple[BaseEstimator, Dict[str, Any]]:
+    """Load trained model and associated metadata."""
+    try:
+        logger.info(f"Loading model from {model_path}")
+        
+        path = Path(model_path)
+        
+        # Load model
+        model_file = path.with_suffix('.joblib')
+        if not model_file.exists():
+            raise FileNotFoundError(f"Model file not found: {model_file}")
+        
+        model = joblib.load(model_file)
+        logger.info(f"Model loaded from {model_file}")
+        
+        # Load metadata
+        metadata_file = path.with_suffix('.json')
+        if metadata_file.exists():
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            logger.info(f"Metadata loaded from {metadata_file}")
+        else:
+            logger.warning(f"Metadata file not found: {metadata_file}")
+            metadata = {}
+        
+        return model, metadata
+    
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        raise
+
+
+def generate_model_card(model: BaseEstimator, metrics: Dict[str, float], metadata: Dict[str, Any]) -> str:
+    """Generate model card documentation with performance metrics and metadata."""
+    try:
+        logger.info("Generating model card")
+        
+        model_card = f"""
+# Fraud Detection Model Card
+
+## Model Information
+- **Model Type**: {type(model).__name__}
+- **Version**: {metadata.get('version', 'N/A')}
+- **Created**: {metadata.get('saved_at', 'N/A')}
+- **Framework**: scikit-learn
+
+## Model Description
+This model is designed to detect fraudulent transactions in real-time payment systems.
+
+## Intended Use
+- **Primary Use**: Binary classification of transactions as fraudulent or legitimate
+- **Intended Users**: Fraud detection systems, risk management teams
+- **Out-of-Scope Uses**: Not intended for use outside of transaction fraud detection
+
+## Training Data
+- **Dataset Size**: {metadata.get('training_samples', 'N/A')} samples
+- **Features**: {metadata.get('num_features', 'N/A')} features
+- **Fraud Rate**: {metadata.get('fraud_rate', 'N/A')}
+- **Data Split**: {metadata.get('train_test_split', '80/20')}
+
+## Performance Metrics
+
+### Classification Metrics
+- **Precision**: {metrics.get('precision', 0):.4f}
+- **Recall**: {metrics.get('recall', 0):.4f}
+- **F1 Score**: {metrics.get('f1_score', 0):.4f}
+- **ROC-AUC**: {metrics.get('roc_auc', 0):.4f}
+- **Accuracy**: {metrics.get('accuracy', 0):.4f}
+
+### Confusion Matrix
+- **True Positives**: {metrics.get('true_positives', 0)}
+- **True Negatives**: {metrics.get('true_negatives', 0)}
+- **False Positives**: {metrics.get('false_positives', 0)}
+- **False Negatives**: {metrics.get('false_negatives', 0)}
+
+### Additional Metrics
+- **Specificity**: {metrics.get('specificity', 0):.4f}
+- **False Positive Rate**: {metrics.get('false_positive_rate', 0):.4f}
+
+## Hyperparameters
+{json.dumps(metadata.get('hyperparameters', {}), indent=2)}
+
+## Ethical Considerations
+- Model decisions should be reviewed by human analysts for high-value transactions
+- Regular monitoring for bias and fairness is recommended
+- Model performance may degrade over time due to evolving fraud patterns
+
+## Limitations
+- Performance may vary on data distributions different from training data
+- Requires regular retraining to maintain effectiveness
+- May have higher false positive rates on edge cases
+
+## Monitoring and Maintenance
+- **Drift Detection**: Enabled
+- **Retraining Frequency**: {metadata.get('retraining_frequency', 'Weekly')}
+- **Performance Monitoring**: Continuous
+
+## Contact Information
+- **Model Owner**: {metadata.get('owner', 'MLOps Team')}
+- **Last Updated**: {metadata.get('saved_at', 'N/A')}
+
+---
+*This model card was automatically generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+        
+        logger.info("Model card generated successfully")
+        return model_card
+    
+    except Exception as e:
+        logger.error(f"Error generating model card: {str(e)}")
+        raise
+
+
+def log_experiment(experiment_name: str, params: Dict[str, Any], metrics: Dict[str, float]) -> None:
+    """Log experiment parameters and metrics to tracking system."""
+    try:
+        logger.info(f"Logging experiment: {experiment_name}")
+        
+        # Create experiments directory if it doesn't exist
+        experiments_dir = Path("experiments")
+        experiments_dir.mkdir(exist_ok=True)
+        
+        # Create experiment log
+        experiment_log = {
+            'experiment_name': experiment_name,
+            'timestamp': datetime.now().isoformat(),
+            'parameters': params,
+            'metrics': metrics
+        }
+        
+        # Save experiment log to file
+        experiment_file = experiments_dir / f"{experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(experiment_file, 'w') as f:
+            json.dump(experiment_log, f, indent=2)
+        
+        logger.info(f"Experiment logged to {experiment_file}")
+        
+        # Also append to master log
+        master_log_file = experiments_dir / "experiments_log.jsonl"
+        with open(master_log_file, 'a') as f:
+            f.write(json.dumps(experiment_log) + '\n')
+        
+        logger.info("Experiment logging complete")
+    
+    except Exception as e:
+        logger.error(f"Error logging experiment: {str(e)}")
+        # Don't raise - logging failures shouldn't stop the pipeline
+
+
+def run_pipeline(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute end-to-end ML pipeline for fraud detection model."""
+    try:
+        logger.info("=" * 80)
+        logger.info("Starting ML Pipeline Execution")
+        logger.info("=" * 80)
+        
+        pipeline_results = {
+            'status': 'running',
+            'start_time': datetime.now().isoformat(),
+            'steps_completed': []
+        }
+        
+        # Step 1: Load data
+        logger.info("\n[Step 1/10] Loading data...")
+        data = load_data(config['data_path'])
+        pipeline_results['steps_completed'].append('load_data')
+        
+        # Step 2: Validate schema
+        logger.info("\n[Step 2/10] Validating data schema...")
+        schema_valid = validate_data_schema(data, config.get('schema', {}))
+        if not schema_valid and config.get('strict_validation', True):
+            raise ValueError("Data schema validation failed")
+        pipeline_results['steps_completed'].append('validate_schema')
+        
+        # Step 3: Preprocess data
+        logger.info("\n[Step 3/10] Preprocessing data...")
+        data_processed = preprocess_data(data)
+        pipeline_results['steps_completed'].append('preprocess_data')
+        
+        # Step 4: Extract features
+        logger.info("\n[Step 4/10] Extracting features...")
+        data_featured = extract_features(data_processed)
+        pipeline_results['steps_completed'].append('extract_features')
+        
+        # Step 5: Split data
+        logger.info("\n[Step 5/10] Splitting data...")
+        X_train, X_test, y_train, y_test = split_data(
+            data_featured,
+            test_size=config.get('test_size', 0.2),
+            random_state=config.get('random_state', 42)
+        )
+        pipeline_results['steps_completed'].append('split_data')
+        
+        # Step 6: Balance dataset
+        logger.info("\n[Step 6/10] Balancing dataset...")
+        if config.get('balance_data', True):
+            X_train_balanced, y_train_balanced = balance_dataset(
+                X_train, y_train,
+                strategy=config.get('balance_strategy', 'smote')
+            )
+        else:
+            X_train_balanced, y_train_balanced = X_train, y_train
+        pipeline_results['steps_completed'].append('balance_data')
+        
+        # Step 7: Train model
+        logger.info("\n[Step 7/10] Training model...")
+        model = train_model(
+            X_train_balanced,
+            y_train_balanced,
+            config.get('hyperparameters', {'n_estimators': 100, 'max_depth': 10})
+        )
+        pipeline_results['steps_completed'].append('train_model')
+        
+        # Step 8: Evaluate model
+        logger.info("\n[Step 8/10] Evaluating model...")
+        metrics = evaluate_model(model, X_test, y_test)
+        pipeline_results['metrics'] = metrics
+        pipeline_results['steps_completed'].append('evaluate_model')
+        
+        # Step 9: Validate performance
+        logger.info("\n[Step 9/10] Validating model performance...")
+        performance_valid = validate_model_performance(
+            metrics,
+            config.get('performance_thresholds', {
+                'precision': 0.7,
+                'recall': 0.7,
+                'f1_score': 0.7
+            })
+        )
+        pipeline_results['performance_valid'] = performance_valid
+        pipeline_results['steps_completed'].append('validate_performance')
+        
+        # Step 10: Save model and artifacts
+        logger.info("\n[Step 10/10] Saving model and artifacts...")
+        metadata = {
+            'version': config.get('model_version', '1.0.0'),
+            'hyperparameters': config.get('hyperparameters', {}),
+            'training_samples': len(X_train_balanced),
+            'num_features': len(X_train_balanced.columns),
+            'fraud_rate': float(y_train.mean()),
+            'train_test_split': f"{int((1-config.get('test_size', 0.2))*100)}/{int(config.get('test_size', 0.2)*100)}",
+            'metrics': metrics,
+            'owner': config.get('owner', 'MLOps Team'),
+            'retraining_frequency': config.get('retraining_frequency', 'Weekly')
+        }
+        
+        model_path = config.get('model_path', 'models/fraud_model')
+        save_model(model, model_path, metadata)
+        pipeline_results['model_path'] = model_path
+        pipeline_results['steps_completed'].append('save_model')
+        
+        # Generate model card
+        model_card = generate_model_card(model, metrics, metadata)
+        model_card_path = Path(model_path).with_suffix('.md')
+        with open(model_card_path, 'w') as f:
+            f.write(model_card)
+        logger.info(f"Model card saved to {model_card_path}")
+        
+        # Log experiment
+        log_experiment(
+            experiment_name=config.get('experiment_name', 'fraud_detection_training'),
+            params=config.get('hyperparameters', {}),
+            metrics=metrics
+        )
+        
+        # Complete pipeline
+        pipeline_results['status'] = 'completed'
+        pipeline_results['end_time'] = datetime.now().isoformat()
+        pipeline_results['performance_valid'] = performance_valid
+        
+        logger.info("\n" + "=" * 80)
+        logger.info("Pipeline Execution Complete")
+        logger.info(f"Status: {pipeline_results['status']}")
+        logger.info(f"Performance Valid: {performance_valid}")
+        logger.info(f"Model saved to: {model_path}")
+        logger.info("=" * 80)
+        
+        return pipeline_results
+    
+    except Exception as e:
+        logger.error(f"Pipeline execution failed: {str(e)}")
+        pipeline_results['status'] = 'failed'
+        pipeline_results['error'] = str(e)
+        pipeline_results['end_time'] = datetime.now().isoformat()
+        raise
+```

@@ -1,0 +1,175 @@
+Certainly! Below is the complete implementation of the `model_pipeline.py` module for your fraud detection pipeline, following the given structure and function signatures:
+
+```python
+# fraud_detection_pipeline/pipeline/model_pipeline.py
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+
+def load_data(source: str) -> pd.DataFrame:
+    """Load data from the specified source."""
+    try:
+        data = pd.read_csv(source)
+        return data
+    except Exception as e:
+        print(f"An error occurred while loading data: {e}")
+        raise
+
+def preprocess_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Preprocess the raw data to prepare it for training."""
+    try:
+        # Example preprocessing: drop missing values and encode categorical variables
+        data = data.dropna()
+        # Assuming 'label' is the target column
+        features = data.drop('label', axis=1)
+        target = data['label']
+        
+        # One-hot encode categorical variables
+        features = pd.get_dummies(features)
+        return features, target
+    except Exception as e:
+        print(f"An error occurred during preprocessing: {e}")
+        raise
+
+def train_model(preprocessed_data: tuple) -> RandomForestClassifier:
+    """Train the fraud detection model on the preprocessed data."""
+    try:
+        features, target = preprocessed_data
+        X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+        
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        
+        return model
+    except Exception as e:
+        print(f"An error occurred during model training: {e}")
+        raise
+
+def evaluate_model(model: RandomForestClassifier, test_data: tuple) -> float:
+    """Evaluate the trained model against test data and return the accuracy."""
+    try:
+        X_test, y_test = test_data
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        return accuracy
+    except Exception as e:
+        print(f"An error occurred during model evaluation: {e}")
+        raise
+
+def save_model(model: RandomForestClassifier, destination: str) -> None:
+    """Save the trained model to the specified destination."""
+    try:
+        joblib.dump(model, destination)
+    except Exception as e:
+        print(f"An error occurred while saving the model: {e}")
+        raise
+```
+
+This module assumes that the data source is a CSV file, the target variable is named 'label', and the RandomForestClassifier is used as the model. Adjust the data loading, preprocessing, and model training steps to fit the specifics of your dataset and requirements.
+
+Certainly! Below is the complete pytest test file for the implemented pipeline module, along with a GitHub Actions workflow to automate the testing process.
+
+### a) Pytest Test File
+
+```python
+# tests/test_model_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline.pipeline.model_pipeline import (
+    load_data,
+    preprocess_data,
+    train_model,
+    evaluate_model,
+    save_model
+)
+import os
+
+# Mock data for testing
+MOCK_DATA = {
+    'feature1': [1, 2, 3, 4],
+    'feature2': [5, 6, 7, 8],
+    'label': [0, 1, 0, 1]
+}
+
+MOCK_DATA_PATH = "mock_data.csv"
+MODEL_PATH = "mock_model.joblib"
+
+@pytest.fixture
+def mock_data():
+    return pd.DataFrame(MOCK_DATA)
+
+def test_load_data(mock_data):
+    mock_data.to_csv(MOCK_DATA_PATH, index=False)
+    data = load_data(MOCK_DATA_PATH)
+    pd.testing.assert_frame_equal(data, mock_data)
+    os.remove(MOCK_DATA_PATH)
+
+def test_preprocess_data(mock_data):
+    features, target = preprocess_data(mock_data)
+    assert not features.isnull().values.any()
+    assert set(target) == {0, 1}
+    assert 'label' not in features.columns
+
+def test_train_model(mock_data):
+    features, target = preprocess_data(mock_data)
+    model = train_model((features, target))
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(mock_data):
+    features, target = preprocess_data(mock_data)
+    model = train_model((features, target))
+    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+    accuracy = evaluate_model(model, (X_test, y_test))
+    assert 0 <= accuracy <= 1
+
+def test_save_model(mock_data):
+    features, target = preprocess_data(mock_data)
+    model = train_model((features, target))
+    save_model(model, MODEL_PATH)
+    assert os.path.exists(MODEL_PATH)
+    os.remove(MODEL_PATH)
+```
+
+### b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+This setup includes a test suite that verifies each function of the pipeline module using pytest, and a GitHub Actions workflow that triggers on pushes and pull requests to the `main` branch, setting up the environment, installing dependencies, and running the tests.

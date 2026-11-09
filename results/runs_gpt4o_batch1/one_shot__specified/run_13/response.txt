@@ -1,0 +1,173 @@
+Below is a complete setup for a CI/CD pipeline for a fraud detection model implemented using a scikit-learn RandomForestClassifier. The pipeline includes data loading, model training, evaluation, and logging to MLflow. Additionally, it includes pytest tests and a GitHub Actions workflow for automation.
+
+### Python Pipeline Script
+
+```python
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+import mlflow
+import mlflow.sklearn
+from sklearn.metrics import confusion_matrix
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+def load_data(file_path):
+    try:
+        logging.info("Loading data...")
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        logging.error(f"Failed to load data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        logging.info("Preprocessing data...")
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        return X, y
+    except Exception as e:
+        logging.error(f"Failed to preprocess data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        logging.info("Training model...")
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        logging.error(f"Failed to train model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        logging.info("Evaluating model...")
+        y_pred = model.predict(X_test)
+        report = classification_report(y_test, y_pred, output_dict=True)
+        roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:,1])
+        logging.info(f"Classification Report: {report}")
+        logging.info(f"ROC AUC Score: {roc_auc}")
+        return report, roc_auc
+    except Exception as e:
+        logging.error(f"Failed to evaluate model: {e}")
+        raise
+
+def log_experiment(model, report, roc_auc):
+    try:
+        logging.info("Logging experiment to MLflow...")
+        with mlflow.start_run():
+            mlflow.log_metric("precision", report['1']['precision'])
+            mlflow.log_metric("recall", report['1']['recall'])
+            mlflow.log_metric("f1-score", report['1']['f1-score'])
+            mlflow.log_metric("roc_auc", roc_auc)
+            mlflow.sklearn.log_model(model, "model")
+    except Exception as e:
+        logging.error(f"Failed to log experiment: {e}")
+        raise
+
+def main(file_path):
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    
+    model = train_model(X_train, y_train)
+    report, roc_auc = evaluate_model(model, X_test, y_test)
+    log_experiment(model, report, roc_auc)
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'Feature1': [0.1, 0.2, 0.3, 0.4, 0.5],
+        'Feature2': [1, 2, 3, 4, 5],
+        'Class': [0, 0, 0, 1, 0]
+    })
+
+def test_load_data():
+    data = load_data("creditcard.csv")
+    assert not data.empty, "Data should not be empty"
+
+def test_preprocess_data(sample_data):
+    X, y = preprocess_data(sample_data)
+    assert len(X) == len(y), "Feature and target lengths should match"
+    assert 'Class' not in X.columns, "Feature set should not contain the target"
+
+def test_train_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier), "Model should be an instance of RandomForestClassifier"
+
+def test_evaluate_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    model = train_model(X, y)
+    report, roc_auc = evaluate_model(model, X, y)
+    assert '1' in report, "Classification report should contain results for class 1"
+    assert roc_auc >= 0.0 and roc_auc <= 1.0, "ROC AUC should be between 0 and 1"
+```
+
+### GitHub Actions Workflow
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly run on Sundays at midnight
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+    - name: Run pipeline
+      env:
+        MLFLOW_TRACKING_URI: 'http://localhost:5000'  # Update with your MLflow server URI
+      run: |
+        python pipeline.py
+```
+
+### Notes
+
+- **Error Handling:** The script includes error handling for critical steps like data loading, preprocessing, training, and evaluation.
+- **Testing:** The `pytest` test suite includes tests for data loading, preprocessing, model training, and evaluation.
+- **GitHub Actions:** The workflow is triggered on pushes and pull requests to the `main` branch and includes a scheduled weekly run. It sets up Python, installs dependencies, runs tests, and executes the pipeline script.
+- **MLflow Configuration:** Ensure that the `MLFLOW_TRACKING_URI` environment variable is set correctly in your environment or within the GitHub Actions secrets for proper MLflow logging.

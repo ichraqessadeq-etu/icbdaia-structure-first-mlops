@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this code or data, please cite it as below."
+title: "Structure-First Generation of MLOps Pipelines: Does Engineering-Style Staging Reduce Operational Hallucinations in LLM-Generated CI/CD Artifacts? (code and data)"
+authors:
+  - family-names: Essadeq
+    given-names: Ichraq
+    orcid: "https://orcid.org/0009-0007-9408-3810"
+    affiliation: "LTIM, TCA Team, Faculty of Sciences Ben M'Sick, Hassan II University of Casablanca"
+  - family-names: Nouh
+    given-names: Said
+    orcid: "https://orcid.org/0000-0003-1672-6183"
+    affiliation: "LTIM, TCA Team, Faculty of Sciences Ben M'Sick, Hassan II University of Casablanca"
+  - family-names: Kandali
+    given-names: Khalid
+    orcid: "https://orcid.org/0000-0003-4266-6671"
+    affiliation: "LTIM, TCA Team, Faculty of Sciences Ben M'Sick, Hassan II University of Casablanca"
+license: MIT
+date-released: 2026-11-09
+keywords:
+  - MLOps
+  - LLM
+  - code generation
+  - operational hallucination
+  - reproducibility
+  - CI/CD

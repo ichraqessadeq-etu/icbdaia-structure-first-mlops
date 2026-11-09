@@ -1,0 +1,542 @@
+# CI/CD Pipeline Structure for Fraud Detection Model
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ml-pipeline.yml
+├── src/
+│   ├── __init__.py
+│   └── pipeline.py
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py
+├── models/
+│   └── .gitkeep
+├── data/
+│   ├── raw/
+│   └── processed/
+├── configs/
+│   └── model_config.yaml
+├── requirements.txt
+├── requirements-dev.txt
+└── README.md
+```
+
+## Pipeline Module (`src/pipeline.py`)
+
+```python
+"""Fraud detection model CI/CD pipeline."""
+
+from typing import Tuple, Dict, Any
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load fraud detection dataset from specified path."""
+    ...
+
+
+def validate_data_schema(df: pd.DataFrame, expected_schema: Dict[str, str]) -> bool:
+    """Validate that dataframe matches expected schema."""
+    ...
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Preprocess raw data including cleaning, feature engineering, and scaling."""
+    ...
+
+
+def split_data(
+    df: pd.DataFrame, 
+    test_size: float = 0.2, 
+    validation_size: float = 0.1,
+    random_state: int = 42
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split data into train, validation, and test sets with stratification."""
+    ...
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, config: Dict[str, Any]) -> Any:
+    """Train fraud detection model with specified configuration."""
+    ...
+
+
+def evaluate_model(model: Any, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance and return metrics including precision, recall, F1, AUC-ROC."""
+    ...
+
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model meets minimum performance thresholds."""
+    ...
+
+
+def check_data_drift(
+    reference_data: pd.DataFrame, 
+    current_data: pd.DataFrame,
+    threshold: float = 0.05
+) -> Dict[str, Any]:
+    """Detect data drift between reference and current datasets."""
+    ...
+
+
+def check_model_bias(
+    model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    sensitive_features: list
+) -> Dict[str, float]:
+    """Check for model bias across sensitive feature groups."""
+    ...
+
+
+def save_model(model: Any, filepath: Path, metadata: Dict[str, Any]) -> None:
+    """Save trained model with metadata to specified path."""
+    ...
+
+
+def load_model(filepath: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Load trained model and metadata from specified path."""
+    ...
+
+
+def save_preprocessing_artifacts(artifacts: Dict[str, Any], filepath: Path) -> None:
+    """Save preprocessing artifacts (scalers, encoders, etc.) to disk."""
+    ...
+
+
+def generate_model_card(
+    model: Any,
+    metrics: Dict[str, float],
+    bias_metrics: Dict[str, float],
+    config: Dict[str, Any]
+) -> str:
+    """Generate model card documentation with performance and fairness metrics."""
+    ...
+
+
+def run_pipeline(config_path: str) -> Dict[str, Any]:
+    """Execute complete ML pipeline from data loading to model saving."""
+    ...
+```
+
+## Test File (`tests/test_pipeline.py`)
+
+```python
+"""Comprehensive tests for fraud detection ML pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+
+# Fixtures
+
+@pytest.fixture
+def sample_fraud_data():
+    """Create sample fraud detection dataset for testing."""
+    ...
+
+
+@pytest.fixture
+def sample_config():
+    """Create sample configuration dictionary."""
+    ...
+
+
+@pytest.fixture
+def trained_model():
+    """Create a mock trained model for testing."""
+    ...
+
+
+@pytest.fixture
+def sample_schema():
+    """Create expected data schema for validation."""
+    ...
+
+
+# Data Loading Tests
+
+def test_load_data_success():
+    """Test successful data loading from CSV file."""
+    ...
+
+
+def test_load_data_file_not_found():
+    """Test error handling when data file doesn't exist."""
+    ...
+
+
+def test_load_data_invalid_format():
+    """Test error handling for invalid file format."""
+    ...
+
+
+# Data Validation Tests
+
+def test_validate_data_schema_valid():
+    """Test schema validation with valid dataframe."""
+    ...
+
+
+def test_validate_data_schema_missing_columns():
+    """Test schema validation fails with missing columns."""
+    ...
+
+
+def test_validate_data_schema_wrong_types():
+    """Test schema validation fails with incorrect data types."""
+    ...
+
+
+# Preprocessing Tests
+
+def test_preprocess_data_handles_missing_values():
+    """Test preprocessing correctly handles missing values."""
+    ...
+
+
+def test_preprocess_data_feature_engineering():
+    """Test feature engineering creates expected features."""
+    ...
+
+
+def test_preprocess_data_scaling():
+    """Test numerical features are properly scaled."""
+    ...
+
+
+def test_preprocess_data_returns_artifacts():
+    """Test preprocessing returns necessary artifacts for inference."""
+    ...
+
+
+# Data Splitting Tests
+
+def test_split_data_proportions():
+    """Test data split creates correct train/val/test proportions."""
+    ...
+
+
+def test_split_data_stratification():
+    """Test stratification maintains class distribution across splits."""
+    ...
+
+
+def test_split_data_reproducibility():
+    """Test data splitting is reproducible with same random state."""
+    ...
+
+
+# Model Training Tests
+
+def test_train_model_success():
+    """Test model training completes successfully."""
+    ...
+
+
+def test_train_model_with_config():
+    """Test model training uses provided configuration."""
+    ...
+
+
+def test_train_model_handles_imbalanced_data():
+    """Test model training handles class imbalance appropriately."""
+    ...
+
+
+# Model Evaluation Tests
+
+def test_evaluate_model_returns_all_metrics():
+    """Test evaluation returns all required metrics."""
+    ...
+
+
+def test_evaluate_model_metric_ranges():
+    """Test all metrics are within valid ranges (0-1)."""
+    ...
+
+
+def test_evaluate_model_on_edge_cases():
+    """Test model evaluation on edge cases (all fraud, no fraud)."""
+    ...
+
+
+# Performance Validation Tests
+
+def test_validate_model_performance_passes():
+    """Test performance validation passes with good metrics."""
+    ...
+
+
+def test_validate_model_performance_fails():
+    """Test performance validation fails with poor metrics."""
+    ...
+
+
+def test_validate_model_performance_missing_metrics():
+    """Test validation handles missing metrics gracefully."""
+    ...
+
+
+# Data Drift Tests
+
+def test_check_data_drift_no_drift():
+    """Test drift detection returns no drift for similar distributions."""
+    ...
+
+
+def test_check_data_drift_detected():
+    """Test drift detection identifies significant distribution changes."""
+    ...
+
+
+def test_check_data_drift_all_features():
+    """Test drift is checked across all numerical features."""
+    ...
+
+
+# Bias Detection Tests
+
+def test_check_model_bias_fairness():
+    """Test bias detection across sensitive feature groups."""
+    ...
+
+
+def test_check_model_bias_multiple_features():
+    """Test bias checking with multiple sensitive features."""
+    ...
+
+
+def test_check_model_bias_no_sensitive_features():
+    """Test bias checking handles absence of sensitive features."""
+    ...
+
+
+# Model Persistence Tests
+
+def test_save_model_creates_file():
+    """Test model saving creates file at specified path."""
+    ...
+
+
+def test_save_model_includes_metadata():
+    """Test saved model includes all metadata."""
+    ...
+
+
+def test_load_model_success():
+    """Test model loading retrieves model and metadata."""
+    ...
+
+
+def test_load_model_file_not_found():
+    """Test error handling when model file doesn't exist."""
+    ...
+
+
+def test_save_load_model_roundtrip():
+    """Test model can be saved and loaded without loss."""
+    ...
+
+
+# Preprocessing Artifacts Tests
+
+def test_save_preprocessing_artifacts():
+    """Test preprocessing artifacts are saved correctly."""
+    ...
+
+
+def test_preprocessing_artifacts_completeness():
+    """Test all necessary preprocessing artifacts are included."""
+    ...
+
+
+# Model Card Tests
+
+def test_generate_model_card_completeness():
+    """Test model card includes all required sections."""
+    ...
+
+
+def test_generate_model_card_format():
+    """Test model card is properly formatted markdown."""
+    ...
+
+
+# Integration Tests
+
+def test_run_pipeline_end_to_end():
+    """Test complete pipeline execution from start to finish."""
+    ...
+
+
+def test_run_pipeline_with_custom_config():
+    """Test pipeline runs with custom configuration."""
+    ...
+
+
+def test_run_pipeline_reproducibility():
+    """Test pipeline produces reproducible results."""
+    ...
+
+
+def test_run_pipeline_failure_handling():
+    """Test pipeline handles failures gracefully and logs errors."""
+    ...
+```
+
+## GitHub Actions Workflow (`.github/workflows/ml-pipeline.yml`)
+
+```yaml
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly retraining
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run black formatter check
+      - Run flake8 linter
+      - Run mypy type checking
+      - Run bandit security scan
+
+  # Job 2: Unit & Integration Tests
+  test:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run pytest with coverage
+      - Upload coverage reports
+      - Generate test report artifacts
+
+  # Job 3: Data Validation
+  data-validation:
+    steps:
+      - Checkout code
+      - Setup Python & dependencies
+      - Download latest data
+      - Validate data schema
+      - Check for data quality issues
+      - Detect data drift
+      - Generate data validation report
+
+  # Job 4: Model Training
+  train-model:
+    needs: [code-quality, test, data-validation]
+    steps:
+      - Checkout code
+      - Setup Python & dependencies
+      - Load and preprocess data
+      - Train model
+      - Save model artifacts
+      - Upload model to artifact storage
+
+  # Job 5: Model Evaluation
+  evaluate-model:
+    needs: train-model
+    steps:
+      - Checkout code
+      - Setup Python & dependencies
+      - Download trained model
+      - Load test dataset
+      - Evaluate model performance
+      - Check performance thresholds
+      - Run bias detection
+      - Generate evaluation report
+
+  # Job 6: Model Validation & Testing
+  model-validation:
+    needs: evaluate-model
+    steps:
+      - Checkout code
+      - Setup Python & dependencies
+      - Download model artifacts
+      - Run model unit tests
+      - Test model inference
+      - Validate prediction latency
+      - Check model size constraints
+      - Verify serialization/deserialization
+
+  # Job 7: Security & Compliance Scan
+  security-scan:
+    needs: model-validation
+    steps:
+      - Checkout code
+      - Scan dependencies for vulnerabilities
+      - Check model for adversarial robustness
+      - Validate compliance requirements
+      - Generate security report
+
+  # Job 8: Build & Package Model
+  build-package:
+    needs: [model-validation, security-scan]
+    steps:
+      - Checkout code
+      - Download model artifacts
+      - Generate model card
+      - Create model package
+      - Build Docker image
+      - Tag image with version
+      - Scan Docker image
+
+  # Job 9: Deploy to Staging
+  deploy-staging:
+    needs: build-package
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - Checkout code
+      - Setup cloud CLI
+      - Push Docker image to registry
+      - Deploy to staging environment
+      - Run smoke tests
+      - Validate deployment health
+
+  # Job 10: Production Deployment
+  deploy-production:
+    needs: build-package
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Setup cloud CLI
+      - Push Docker image to registry
+      - Deploy with blue-green strategy
+      - Run integration tests
+      - Monitor deployment metrics
+      - Rollback on failure
+
+  # Job 11: Post-Deployment Monitoring
+  post-deployment:
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    steps:
+      - Setup monitoring alerts
+      - Configure model performance tracking
+      - Enable prediction logging
+      - Create dashboard links
+      - Send notification to team
+```
+
+---
+
+**Structure complete.** Ready for Step 2: implementation upon your approval.

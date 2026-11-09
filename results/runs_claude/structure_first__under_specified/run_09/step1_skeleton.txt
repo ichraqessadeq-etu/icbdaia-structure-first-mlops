@@ -1,0 +1,659 @@
+# CI/CD Pipeline Structure for Fraud Detection Model
+
+## File Layout
+
+```
+fraud-detection-ml/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+├── src/
+│   └── pipeline/
+│       ├── __init__.py
+│       ├── data_validation.py
+│       ├── model_training.py
+│       ├── model_evaluation.py
+│       ├── model_registry.py
+│       └── deployment.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_data_validation.py
+│   ├── test_model_training.py
+│   ├── test_model_evaluation.py
+│   ├── test_model_registry.py
+│   └── test_deployment.py
+├── config/
+│   ├── model_config.yaml
+│   └── deployment_config.yaml
+├── requirements.txt
+├── requirements-dev.txt
+└── setup.py
+```
+
+## Pipeline Module Functions
+
+### `src/pipeline/data_validation.py`
+
+```python
+"""Data validation module for fraud detection pipeline."""
+
+from typing import Dict, Tuple, Any
+import pandas as pd
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load training or validation data from specified path."""
+    ...
+
+
+def validate_schema(df: pd.DataFrame, expected_schema: Dict[str, str]) -> bool:
+    """Validate that dataframe matches expected schema."""
+    ...
+
+
+def check_data_quality(df: pd.DataFrame, quality_thresholds: Dict[str, float]) -> Dict[str, Any]:
+    """Check data quality metrics against defined thresholds."""
+    ...
+
+
+def detect_data_drift(current_data: pd.DataFrame, reference_data: pd.DataFrame) -> Dict[str, float]:
+    """Detect statistical drift between current and reference datasets."""
+    ...
+
+
+def validate_feature_distributions(df: pd.DataFrame, reference_stats: Dict[str, Any]) -> bool:
+    """Validate feature distributions against reference statistics."""
+    ...
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Apply preprocessing transformations to the data."""
+    ...
+```
+
+### `src/pipeline/model_training.py`
+
+```python
+"""Model training module for fraud detection pipeline."""
+
+from typing import Dict, Any, Tuple
+import pandas as pd
+from sklearn.base import BaseEstimator
+
+
+def split_data(df: pd.DataFrame, test_size: float, random_state: int) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data into training and validation sets."""
+    ...
+
+
+def handle_class_imbalance(X_train: pd.DataFrame, y_train: pd.Series, strategy: str) -> Tuple[pd.DataFrame, pd.Series]:
+    """Handle class imbalance using specified strategy (SMOTE, undersampling, etc.)."""
+    ...
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, model_params: Dict[str, Any]) -> BaseEstimator:
+    """Train fraud detection model with specified parameters."""
+    ...
+
+
+def tune_hyperparameters(X_train: pd.DataFrame, y_train: pd.Series, param_grid: Dict[str, list]) -> Dict[str, Any]:
+    """Perform hyperparameter tuning using cross-validation."""
+    ...
+
+
+def save_model(model: BaseEstimator, model_path: str, metadata: Dict[str, Any]) -> None:
+    """Save trained model with metadata to specified path."""
+    ...
+
+
+def load_model(model_path: str) -> Tuple[BaseEstimator, Dict[str, Any]]:
+    """Load trained model and metadata from specified path."""
+    ...
+```
+
+### `src/pipeline/model_evaluation.py`
+
+```python
+"""Model evaluation module for fraud detection pipeline."""
+
+from typing import Dict, Any, List
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator
+
+
+def evaluate_model(model: BaseEstimator, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance on test set."""
+    ...
+
+
+def calculate_fraud_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_pred_proba: np.ndarray) -> Dict[str, float]:
+    """Calculate fraud-specific metrics (precision, recall, F1, AUC-ROC, etc.)."""
+    ...
+
+
+def compute_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+    """Compute confusion matrix for fraud predictions."""
+    ...
+
+
+def calculate_business_metrics(y_true: np.ndarray, y_pred: np.ndarray, transaction_amounts: np.ndarray) -> Dict[str, float]:
+    """Calculate business impact metrics (cost savings, false positive cost, etc.)."""
+    ...
+
+
+def compare_model_performance(current_metrics: Dict[str, float], baseline_metrics: Dict[str, float], threshold: float) -> bool:
+    """Compare current model performance against baseline."""
+    ...
+
+
+def generate_evaluation_report(metrics: Dict[str, float], output_path: str) -> None:
+    """Generate comprehensive evaluation report."""
+    ...
+
+
+def validate_model_fairness(model: BaseEstimator, X_test: pd.DataFrame, y_test: pd.Series, sensitive_features: List[str]) -> Dict[str, float]:
+    """Validate model fairness across sensitive feature groups."""
+    ...
+```
+
+### `src/pipeline/model_registry.py`
+
+```python
+"""Model registry module for fraud detection pipeline."""
+
+from typing import Dict, Any, Optional
+from sklearn.base import BaseEstimator
+
+
+def register_model(model: BaseEstimator, model_name: str, version: str, metrics: Dict[str, float], tags: Dict[str, str]) -> str:
+    """Register model in model registry with metadata."""
+    ...
+
+
+def get_model_version(model_name: str, version: Optional[str] = None) -> Tuple[BaseEstimator, Dict[str, Any]]:
+    """Retrieve specific model version from registry."""
+    ...
+
+
+def promote_model(model_name: str, version: str, stage: str) -> None:
+    """Promote model to specified stage (staging, production, archived)."""
+    ...
+
+
+def compare_model_versions(model_name: str, version1: str, version2: str) -> Dict[str, Any]:
+    """Compare metrics between two model versions."""
+    ...
+
+
+def get_production_model(model_name: str) -> Tuple[BaseEstimator, Dict[str, Any]]:
+    """Retrieve current production model."""
+    ...
+
+
+def archive_old_models(model_name: str, keep_latest_n: int) -> List[str]:
+    """Archive old model versions, keeping only the latest N versions."""
+    ...
+```
+
+### `src/pipeline/deployment.py`
+
+```python
+"""Deployment module for fraud detection pipeline."""
+
+from typing import Dict, Any, Optional
+import pandas as pd
+from sklearn.base import BaseEstimator
+
+
+def create_deployment_package(model_path: str, dependencies: list, output_path: str) -> str:
+    """Create deployment package with model and dependencies."""
+    ...
+
+
+def validate_deployment_environment(environment: str, requirements: Dict[str, Any]) -> bool:
+    """Validate that deployment environment meets requirements."""
+    ...
+
+
+def deploy_model(model_path: str, deployment_config: Dict[str, Any], environment: str) -> str:
+    """Deploy model to specified environment (staging, production)."""
+    ...
+
+
+def create_model_endpoint(model_name: str, version: str, endpoint_config: Dict[str, Any]) -> str:
+    """Create REST API endpoint for model inference."""
+    ...
+
+
+def test_endpoint(endpoint_url: str, test_data: pd.DataFrame) -> Dict[str, Any]:
+    """Test deployed model endpoint with sample data."""
+    ...
+
+
+def rollback_deployment(model_name: str, previous_version: str) -> None:
+    """Rollback to previous model version."""
+    ...
+
+
+def monitor_deployment_health(endpoint_url: str) -> Dict[str, Any]:
+    """Monitor health and performance of deployed model."""
+    ...
+
+
+def update_model_version(endpoint_url: str, new_model_version: str, strategy: str) -> None:
+    """Update model version using specified deployment strategy (blue-green, canary, etc.)."""
+    ...
+```
+
+## Test Functions
+
+### `tests/test_data_validation.py`
+
+```python
+"""Tests for data validation module."""
+
+
+def test_load_data_success():
+    """Test successful data loading from valid path."""
+    ...
+
+
+def test_load_data_file_not_found():
+    """Test error handling when data file does not exist."""
+    ...
+
+
+def test_validate_schema_valid():
+    """Test schema validation with valid dataframe."""
+    ...
+
+
+def test_validate_schema_invalid():
+    """Test schema validation with invalid dataframe."""
+    ...
+
+
+def test_check_data_quality_pass():
+    """Test data quality checks pass with good data."""
+    ...
+
+
+def test_check_data_quality_fail():
+    """Test data quality checks fail with poor data."""
+    ...
+
+
+def test_detect_data_drift_no_drift():
+    """Test drift detection when no drift is present."""
+    ...
+
+
+def test_detect_data_drift_significant_drift():
+    """Test drift detection when significant drift is present."""
+    ...
+
+
+def test_validate_feature_distributions():
+    """Test feature distribution validation."""
+    ...
+
+
+def test_preprocess_data():
+    """Test data preprocessing transformations."""
+    ...
+```
+
+### `tests/test_model_training.py`
+
+```python
+"""Tests for model training module."""
+
+
+def test_split_data():
+    """Test data splitting into train and validation sets."""
+    ...
+
+
+def test_handle_class_imbalance_smote():
+    """Test class imbalance handling using SMOTE."""
+    ...
+
+
+def test_handle_class_imbalance_undersample():
+    """Test class imbalance handling using undersampling."""
+    ...
+
+
+def test_train_model_success():
+    """Test successful model training."""
+    ...
+
+
+def test_train_model_invalid_params():
+    """Test model training with invalid parameters."""
+    ...
+
+
+def test_tune_hyperparameters():
+    """Test hyperparameter tuning process."""
+    ...
+
+
+def test_save_model():
+    """Test model saving with metadata."""
+    ...
+
+
+def test_load_model():
+    """Test model loading from disk."""
+    ...
+
+
+def test_save_load_model_roundtrip():
+    """Test that saved and loaded model produces same predictions."""
+    ...
+```
+
+### `tests/test_model_evaluation.py`
+
+```python
+"""Tests for model evaluation module."""
+
+
+def test_evaluate_model():
+    """Test model evaluation on test set."""
+    ...
+
+
+def test_calculate_fraud_metrics():
+    """Test calculation of fraud-specific metrics."""
+    ...
+
+
+def test_compute_confusion_matrix():
+    """Test confusion matrix computation."""
+    ...
+
+
+def test_calculate_business_metrics():
+    """Test business impact metrics calculation."""
+    ...
+
+
+def test_compare_model_performance_better():
+    """Test model comparison when new model is better."""
+    ...
+
+
+def test_compare_model_performance_worse():
+    """Test model comparison when new model is worse."""
+    ...
+
+
+def test_generate_evaluation_report():
+    """Test evaluation report generation."""
+    ...
+
+
+def test_validate_model_fairness():
+    """Test model fairness validation across groups."""
+    ...
+```
+
+### `tests/test_model_registry.py`
+
+```python
+"""Tests for model registry module."""
+
+
+def test_register_model():
+    """Test model registration in registry."""
+    ...
+
+
+def test_get_model_version_specific():
+    """Test retrieving specific model version."""
+    ...
+
+
+def test_get_model_version_latest():
+    """Test retrieving latest model version."""
+    ...
+
+
+def test_promote_model_to_staging():
+    """Test promoting model to staging."""
+    ...
+
+
+def test_promote_model_to_production():
+    """Test promoting model to production."""
+    ...
+
+
+def test_compare_model_versions():
+    """Test comparison between model versions."""
+    ...
+
+
+def test_get_production_model():
+    """Test retrieving current production model."""
+    ...
+
+
+def test_archive_old_models():
+    """Test archiving old model versions."""
+    ...
+```
+
+### `tests/test_deployment.py`
+
+```python
+"""Tests for deployment module."""
+
+
+def test_create_deployment_package():
+    """Test creation of deployment package."""
+    ...
+
+
+def test_validate_deployment_environment_valid():
+    """Test deployment environment validation with valid environment."""
+    ...
+
+
+def test_validate_deployment_environment_invalid():
+    """Test deployment environment validation with invalid environment."""
+    ...
+
+
+def test_deploy_model_staging():
+    """Test model deployment to staging environment."""
+    ...
+
+
+def test_deploy_model_production():
+    """Test model deployment to production environment."""
+    ...
+
+
+def test_create_model_endpoint():
+    """Test creation of model REST API endpoint."""
+    ...
+
+
+def test_test_endpoint():
+    """Test endpoint testing with sample data."""
+    ...
+
+
+def test_rollback_deployment():
+    """Test deployment rollback to previous version."""
+    ...
+
+
+def test_monitor_deployment_health():
+    """Test deployment health monitoring."""
+    ...
+
+
+def test_update_model_version_blue_green():
+    """Test model version update using blue-green strategy."""
+    ...
+
+
+def test_update_model_version_canary():
+    """Test model version update using canary strategy."""
+    ...
+```
+
+## GitHub Actions Workflow Outline
+
+### `.github/workflows/ci-cd.yml`
+
+```yaml
+name: Fraud Detection ML CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run black formatter check
+      - Run flake8 linter
+      - Run mypy type checking
+      - Run bandit security checks
+
+  # Job 2: Unit & Integration Tests
+  test:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run pytest with coverage
+      - Upload coverage reports
+      - Check coverage threshold (80%)
+
+  # Job 3: Data Validation
+  data-validation:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download training data
+      - Run data validation pipeline
+      - Check data quality metrics
+      - Detect data drift
+      - Upload validation reports
+
+  # Job 4: Model Training
+  model-training:
+    needs: [test, data-validation]
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download validated data
+      - Train model
+      - Save model artifacts
+      - Upload model to artifacts
+
+  # Job 5: Model Evaluation
+  model-evaluation:
+    needs: model-training
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download model artifacts
+      - Download test data
+      - Evaluate model performance
+      - Calculate fraud metrics
+      - Calculate business metrics
+      - Validate model fairness
+      - Compare with baseline model
+      - Upload evaluation reports
+
+  # Job 6: Model Registration
+  model-registration:
+    needs: model-evaluation
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download model artifacts
+      - Download evaluation metrics
+      - Register model in registry
+      - Tag model version
+      - Update model metadata
+
+  # Job 7: Deploy to Staging
+  deploy-staging:
+    needs: model-registration
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download model from registry
+      - Validate staging environment
+      - Create deployment package
+      - Deploy model to staging
+      - Create staging endpoint
+      - Run smoke tests
+      - Monitor deployment health
+
+  # Job 8: Integration Tests (Staging)
+  integration-tests-staging:
+    needs: deploy-staging
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run API integration tests
+      - Run performance tests
+      - Run load tests
+      - Validate predictions
+      - Upload test results
+
+  # Job 9: Deploy to Production
+  deploy-production:
+    needs: integration-tests-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download model from registry
+      - Validate production environment
+      - Create deployment package
+      - Deploy using canary strategy
+      - Monitor canary metrics
+      - Complete rollout or rollback
+      - Update production endpoint
+      - Run smoke tests
+      - Monitor deployment health
+      - Send deployment notification
+
+  # Job 10: Post-Deployment Monitoring
+  post-deployment:
+    needs: deploy-production
+    steps:
+      - Setup monitoring dashboards
+      - Configure alerting rules
+      - Enable model performance tracking
+      - Enable data drift monitoring
+      - Send success notification
+```

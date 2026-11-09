@@ -1,0 +1,627 @@
+```python
+"""Main ML pipeline for fraud detection model training and evaluation."""
+
+import logging
+import os
+import json
+from typing import Tuple, Dict, Any
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    classification_report,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    precision_recall_curve,
+    roc_curve
+)
+from imblearn.over_sampling import SMOTE
+import mlflow
+import mlflow.sklearn
+import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from src.config import load_config, get_default_config
+
+
+def setup_logging(log_level: str = "INFO") -> None:
+    """Configure logging for the pipeline."""
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_level}")
+    
+    logging.basicConfig(
+        level=numeric_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Suppress verbose logging from libraries
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from specified path."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_path}")
+    
+    try:
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Data file not found: {data_path}")
+        
+        df = pd.read_csv(data_path)
+        logger.info(f"Loaded {len(df)} records with {len(df.columns)} columns")
+        logger.info(f"Class distribution:\n{df['Class'].value_counts()}")
+        
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate data quality and schema requirements."""
+    logger = logging.getLogger(__name__)
+    logger.info("Validating data quality and schema")
+    
+    # Check for required columns
+    required_columns = ['Class']  # At minimum, we need the target column
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+    
+    # Check for null values
+    null_counts = df.isnull().sum()
+    if null_counts.any():
+        logger.warning(f"Found null values:\n{null_counts[null_counts > 0]}")
+        raise ValueError("Dataset contains null values")
+    
+    # Validate target column
+    if df['Class'].dtype not in [np.int64, np.int32, np.float64]:
+        raise ValueError(f"Invalid type for 'Class' column: {df['Class'].dtype}")
+    
+    unique_classes = df['Class'].unique()
+    if not set(unique_classes).issubset({0, 1}):
+        raise ValueError(f"Class column must contain only 0 and 1, found: {unique_classes}")
+    
+    # Check for sufficient samples
+    if len(df) < 100:
+        raise ValueError(f"Insufficient data: only {len(df)} records")
+    
+    # Check class imbalance
+    class_counts = df['Class'].value_counts()
+    imbalance_ratio = class_counts.max() / class_counts.min()
+    logger.info(f"Class imbalance ratio: {imbalance_ratio:.2f}")
+    
+    # Validate feature columns (all except Class should be numeric)
+    feature_columns = [col for col in df.columns if col != 'Class']
+    non_numeric = df[feature_columns].select_dtypes(exclude=[np.number]).columns.tolist()
+    if non_numeric:
+        raise ValueError(f"Non-numeric feature columns found: {non_numeric}")
+    
+    # Check for infinite values
+    if np.isinf(df[feature_columns].values).any():
+        raise ValueError("Dataset contains infinite values")
+    
+    logger.info("Data validation passed")
+
+
+def preprocess_data(
+    df: pd.DataFrame, 
+    test_size: float = 0.2, 
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split and preprocess data into train/test sets with proper scaling."""
+    logger = logging.getLogger(__name__)
+    logger.info("Preprocessing data")
+    
+    # Separate features and target
+    X = df.drop('Class', axis=1).values
+    y = df['Class'].values
+    
+    logger.info(f"Feature matrix shape: {X.shape}")
+    logger.info(f"Target vector shape: {y.shape}")
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, 
+        test_size=test_size, 
+        random_state=random_state,
+        stratify=y  # Maintain class distribution
+    )
+    
+    logger.info(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+    logger.info(f"Train class distribution: {np.bincount(y_train.astype(int))}")
+    logger.info(f"Test class distribution: {np.bincount(y_test.astype(int))}")
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Save scaler for later use
+    scaler_path = Path("models/scaler.pkl")
+    scaler_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(scaler, scaler_path)
+    logger.info(f"Scaler saved to {scaler_path}")
+    
+    logger.info("Preprocessing completed")
+    
+    return X_train_scaled, X_test_scaled, y_train, y_test
+
+
+def handle_imbalance(
+    X_train: np.ndarray, 
+    y_train: np.ndarray, 
+    strategy: str = "class_weight"
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Handle class imbalance using specified strategy (SMOTE or class_weight)."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Handling class imbalance using strategy: {strategy}")
+    
+    imbalance_params = {}
+    
+    if strategy == "smote":
+        # Use SMOTE to oversample minority class
+        logger.info("Applying SMOTE oversampling")
+        original_counts = np.bincount(y_train.astype(int))
+        logger.info(f"Original class distribution: {original_counts}")
+        
+        smote = SMOTE(random_state=42, sampling_strategy='auto')
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+        
+        new_counts = np.bincount(y_train_resampled.astype(int))
+        logger.info(f"Resampled class distribution: {new_counts}")
+        
+        imbalance_params['strategy'] = 'smote'
+        imbalance_params['original_samples'] = len(y_train)
+        imbalance_params['resampled_samples'] = len(y_train_resampled)
+        
+        return X_train_resampled, y_train_resampled, imbalance_params
+        
+    elif strategy == "class_weight":
+        # Use class weights in the model
+        logger.info("Using class weights")
+        class_counts = np.bincount(y_train.astype(int))
+        total_samples = len(y_train)
+        
+        # Calculate balanced class weights
+        class_weights = {
+            0: total_samples / (2 * class_counts[0]),
+            1: total_samples / (2 * class_counts[1])
+        }
+        
+        logger.info(f"Calculated class weights: {class_weights}")
+        
+        imbalance_params['strategy'] = 'class_weight'
+        imbalance_params['class_weights'] = class_weights
+        
+        return X_train, y_train, imbalance_params
+    
+    else:
+        raise ValueError(f"Unknown imbalance handling strategy: {strategy}")
+
+
+def train_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    hyperparameters: Dict[str, Any]
+) -> RandomForestClassifier:
+    """Train RandomForestClassifier with given hyperparameters."""
+    logger = logging.getLogger(__name__)
+    logger.info("Training RandomForestClassifier")
+    logger.info(f"Hyperparameters: {hyperparameters}")
+    
+    # Create and train model
+    model = RandomForestClassifier(**hyperparameters)
+    model.fit(X_train, y_train)
+    
+    logger.info("Model training completed")
+    logger.info(f"Number of trees: {model.n_estimators}")
+    logger.info(f"Number of features: {model.n_features_in_}")
+    
+    return model
+
+
+def evaluate_model(
+    model: RandomForestClassifier,
+    X_test: np.ndarray,
+    y_test: np.ndarray
+) -> Dict[str, Any]:
+    """Evaluate model performance with metrics suitable for imbalanced data."""
+    logger = logging.getLogger(__name__)
+    logger.info("Evaluating model performance")
+    
+    # Generate predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculate metrics
+    metrics = {}
+    
+    # Classification metrics
+    metrics['precision'] = float(precision_score(y_test, y_pred, zero_division=0))
+    metrics['recall'] = float(recall_score(y_test, y_pred, zero_division=0))
+    metrics['f1_score'] = float(f1_score(y_test, y_pred, zero_division=0))
+    
+    # Precision for each class
+    precision_per_class = precision_score(y_test, y_pred, average=None, zero_division=0)
+    metrics['precision_class_0'] = float(precision_per_class[0])
+    metrics['precision_class_1'] = float(precision_per_class[1])
+    
+    # Recall for each class
+    recall_per_class = recall_score(y_test, y_pred, average=None, zero_division=0)
+    metrics['recall_class_0'] = float(recall_per_class[0])
+    metrics['recall_class_1'] = float(recall_per_class[1])
+    
+    # ROC-AUC and PR-AUC
+    try:
+        metrics['roc_auc'] = float(roc_auc_score(y_test, y_pred_proba))
+        metrics['pr_auc'] = float(average_precision_score(y_test, y_pred_proba))
+    except ValueError as e:
+        logger.warning(f"Could not calculate AUC metrics: {e}")
+        metrics['roc_auc'] = 0.0
+        metrics['pr_auc'] = 0.0
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    metrics['confusion_matrix'] = cm.tolist()
+    metrics['true_negatives'] = int(cm[0, 0])
+    metrics['false_positives'] = int(cm[0, 1])
+    metrics['false_negatives'] = int(cm[1, 0])
+    metrics['true_positives'] = int(cm[1, 1])
+    
+    # Additional metrics
+    metrics['accuracy'] = float((cm[0, 0] + cm[1, 1]) / cm.sum())
+    
+    # Specificity (True Negative Rate)
+    metrics['specificity'] = float(cm[0, 0] / (cm[0, 0] + cm[0, 1])) if (cm[0, 0] + cm[0, 1]) > 0 else 0.0
+    
+    # Store predictions for drift detection
+    metrics['predictions'] = y_pred.tolist()
+    metrics['prediction_probabilities'] = y_pred_proba.tolist()
+    
+    # Log classification report
+    logger.info("\nClassification Report:")
+    logger.info("\n" + classification_report(y_test, y_pred, zero_division=0))
+    
+    logger.info(f"\nKey Metrics:")
+    logger.info(f"  Precision: {metrics['precision']:.4f}")
+    logger.info(f"  Recall: {metrics['recall']:.4f}")
+    logger.info(f"  F1-Score: {metrics['f1_score']:.4f}")
+    logger.info(f"  ROC-AUC: {metrics['roc_auc']:.4f}")
+    logger.info(f"  PR-AUC: {metrics['pr_auc']:.4f}")
+    
+    return metrics
+
+
+def log_to_mlflow(
+    model: RandomForestClassifier,
+    metrics: Dict[str, Any],
+    hyperparameters: Dict[str, Any],
+    artifacts: Dict[str, str]
+) -> str:
+    """Log model, metrics, parameters and artifacts to MLflow."""
+    logger = logging.getLogger(__name__)
+    logger.info("Logging to MLflow")
+    
+    # Start MLflow run
+    with mlflow.start_run() as run:
+        run_id = run.info.run_id
+        logger.info(f"MLflow run ID: {run_id}")
+        
+        # Log hyperparameters
+        for param_name, param_value in hyperparameters.items():
+            mlflow.log_param(param_name, param_value)
+        
+        # Log metrics (excluding non-scalar values)
+        scalar_metrics = {
+            k: v for k, v in metrics.items() 
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
+        for metric_name, metric_value in scalar_metrics.items():
+            mlflow.log_metric(metric_name, metric_value)
+        
+        # Log confusion matrix as JSON
+        if 'confusion_matrix' in metrics:
+            cm_path = Path("models/confusion_matrix.json")
+            cm_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cm_path, 'w') as f:
+                json.dump(metrics['confusion_matrix'], f)
+            mlflow.log_artifact(str(cm_path))
+        
+        # Create and log confusion matrix visualization
+        if 'confusion_matrix' in metrics:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            cm = np.array(metrics['confusion_matrix'])
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            ax.set_title('Confusion Matrix')
+            cm_plot_path = Path("models/confusion_matrix.png")
+            plt.savefig(cm_plot_path)
+            plt.close()
+            mlflow.log_artifact(str(cm_plot_path))
+        
+        # Log feature importances
+        if hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+            feature_importance_path = Path("models/feature_importances.json")
+            with open(feature_importance_path, 'w') as f:
+                json.dump({
+                    'importances': importances.tolist(),
+                    'n_features': len(importances)
+                }, f)
+            mlflow.log_artifact(str(feature_importance_path))
+        
+        # Log model
+        mlflow.sklearn.log_model(
+            model, 
+            "model",
+            registered_model_name=None  # We'll register separately
+        )
+        
+        # Log additional artifacts
+        for artifact_name, artifact_path in artifacts.items():
+            if os.path.exists(artifact_path):
+                mlflow.log_artifact(artifact_path)
+                logger.info(f"Logged artifact: {artifact_name} from {artifact_path}")
+        
+        # Log model signature
+        logger.info("Model and metrics logged successfully")
+    
+    return run_id
+
+
+def save_model_locally(
+    model: RandomForestClassifier,
+    model_path: str,
+    metadata: Dict[str, Any]
+) -> None:
+    """Save trained model and metadata to local filesystem."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving model to {model_path}")
+    
+    # Create directory if it doesn't exist
+    model_dir = Path(model_path).parent
+    model_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save model
+    joblib.dump(model, model_path)
+    logger.info(f"Model saved to {model_path}")
+    
+    # Save metadata
+    metadata_path = Path(model_path).with_suffix('.json')
+    with open(metadata_path, 'w') as f:
+        # Convert numpy types to Python types for JSON serialization
+        serializable_metadata = {}
+        for key, value in metadata.items():
+            if isinstance(value, np.ndarray):
+                serializable_metadata[key] = value.tolist()
+            elif isinstance(value, (np.int64, np.int32)):
+                serializable_metadata[key] = int(value)
+            elif isinstance(value, (np.float64, np.float32)):
+                serializable_metadata[key] = float(value)
+            else:
+                serializable_metadata[key] = value
+        
+        json.dump(serializable_metadata, f, indent=2)
+    
+    logger.info(f"Metadata saved to {metadata_path}")
+
+
+def register_model(
+    run_id: str,
+    model_name: str,
+    stage: str = "Staging"
+) -> None:
+    """Register model in MLflow Model Registry."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Registering model '{model_name}' from run {run_id}")
+    
+    try:
+        # Get the model URI
+        model_uri = f"runs:/{run_id}/model"
+        
+        # Register the model
+        model_version = mlflow.register_model(model_uri, model_name)
+        
+        logger.info(f"Model registered as '{model_name}' version {model_version.version}")
+        
+        # Transition to specified stage
+        client = mlflow.tracking.MlflowClient()
+        client.transition_model_version_stage(
+            name=model_name,
+            version=model_version.version,
+            stage=stage
+        )
+        
+        logger.info(f"Model transitioned to '{stage}' stage")
+        
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise
+
+
+def run_pipeline(
+    data_path: str,
+    config: Dict[str, Any],
+    mlflow_tracking_uri: str = None,
+    experiment_name: str = "fraud-detection"
+) -> Dict[str, Any]:
+    """Execute complete ML pipeline from data loading to model registration."""
+    logger = logging.getLogger(__name__)
+    logger.info("Starting ML pipeline execution")
+    
+    # Configure MLflow
+    if mlflow_tracking_uri:
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        logger.info(f"MLflow tracking URI: {mlflow_tracking_uri}")
+    
+    mlflow.set_experiment(experiment_name)
+    logger.info(f"MLflow experiment: {experiment_name}")
+    
+    results = {}
+    
+    try:
+        # Load data
+        df = load_data(data_path)
+        results['data_loaded'] = True
+        results['total_records'] = len(df)
+        
+        # Validate data
+        validate_data(df)
+        results['data_validated'] = True
+        
+        # Preprocess data
+        X_train, X_test, y_train, y_test = preprocess_data(
+            df,
+            test_size=config.get('test_size', 0.2),
+            random_state=config.get('random_state', 42)
+        )
+        results['data_preprocessed'] = True
+        results['train_size'] = len(X_train)
+        results['test_size'] = len(X_test)
+        
+        # Handle class imbalance
+        X_train_balanced, y_train_balanced, imbalance_params = handle_imbalance(
+            X_train,
+            y_train,
+            strategy=config.get('imbalance_strategy', 'class_weight')
+        )
+        results['imbalance_handled'] = True
+        results['imbalance_params'] = imbalance_params
+        
+        # Prepare hyperparameters
+        hyperparameters = config.get('hyperparameters', {})
+        
+        # Add class weights if using class_weight strategy
+        if imbalance_params.get('strategy') == 'class_weight':
+            hyperparameters['class_weight'] = imbalance_params['class_weights']
+        
+        # Train model
+        model = train_model(X_train_balanced, y_train_balanced, hyperparameters)
+        results['model_trained'] = True
+        
+        # Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        results['model_evaluated'] = True
+        results['metrics'] = metrics
+        
+        # Prepare artifacts
+        artifacts = {
+            'scaler': 'models/scaler.pkl'
+        }
+        
+        # Log to MLflow
+        run_id = log_to_mlflow(model, metrics, hyperparameters, artifacts)
+        results['mlflow_logged'] = True
+        results['run_id'] = run_id
+        
+        # Save model locally
+        model_path = config.get('model_path', 'models/fraud_detection_model.pkl')
+        metadata = {
+            'hyperparameters': hyperparameters,
+            'metrics': {k: v for k, v in metrics.items() if isinstance(v, (int, float))},
+            'imbalance_params': imbalance_params,
+            'train_size': len(X_train_balanced),
+            'test_size': len(X_test),
+            'run_id': run_id
+        }
+        save_model_locally(model, model_path, metadata)
+        results['model_saved'] = True
+        results['model_path'] = model_path
+        
+        # Register model if configured
+        if config.get('register_model', False):
+            model_name = config.get('model_name', 'fraud-detection-model')
+            register_model(run_id, model_name, stage='Staging')
+            results['model_registered'] = True
+            results['model_name'] = model_name
+        
+        logger.info("Pipeline execution completed successfully")
+        results['status'] = 'success'
+        
+    except Exception as e:
+        logger.error(f"Pipeline execution failed: {str(e)}")
+        results['status'] = 'failed'
+        results['error'] = str(e)
+        raise
+    
+    return results
+
+
+def main() -> None:
+    """Entry point for pipeline execution."""
+    # Setup logging
+    setup_logging(log_level=os.getenv('LOG_LEVEL', 'INFO'))
+    logger = logging.getLogger(__name__)
+    
+    logger.info("Starting Fraud Detection ML Pipeline")
+    
+    # Load configuration
+    config_path = os.getenv('CONFIG_PATH', None)
+    if config_path and os.path.exists(config_path):
+        config = load_config(config_path)
+        logger.info(f"Loaded configuration from {config_path}")
+    else:
+        config = get_default_config()
+        logger.info("Using default configuration")
+    
+    # Get data path
+    data_path = os.getenv('DATA_PATH', 'data/creditcard.csv')
+    
+    # Get MLflow configuration
+    mlflow_tracking_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    experiment_name = os.getenv('MLFLOW_EXPERIMENT_NAME', 'fraud-detection')
+    
+    # Run pipeline
+    try:
+        results = run_pipeline(
+            data_path=data_path,
+            config=config,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            experiment_name=experiment_name
+        )
+        
+        logger.info("=" * 80)
+        logger.info("PIPELINE EXECUTION SUMMARY")
+        logger.info("=" * 80)
+        logger.info(f"Status: {results['status']}")
+        logger.info(f"Total records: {results.get('total_records', 'N/A')}")
+        logger.info(f"Train size: {results.get('train_size', 'N/A')}")
+        logger.info(f"Test size: {results.get('test_size', 'N/A')}")
+        
+        if 'metrics' in results:
+            logger.info("\nModel Performance:")
+            logger.info(f"  Precision: {results['metrics'].get('precision', 'N/A'):.4f}")
+            logger.info(f"  Recall: {results['metrics'].get('recall', 'N/A'):.4f}")
+            logger.info(f"  F1-Score: {results['metrics'].get('f1_score', 'N/A'):.4f}")
+            logger.info(f"  ROC-AUC: {results['metrics'].get('roc_auc', 'N/A'):.4f}")
+            logger.info(f"  PR-AUC: {results['metrics'].get('pr_auc', 'N/A'):.4f}")
+        
+        logger.info(f"\nModel saved to: {results.get('model_path', 'N/A')}")
+        logger.info(f"MLflow run ID: {results.get('run_id', 'N/A')}")
+        
+        if results.get('model_registered'):
+            logger.info(f"Model registered as: {results.get('model_name', 'N/A')}")
+        
+        logger.info("=" * 80)
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed with error: {str(e)}", exc_info=True)
+        raise
+
+
+if __name__ == "__main__":
+    main()
+```

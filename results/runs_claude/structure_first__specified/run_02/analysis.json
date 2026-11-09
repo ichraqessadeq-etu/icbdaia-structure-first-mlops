@@ -1,0 +1,220 @@
+{
+  "n_python_blocks": 2,
+  "n_parse_ok": 2,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": true,
+  "is_iih": false,
+  "n_tests": 62,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randint(...) with no global seed set",
+            "lineno": 55
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.exponential(...) with no global seed set",
+            "lineno": 56
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 354
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 480
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 494
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 495
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 510
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 524
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 525
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 535
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 536
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 537
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 552
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 568
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 593
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 619
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 634
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 649
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 650
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 661
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 671
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 672
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 512
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 553
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 662
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 554
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 902
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 903
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 2,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 17557,
+    "completion_tokens": 33592,
+    "errors": [],
+    "truncated_calls": 0,
+    "seconds": 362.48
+  }
+}

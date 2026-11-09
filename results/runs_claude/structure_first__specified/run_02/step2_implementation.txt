@@ -1,0 +1,1151 @@
+```python
+# src/config.py
+"""Configuration management for the fraud detection pipeline."""
+
+from dataclasses import dataclass, asdict
+from typing import Dict, Any, Optional
+import os
+
+
+@dataclass
+class DataConfig:
+    """Data configuration parameters."""
+    target_column: str = 'Class'
+    test_size: float = 0.2
+    validation_size: float = 0.1
+    random_state: int = 42
+    balance_strategy: str = 'smote'
+    min_samples: int = 100
+    max_missing_ratio: float = 0.3
+
+
+@dataclass
+class ModelConfig:
+    """Model configuration parameters."""
+    n_estimators: int = 100
+    max_depth: Optional[int] = 20
+    min_samples_split: int = 10
+    min_samples_leaf: int = 4
+    max_features: str = 'sqrt'
+    class_weight: str = 'balanced'
+    random_state: int = 42
+    n_jobs: int = -1
+    min_precision: float = 0.85
+    min_recall: float = 0.75
+    min_f1: float = 0.80
+
+
+@dataclass
+class MLflowConfig:
+    """MLflow tracking configuration."""
+    tracking_uri: str = 'http://localhost:5000'
+    experiment_name: str = 'fraud-detection'
+    run_name: Optional[str] = None
+    artifact_location: Optional[str] = None
+    registered_model_name: str = 'fraud-detection-model'
+
+
+@dataclass
+class DriftConfig:
+    """Drift detection configuration."""
+    ks_test_threshold: float = 0.05
+    psi_threshold: float = 0.2
+    performance_degradation_threshold: float = 0.05
+    min_drift_features: int = 3
+    enable_feature_drift: bool = True
+    enable_prediction_drift: bool = True
+    enable_performance_drift: bool = True
+
+
+class PipelineConfig:
+    """Main pipeline configuration."""
+    
+    def __init__(
+        self,
+        data_config: Optional[DataConfig] = None,
+        model_config: Optional[ModelConfig] = None,
+        mlflow_config: Optional[MLflowConfig] = None,
+        drift_config: Optional[DriftConfig] = None
+    ):
+        """Initialize pipeline configuration."""
+        self.data = data_config or DataConfig()
+        self.model = model_config or ModelConfig()
+        self.mlflow = mlflow_config or MLflowConfig()
+        self.drift = drift_config or DriftConfig()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary."""
+        return {
+            'data': asdict(self.data),
+            'model': asdict(self.model),
+            'mlflow': asdict(self.mlflow),
+            'drift': asdict(self.drift)
+        }
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PipelineConfig':
+        """Load configuration from dictionary."""
+        return cls(
+            data_config=DataConfig(**config_dict.get('data', {})),
+            model_config=ModelConfig(**config_dict.get('model', {})),
+            mlflow_config=MLflowConfig(**config_dict.get('mlflow', {})),
+            drift_config=DriftConfig(**config_dict.get('drift', {}))
+        )
+
+
+# src/data_processing.py
+"""Data loading and preprocessing for fraud detection."""
+
+import pandas as pd
+import numpy as np
+from typing import Tuple, Optional
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.combine import SMOTETomek
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from file."""
+    try:
+        logger.info(f"Loading data from {file_path}")
+        df = pd.read_csv(file_path)
+        logger.info(f"Loaded {len(df)} records with {len(df.columns)} columns")
+        return df
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        raise
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate data schema and quality."""
+    logger.info("Validating data schema and quality")
+    
+    # Check if dataframe is empty
+    if df.empty:
+        raise ValueError("DataFrame is empty")
+    
+    # Check for required columns (assuming standard credit card fraud dataset)
+    required_columns = ['Class']  # Class is the target variable
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+    
+    # Check target column values
+    if 'Class' in df.columns:
+        unique_classes = df['Class'].unique()
+        if not set(unique_classes).issubset({0, 1}):
+            raise ValueError(f"Invalid values in Class column: {unique_classes}")
+    
+    # Check for excessive missing values
+    missing_ratio = df.isnull().sum() / len(df)
+    high_missing = missing_ratio[missing_ratio > 0.3]
+    if not high_missing.empty:
+        logger.warning(f"Columns with >30% missing values: {high_missing.to_dict()}")
+    
+    # Check for duplicate rows
+    duplicates = df.duplicated().sum()
+    if duplicates > 0:
+        logger.warning(f"Found {duplicates} duplicate rows")
+    
+    logger.info("Data validation completed successfully")
+
+
+def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Handle missing values in the dataset."""
+    logger.info("Handling missing values")
+    df_cleaned = df.copy()
+    
+    # Count missing values
+    missing_counts = df_cleaned.isnull().sum()
+    total_missing = missing_counts.sum()
+    
+    if total_missing == 0:
+        logger.info("No missing values found")
+        return df_cleaned
+    
+    logger.info(f"Found {total_missing} missing values across {(missing_counts > 0).sum()} columns")
+    
+    # Strategy: Fill numerical columns with median, categorical with mode
+    for column in df_cleaned.columns:
+        if df_cleaned[column].isnull().any():
+            if df_cleaned[column].dtype in ['float64', 'int64']:
+                median_value = df_cleaned[column].median()
+                df_cleaned[column].fillna(median_value, inplace=True)
+                logger.debug(f"Filled {column} with median: {median_value}")
+            else:
+                mode_value = df_cleaned[column].mode()[0] if not df_cleaned[column].mode().empty else 'Unknown'
+                df_cleaned[column].fillna(mode_value, inplace=True)
+                logger.debug(f"Filled {column} with mode: {mode_value}")
+    
+    logger.info("Missing values handled successfully")
+    return df_cleaned
+
+
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer additional features for fraud detection."""
+    logger.info("Engineering features")
+    df_engineered = df.copy()
+    
+    # Assuming standard credit card fraud dataset with Time and Amount columns
+    if 'Time' in df_engineered.columns:
+        # Convert time to hours
+        df_engineered['Hour'] = (df_engineered['Time'] / 3600) % 24
+        
+        # Create time-based features
+        df_engineered['Is_Night'] = ((df_engineered['Hour'] >= 22) | (df_engineered['Hour'] <= 6)).astype(int)
+        df_engineered['Is_Weekend'] = ((df_engineered['Time'] / 86400) % 7 >= 5).astype(int)
+    
+    if 'Amount' in df_engineered.columns:
+        # Log transform of amount (add 1 to avoid log(0))
+        df_engineered['Log_Amount'] = np.log1p(df_engineered['Amount'])
+        
+        # Amount categories
+        df_engineered['Amount_Category'] = pd.cut(
+            df_engineered['Amount'],
+            bins=[0, 10, 50, 100, 500, float('inf')],
+            labels=[0, 1, 2, 3, 4]
+        ).astype(int)
+    
+    # Interaction features between V columns if they exist
+    v_columns = [col for col in df_engineered.columns if col.startswith('V')]
+    if len(v_columns) >= 2:
+        # Create some interaction features
+        df_engineered['V_Sum'] = df_engineered[v_columns].sum(axis=1)
+        df_engineered['V_Mean'] = df_engineered[v_columns].mean(axis=1)
+        df_engineered['V_Std'] = df_engineered[v_columns].std(axis=1)
+    
+    logger.info(f"Feature engineering completed. New shape: {df_engineered.shape}")
+    return df_engineered
+
+
+def scale_features(X_train: pd.DataFrame, X_test: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, StandardScaler]:
+    """Scale features using StandardScaler."""
+    logger.info("Scaling features")
+    
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    logger.info(f"Features scaled. Train shape: {X_train_scaled.shape}, Test shape: {X_test_scaled.shape}")
+    return X_train_scaled, X_test_scaled, scaler
+
+
+def prepare_data(
+    df: pd.DataFrame,
+    target_column: str = 'Class',
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, StandardScaler]:
+    """Prepare data for model training."""
+    logger.info("Preparing data for model training")
+    
+    # Validate data
+    validate_data(df)
+    
+    # Handle missing values
+    df_cleaned = handle_missing_values(df)
+    
+    # Engineer features
+    df_featured = engineer_features(df_cleaned)
+    
+    # Separate features and target
+    if target_column not in df_featured.columns:
+        raise ValueError(f"Target column '{target_column}' not found in dataframe")
+    
+    X = df_featured.drop(columns=[target_column])
+    y = df_featured[target_column].values
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+    
+    logger.info(f"Data split - Train: {len(X_train)}, Test: {len(X_test)}")
+    logger.info(f"Class distribution - Train: {np.bincount(y_train)}, Test: {np.bincount(y_test)}")
+    
+    # Scale features
+    X_train_scaled, X_test_scaled, scaler = scale_features(X_train, X_test)
+    
+    return X_train_scaled, X_test_scaled, y_train, y_test, scaler
+
+
+def balance_dataset(X: np.ndarray, y: np.ndarray, strategy: str = 'smote') -> Tuple[np.ndarray, np.ndarray]:
+    """Balance imbalanced dataset using specified strategy."""
+    logger.info(f"Balancing dataset using strategy: {strategy}")
+    
+    original_counts = np.bincount(y)
+    logger.info(f"Original class distribution: {original_counts}")
+    
+    if strategy == 'smote':
+        sampler = SMOTE(random_state=42)
+    elif strategy == 'undersample':
+        sampler = RandomUnderSampler(random_state=42)
+    elif strategy == 'smote_tomek':
+        sampler = SMOTETomek(random_state=42)
+    else:
+        raise ValueError(f"Unknown balancing strategy: {strategy}")
+    
+    X_balanced, y_balanced = sampler.fit_resample(X, y)
+    
+    new_counts = np.bincount(y_balanced)
+    logger.info(f"Balanced class distribution: {new_counts}")
+    logger.info(f"Dataset size changed from {len(y)} to {len(y_balanced)}")
+    
+    return X_balanced, y_balanced
+
+
+# src/model.py
+"""Model training and evaluation for fraud detection."""
+
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    classification_report, confusion_matrix, roc_auc_score,
+    precision_recall_curve, average_precision_score, f1_score,
+    precision_score, recall_score, accuracy_score
+)
+from typing import Dict, Any, Tuple, Optional
+import joblib
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class FraudDetectionModel:
+    """Random Forest model for fraud detection."""
+    
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize fraud detection model."""
+        self.config = config
+        self.model = RandomForestClassifier(
+            n_estimators=config.get('n_estimators', 100),
+            max_depth=config.get('max_depth', 20),
+            min_samples_split=config.get('min_samples_split', 10),
+            min_samples_leaf=config.get('min_samples_leaf', 4),
+            max_features=config.get('max_features', 'sqrt'),
+            class_weight=config.get('class_weight', 'balanced'),
+            random_state=config.get('random_state', 42),
+            n_jobs=config.get('n_jobs', -1)
+        )
+        self.is_trained = False
+        logger.info(f"Initialized FraudDetectionModel with config: {config}")
+    
+    def train(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        """Train the Random Forest model."""
+        logger.info(f"Training model on {len(X_train)} samples")
+        self.model.fit(X_train, y_train)
+        self.is_trained = True
+        logger.info("Model training completed")
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Predict fraud labels."""
+        if not self.is_trained:
+            raise ValueError("Model must be trained before making predictions")
+        return self.model.predict(X)
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Predict fraud probabilities."""
+        if not self.is_trained:
+            raise ValueError("Model must be trained before making predictions")
+        return self.model.predict_proba(X)
+    
+    def save(self, path: str) -> None:
+        """Save model to disk."""
+        logger.info(f"Saving model to {path}")
+        model_data = {
+            'model': self.model,
+            'config': self.config,
+            'is_trained': self.is_trained
+        }
+        joblib.dump(model_data, path)
+        logger.info("Model saved successfully")
+    
+    @classmethod
+    def load(cls, path: str) -> 'FraudDetectionModel':
+        """Load model from disk."""
+        logger.info(f"Loading model from {path}")
+        model_data = joblib.load(path)
+        instance = cls(model_data['config'])
+        instance.model = model_data['model']
+        instance.is_trained = model_data['is_trained']
+        logger.info("Model loaded successfully")
+        return instance
+
+
+def evaluate_model(
+    model: FraudDetectionModel,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    threshold: float = 0.5
+) -> Dict[str, Any]:
+    """Evaluate model performance with fraud-specific metrics."""
+    logger.info("Evaluating model performance")
+    
+    # Get predictions
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    y_pred = (y_pred_proba >= threshold).astype(int)
+    
+    # Calculate metrics
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred, zero_division=0),
+        'recall': recall_score(y_test, y_pred, zero_division=0),
+        'f1_score': f1_score(y_test, y_pred, zero_division=0),
+        'roc_auc': roc_auc_score(y_test, y_pred_proba),
+        'average_precision': average_precision_score(y_test, y_pred_proba),
+        'threshold': threshold
+    }
+    
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    metrics['confusion_matrix'] = {
+        'true_negatives': int(tn),
+        'false_positives': int(fp),
+        'false_negatives': int(fn),
+        'true_positives': int(tp)
+    }
+    
+    # Additional fraud-specific metrics
+    metrics['false_positive_rate'] = fp / (fp + tn) if (fp + tn) > 0 else 0
+    metrics['false_negative_rate'] = fn / (fn + tp) if (fn + tp) > 0 else 0
+    
+    # Classification report
+    metrics['classification_report'] = classification_report(
+        y_test, y_pred, output_dict=True, zero_division=0
+    )
+    
+    logger.info(f"Evaluation completed - F1: {metrics['f1_score']:.4f}, ROC-AUC: {metrics['roc_auc']:.4f}")
+    return metrics
+
+
+def calculate_business_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    avg_transaction_amount: float = 100.0,
+    fraud_investigation_cost: float = 50.0
+) -> Dict[str, float]:
+    """Calculate business-oriented metrics for fraud detection."""
+    logger.info("Calculating business metrics")
+    
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    
+    # Calculate costs and savings
+    fraud_detected_savings = tp * avg_transaction_amount
+    fraud_missed_cost = fn * avg_transaction_amount
+    false_alarm_cost = fp * fraud_investigation_cost
+    investigation_cost = (tp + fp) * fraud_investigation_cost
+    
+    # Net benefit
+    total_savings = fraud_detected_savings - false_alarm_cost
+    net_benefit = fraud_detected_savings - investigation_cost
+    
+    # ROI calculation
+    total_cost = investigation_cost
+    roi = (total_savings / total_cost * 100) if total_cost > 0 else 0
+    
+    business_metrics = {
+        'fraud_detected_savings': fraud_detected_savings,
+        'fraud_missed_cost': fraud_missed_cost,
+        'false_alarm_cost': false_alarm_cost,
+        'investigation_cost': investigation_cost,
+        'total_savings': total_savings,
+        'net_benefit': net_benefit,
+        'roi_percentage': roi,
+        'cost_per_transaction': investigation_cost / len(y_true) if len(y_true) > 0 else 0
+    }
+    
+    logger.info(f"Business metrics - Net benefit: ${net_benefit:.2f}, ROI: {roi:.2f}%")
+    return business_metrics
+
+
+def find_optimal_threshold(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    metric: str = 'f1'
+) -> Tuple[float, float]:
+    """Find optimal classification threshold."""
+    logger.info(f"Finding optimal threshold based on {metric}")
+    
+    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+    
+    if metric == 'f1':
+        # Calculate F1 score for each threshold
+        f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
+        optimal_idx = np.argmax(f1_scores)
+        optimal_threshold = thresholds[optimal_idx] if optimal_idx < len(thresholds) else 0.5
+        optimal_value = f1_scores[optimal_idx]
+    elif metric == 'precision':
+        # Find threshold that maximizes precision while maintaining reasonable recall
+        valid_idx = recall >= 0.7  # Minimum recall threshold
+        if valid_idx.any():
+            optimal_idx = np.argmax(precision[valid_idx])
+            optimal_threshold = thresholds[valid_idx][optimal_idx] if optimal_idx < len(thresholds[valid_idx]) else 0.5
+            optimal_value = precision[valid_idx][optimal_idx]
+        else:
+            optimal_threshold = 0.5
+            optimal_value = 0.0
+    elif metric == 'recall':
+        # Find threshold that maximizes recall while maintaining reasonable precision
+        valid_idx = precision >= 0.7  # Minimum precision threshold
+        if valid_idx.any():
+            optimal_idx = np.argmax(recall[valid_idx])
+            optimal_threshold = thresholds[valid_idx][optimal_idx] if optimal_idx < len(thresholds[valid_idx]) else 0.5
+            optimal_value = recall[valid_idx][optimal_idx]
+        else:
+            optimal_threshold = 0.5
+            optimal_value = 0.0
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+    
+    logger.info(f"Optimal threshold: {optimal_threshold:.4f}, {metric}: {optimal_value:.4f}")
+    return optimal_threshold, optimal_value
+
+
+# src/drift_detection.py
+"""Concept drift detection for fraud detection model."""
+
+import numpy as np
+import pandas as pd
+from typing import Dict, Any, Optional, Tuple
+from scipy import stats
+from scipy.special import kl_div
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class DriftDetector:
+    """Detect concept drift in fraud detection data."""
+    
+    def __init__(self, reference_data: np.ndarray, config: Dict[str, Any]):
+        """Initialize drift detector with reference data."""
+        self.reference_data = reference_data
+        self.config = config
+        self.ks_threshold = config.get('ks_test_threshold', 0.05)
+        self.psi_threshold = config.get('psi_threshold', 0.2)
+        self.performance_threshold = config.get('performance_degradation_threshold', 0.05)
+        self.min_drift_features = config.get('min_drift_features', 3)
+        logger.info(f"Initialized DriftDetector with {len(reference_data)} reference samples")
+    
+    def detect_feature_drift(self, current_data: np.ndarray) -> Dict[str, Any]:
+        """Detect drift in feature distributions using KS test."""
+        logger.info("Detecting feature drift using Kolmogorov-Smirnov test")
+        
+        if self.reference_data.shape[1] != current_data.shape[1]:
+            raise ValueError(
+                f"Feature dimension mismatch: reference {self.reference_data.shape[1]} "
+                f"vs current {current_data.shape[1]}"
+            )
+        
+        n_features = self.reference_data.shape[1]
+        drift_detected = []
+        ks_statistics = []
+        p_values = []
+        psi_values = []
+        
+        for i in range(n_features):
+            # KS test
+            ks_stat, p_value = stats.ks_2samp(
+                self.reference_data[:, i],
+                current_data[:, i]
+            )
+            ks_statistics.append(ks_stat)
+            p_values.append(p_value)
+            
+            # PSI calculation
+            psi = calculate_psi(self.reference_data[:, i], current_data[:, i])
+            psi_values.append(psi)
+            
+            # Drift detected if p-value < threshold or PSI > threshold
+            is_drift = (p_value < self.ks_threshold) or (psi > self.psi_threshold)
+            drift_detected.append(is_drift)
+        
+        n_drifted_features = sum(drift_detected)
+        overall_drift = n_drifted_features >= self.min_drift_features
+        
+        drift_results = {
+            'overall_drift_detected': overall_drift,
+            'n_drifted_features': n_drifted_features,
+            'total_features': n_features,
+            'drift_percentage': (n_drifted_features / n_features) * 100,
+            'ks_statistics': ks_statistics,
+            'p_values': p_values,
+            'psi_values': psi_values,
+            'drifted_features': [i for i, d in enumerate(drift_detected) if d]
+        }
+        
+        logger.info(
+            f"Feature drift detection completed - "
+            f"{n_drifted_features}/{n_features} features drifted, "
+            f"Overall drift: {overall_drift}"
+        )
+        
+        return drift_results
+    
+    def detect_prediction_drift(
+        self,
+        reference_predictions: np.ndarray,
+        current_predictions: np.ndarray
+    ) -> Dict[str, Any]:
+        """Detect drift in model predictions."""
+        logger.info("Detecting prediction drift")
+        
+        # KS test on prediction probabilities
+        ks_stat, p_value = stats.ks_2samp(reference_predictions, current_predictions)
+        
+        # PSI for predictions
+        psi = calculate_psi(reference_predictions, current_predictions)
+        
+        # KL divergence
+        kl_div_value = calculate_kl_divergence(reference_predictions, current_predictions)
+        
+        # Statistical measures
+        ref_mean = np.mean(reference_predictions)
+        cur_mean = np.mean(current_predictions)
+        mean_shift = abs(cur_mean - ref_mean)
+        
+        ref_std = np.std(reference_predictions)
+        cur_std = np.std(current_predictions)
+        std_shift = abs(cur_std - ref_std)
+        
+        # Determine if drift detected
+        drift_detected = (
+            (p_value < self.ks_threshold) or
+            (psi > self.psi_threshold) or
+            (mean_shift > 0.1)
+        )
+        
+        prediction_drift = {
+            'drift_detected': drift_detected,
+            'ks_statistic': ks_stat,
+            'p_value': p_value,
+            'psi': psi,
+            'kl_divergence': kl_div_value,
+            'mean_shift': mean_shift,
+            'std_shift': std_shift,
+            'reference_mean': ref_mean,
+            'current_mean': cur_mean,
+            'reference_std': ref_std,
+            'current_std': cur_std
+        }
+        
+        logger.info(
+            f"Prediction drift detection completed - "
+            f"Drift detected: {drift_detected}, PSI: {psi:.4f}"
+        )
+        
+        return prediction_drift
+    
+    def detect_performance_drift(
+        self,
+        reference_metrics: Dict[str, float],
+        current_metrics: Dict[str, float],
+        threshold: float = 0.05
+    ) -> Dict[str, bool]:
+        """Detect significant performance degradation."""
+        logger.info("Detecting performance drift")
+        
+        performance_drift = {}
+        
+        # Key metrics to monitor
+        key_metrics = ['precision', 'recall', 'f1_score', 'roc_auc']
+        
+        for metric in key_metrics:
+            if metric in reference_metrics and metric in current_metrics:
+                ref_value = reference_metrics[metric]
+                cur_value = current_metrics[metric]
+                
+                # Calculate relative degradation
+                if ref_value > 0:
+                    degradation = (ref_value - cur_value) / ref_value
+                    is_degraded = degradation > threshold
+                else:
+                    is_degraded = False
+                
+                performance_drift[f'{metric}_degraded'] = is_degraded
+                performance_drift[f'{metric}_degradation'] = degradation if ref_value > 0 else 0.0
+        
+        # Overall performance drift
+        performance_drift['overall_degradation'] = any(
+            v for k, v in performance_drift.items() if k.endswith('_degraded')
+        )
+        
+        logger.info(
+            f"Performance drift detection completed - "
+            f"Overall degradation: {performance_drift['overall_degradation']}"
+        )
+        
+        return performance_drift
+    
+    def should_retrain(self, drift_results: Dict[str, Any]) -> bool:
+        """Determine if model should be retrained based on drift detection."""
+        logger.info("Determining if model retraining is needed")
+        
+        # Check feature drift
+        feature_drift = drift_results.get('feature_drift', {}).get('overall_drift_detected', False)
+        
+        # Check prediction drift
+        prediction_drift = drift_results.get('prediction_drift', {}).get('drift_detected', False)
+        
+        # Check performance drift
+        performance_drift = drift_results.get('performance_drift', {}).get('overall_degradation', False)
+        
+        # Retrain if any significant drift detected
+        should_retrain = feature_drift or prediction_drift or performance_drift
+        
+        logger.info(
+            f"Retraining decision: {should_retrain} "
+            f"(Feature: {feature_drift}, Prediction: {prediction_drift}, Performance: {performance_drift})"
+        )
+        
+        return should_retrain
+
+
+def calculate_psi(
+    reference: np.ndarray,
+    current: np.ndarray,
+    bins: int = 10
+) -> float:
+    """Calculate Population Stability Index (PSI)."""
+    # Create bins based on reference distribution
+    breakpoints = np.percentile(reference, np.linspace(0, 100, bins + 1))
+    breakpoints = np.unique(breakpoints)  # Remove duplicates
+    
+    if len(breakpoints) <= 1:
+        return 0.0
+    
+    # Bin the data
+    ref_counts, _ = np.histogram(reference, bins=breakpoints)
+    cur_counts, _ = np.histogram(current, bins=breakpoints)
+    
+    # Calculate proportions
+    ref_props = ref_counts / len(reference)
+    cur_props = cur_counts / len(current)
+    
+    # Avoid division by zero and log(0)
+    ref_props = np.where(ref_props == 0, 0.0001, ref_props)
+    cur_props = np.where(cur_props == 0, 0.0001, cur_props)
+    
+    # Calculate PSI
+    psi = np.sum((cur_props - ref_props) * np.log(cur_props / ref_props))
+    
+    return float(psi)
+
+
+def calculate_kl_divergence(reference: np.ndarray, current: np.ndarray) -> float:
+    """Calculate KL divergence between two distributions."""
+    # Create histogram bins
+    bins = 50
+    min_val = min(reference.min(), current.min())
+    max_val = max(reference.max(), current.max())
+    
+    # Create histograms
+    ref_hist, bin_edges = np.histogram(reference, bins=bins, range=(min_val, max_val), density=True)
+    cur_hist, _ = np.histogram(current, bins=bins, range=(min_val, max_val), density=True)
+    
+    # Normalize to probabilities
+    ref_hist = ref_hist / (ref_hist.sum() + 1e-10)
+    cur_hist = cur_hist / (cur_hist.sum() + 1e-10)
+    
+    # Avoid zeros
+    ref_hist = np.where(ref_hist == 0, 1e-10, ref_hist)
+    cur_hist = np.where(cur_hist == 0, 1e-10, cur_hist)
+    
+    # Calculate KL divergence
+    kl = np.sum(kl_div(cur_hist, ref_hist))
+    
+    return float(kl)
+
+
+# src/pipeline.py
+"""Main ML pipeline orchestration for fraud detection."""
+
+import mlflow
+import mlflow.sklearn
+from typing import Dict, Any, Optional
+import logging
+from pathlib import Path
+import json
+import sys
+import argparse
+import numpy as np
+
+from .config import PipelineConfig
+from .data_processing import load_data, prepare_data, balance_dataset
+from .model import FraudDetectionModel, evaluate_model, calculate_business_metrics, find_optimal_threshold
+from .drift_detection import DriftDetector
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class FraudDetectionPipeline:
+    """End-to-end ML pipeline for fraud detection."""
+    
+    def __init__(self, config: PipelineConfig):
+        """Initialize the ML pipeline."""
+        self.config = config
+        self.model = None
+        self.scaler = None
+        logger.info("Initialized FraudDetectionPipeline")
+    
+    def setup_mlflow(self) -> None:
+        """Setup MLflow experiment tracking."""
+        logger.info("Setting up MLflow tracking")
+        
+        # Set tracking URI
+        mlflow.set_tracking_uri(self.config.mlflow.tracking_uri)
+        
+        # Set or create experiment
+        try:
+            experiment = mlflow.get_experiment_by_name(self.config.mlflow.experiment_name)
+            if experiment is None:
+                experiment_id = mlflow.create_experiment(
+                    self.config.mlflow.experiment_name,
+                    artifact_location=self.config.mlflow.artifact_location
+                )
+                logger.info(f"Created new experiment: {self.config.mlflow.experiment_name}")
+            else:
+                experiment_id = experiment.experiment_id
+                logger.info(f"Using existing experiment: {self.config.mlflow.experiment_name}")
+            
+            mlflow.set_experiment(self.config.mlflow.experiment_name)
+        except Exception as e:
+            logger.error(f"Error setting up MLflow: {str(e)}")
+            raise
+    
+    def run_training_pipeline(self, data_path: str) -> Dict[str, Any]:
+        """Execute complete training pipeline."""
+        logger.info("Starting training pipeline")
+        
+        try:
+            # Load and prepare data
+            df = load_data(data_path)
+            X_train, X_test, y_train, y_test, scaler = prepare_data(
+                df,
+                target_column=self.config.data.target_column,
+                test_size=self.config.data.test_size,
+                random_state=self.config.data.random_state
+            )
+            self.scaler = scaler
+            
+            # Balance dataset if needed
+            if self.config.data.balance_strategy:
+                X_train, y_train = balance_dataset(
+                    X_train, y_train,
+                    strategy=self.config.data.balance_strategy
+                )
+            
+            # Train model
+            model_config = {
+                'n_estimators': self.config.model.n_estimators,
+                'max_depth': self.config.model.max_depth,
+                'min_samples_split': self.config.model.min_samples_split,
+                'min_samples_leaf': self.config.model.min_samples_leaf,
+                'max_features': self.config.model.max_features,
+                'class_weight': self.config.model.class_weight,
+                'random_state': self.config.model.random_state,
+                'n_jobs': self.config.model.n_jobs
+            }
+            
+            self.model = FraudDetectionModel(model_config)
+            self.model.train(X_train, y_train)
+            
+            # Find optimal threshold
+            y_train_proba = self.model.predict_proba(X_train)[:, 1]
+            optimal_threshold, _ = find_optimal_threshold(y_train, y_train_proba, metric='f1')
+            
+            # Evaluate model
+            metrics = evaluate_model(self.model, X_test, y_test, threshold=optimal_threshold)
+            
+            # Calculate business metrics
+            y_pred = self.model.predict(X_test)
+            y_proba = self.model.predict_proba(X_test)[:, 1]
+            business_metrics = calculate_business_metrics(y_test, y_pred, y_proba)
+            
+            # Combine all results
+            results = {
+                'metrics': metrics,
+                'business_metrics': business_metrics,
+                'optimal_threshold': optimal_threshold,
+                'train_samples': len(X_train),
+                'test_samples': len(X_test),
+                'n_features': X_train.shape[1]
+            }
+            
+            logger.info("Training pipeline completed successfully")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in training pipeline: {str(e)}")
+            raise
+    
+    def run_evaluation_pipeline(self, model_path: str, data_path: str) -> Dict[str, Any]:
+        """Execute model evaluation pipeline."""
+        logger.info("Starting evaluation pipeline")
+        
+        try:
+            # Load model
+            self.model = FraudDetectionModel.load(model_path)
+            
+            # Load and prepare data
+            df = load_data(data_path)
+            X_train, X_test, y_train, y_test, scaler = prepare_data(
+                df,
+                target_column=self.config.data.target_column,
+                test_size=self.config.data.test_size,
+                random_state=self.config.data.random_state
+            )
+            
+            # Evaluate model
+            metrics = evaluate_model(self.model, X_test, y_test)
+            
+            # Calculate business metrics
+            y_pred = self.model.predict(X_test)
+            y_proba = self.model.predict_proba(X_test)[:, 1]
+            business_metrics = calculate_business_metrics(y_test, y_pred, y_proba)
+            
+            results = {
+                'metrics': metrics,
+                'business_metrics': business_metrics,
+                'test_samples': len(X_test)
+            }
+            
+            logger.info("Evaluation pipeline completed successfully")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in evaluation pipeline: {str(e)}")
+            raise
+    
+    def run_drift_detection_pipeline(
+        self,
+        reference_data_path: str,
+        current_data_path: str,
+        model_path: str
+    ) -> Dict[str, Any]:
+        """Execute drift detection pipeline."""
+        logger.info("Starting drift detection pipeline")
+        
+        try:
+            # Load model
+            self.model = FraudDetectionModel.load(model_path)
+            
+            # Load reference data
+            ref_df = load_data(reference_data_path)
+            X_ref_train, X_ref_test, y_ref_train, y_ref_test, ref_scaler = prepare_data(
+                ref_df,
+                target_column=self.config.data.target_column,
+                test_size=self.config.data.test_size,
+                random_state=self.config.data.random_state
+            )
+            
+            # Load current data
+            cur_df = load_data(current_data_path)
+            X_cur_train, X_cur_test, y_cur_train, y_cur_test, cur_scaler = prepare_data(
+                cur_df,
+                target_column=self.config.data.target_column,
+                test_size=self.config.data.test_size,
+                random_state=self.config.data.random_state
+            )
+            
+            # Initialize drift detector
+            drift_config = {
+                'ks_test_threshold': self.config.drift.ks_test_threshold,
+                'psi_threshold': self.config.drift.psi_threshold,
+                'performance_degradation_threshold': self.config.drift.performance_degradation_threshold,
+                'min_drift_features': self.config.drift.min_drift_features
+            }
+            drift_detector = DriftDetector(X_ref_test, drift_config)
+            
+            # Detect feature drift
+            feature_drift = drift_detector.detect_feature_drift(X_cur_test)
+            
+            # Detect prediction drift
+            ref_predictions = self.model.predict_proba(X_ref_test)[:, 1]
+            cur_predictions = self.model.predict_proba(X_cur_test)[:, 1]
+            prediction_drift = drift_detector.detect_prediction_drift(ref_predictions, cur_predictions)
+            
+            # Detect performance drift
+            ref_metrics = evaluate_model(self.model, X_ref_test, y_ref_test)
+            cur_metrics = evaluate_model(self.model, X_cur_test, y_cur_test)
+            performance_drift = drift_detector.detect_performance_drift(ref_metrics, cur_metrics)
+            
+            # Combine drift results
+            drift_results = {
+                'feature_drift': feature_drift,
+                'prediction_drift': prediction_drift,
+                'performance_drift': performance_drift,
+                'reference_metrics': ref_metrics,
+                'current_metrics': cur_metrics
+            }
+            
+            # Determine if retraining is needed
+            should_retrain = drift_detector.should_retrain(drift_results)
+            drift_results['should_retrain'] = should_retrain
+            
+            logger.info(f"Drift detection completed - Should retrain: {should_retrain}")
+            return drift_results
+            
+        except Exception as e:
+            logger.error(f"Error in drift detection pipeline: {str(e)}")
+            raise
+    
+    def log_to_mlflow(self, metrics: Dict[str, Any], params: Dict[str, Any], model: FraudDetectionModel) -> None:
+        """Log metrics, parameters, and model to MLflow."""
+        logger.info("Logging to MLflow")
+        
+        try:
+            # Log parameters
+            for key, value in params.items():
+                if isinstance(value, (int, float, str, bool)):
+                    mlflow.log_param(key, value)
+            
+            # Log metrics
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    mlflow.log_metric(key, value)
+                elif isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        if isinstance(sub_value, (int, float)):
+                            mlflow.log_metric(f"{key}_{sub_key}", sub_value)
+            
+            # Log model
+            mlflow.sklearn.log_model(model.model, "model")
+            
+            logger.info("MLflow logging completed")
+            
+        except Exception as e:
+            logger.error(f"Error logging to MLflow: {str(e)}")
+            raise
+    
+    def register_model(self, model_uri: str, model_name: str) -> str:
+        """Register model in MLflow Model Registry."""
+        logger.info(f"Registering model: {model_name}")
+        
+        try:
+            result = mlflow.register_model(model_uri, model_name)
+            version = result.version
+            logger.info(f"Model registered successfully - Version: {version}")
+            return str(version)
+            
+        except Exception as e:
+            logger.error(f"Error registering model: {str(e)}")
+            raise
+
+
+def main(
+    mode: str,
+    data_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    config_path: Optional[str] = None
+) -> int:
+    """Main entry point for the pipeline."""
+    logger.info(f"Starting pipeline in {mode} mode")
+    
+    try:
+        # Load configuration
+        if config_path and Path(config_path).exists():
+            with open(config_path, 'r') as f:
+                config_dict = json.load(f)
+            config = PipelineConfig.from_dict(config_dict)
+        else:
+            config = PipelineConfig()
+        
+        # Initialize pipeline
+        pipeline = FraudDetectionPipeline(config)
+        pipeline.setup_mlflow()
+        
+        # Execute based on mode
+        if mode == 'train':
+            if not data_path:
+                raise ValueError("data_path is required for training mode")
+            
+            with mlflow.start_run(run_name=config.mlflow.run_name):
+                results = pipeline.run_training_pipeline(data_path)
+                
+                # Log to MLflow
+                pipeline.log_to_mlflow(
+                    metrics=results['metrics'],
+                    params=config.to_dict(),
+                    model=pipeline.model
+                )
+                
+                # Save model
+                model_save_path = "models/fraud_detection_model.pkl"
+                Path("models").mkdir(exist_ok=True)
+                pipeline.model.save(model_save_path)
+                
+                # Register model
+                run_id = mlflow.active_run().info.run_id
+                model_uri = f"runs:/{run_id}/model"
+                pipeline.register_model(model_uri, config.mlflow.registered_model_name)
+                
+                logger.info(f"Training completed - F1: {results['metrics']['f1_score']:.4f}")
+        
+        elif mode == 'evaluate':
+            if not model_path or not data_path:
+                raise ValueError("model_path and data_path are required for evaluation mode")
+            
+            results = pipeline.run_evaluation_pipeline(model_path, data_path)
+            logger.info(f"Evaluation completed - F1: {results['metrics']['f1_score']:.4f}")
+        
+        elif mode == 'drift_check':
+            if not model_path or not data_path:
+                raise ValueError("model_path and data_path are required for drift check mode")
+            
+            # Assume data_path contains current data, use a reference data path
+            reference_data_path = data_path.replace('current', 'reference')
+            results = pipeline.run_drift_detection_pipeline(
+                reference_data_path, data_path, model_path
+            )
+            
+            logger.info(f"Drift check completed - Should retrain: {results['should_retrain']}")
+            
+            # Return non-zero exit code if retraining is needed
+            if results['should_retrain']:
+                return 1
+        
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {str(e)}")
+        return 1
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Fraud Detection ML Pipeline')
+    parser.add_argument('--mode', type=str, required=True,
+                       choices=['train', 'evaluate', 'drift_check'],
+                       help='Pipeline execution mode')
+    parser.add_argument('--data-path', type=str, help='Path to data file')
+    parser.add_argument('--model-path', type=str, help='Path to model file')
+    parser.add_argument('--config-path', type=str, help='Path to configuration file')
+    
+    args = parser.parse_args()
+    
+    exit_code = main(
+        mode=args.mode,
+        data_path=args.data_path,
+        model_path=args.model_path,
+        config_path=args.config_path
+    )
+    
+    sys.exit(exit_code)
+```

@@ -1,0 +1,108 @@
+Certainly! Below is a pytest test file and a GitHub Actions workflow configuration to test and automate the module you provided.
+
+### (a) Pytest Test File
+
+First, ensure that the module is saved in a file named, for example, `pipeline.py`. Here is a pytest test file that you can use to test the functions in your pipeline module:
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from pipeline import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+@pytest.fixture
+def sample_data():
+    """Fixture for creating a sample dataframe."""
+    data = {
+        'feature1': [1, 2, 3, 4],
+        'feature2': [4, 3, 2, 1],
+        'target': [1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data():
+    """Test the load_data function."""
+    data = load_data('data/fraud_data.csv')
+    assert data is not None, "Failed to load data"
+
+def test_preprocess_data(sample_data):
+    """Test the preprocess_data function."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    assert X_train is not None and X_test is not None, "Preprocessing failed"
+    assert y_train is not None and y_test is not None, "Preprocessing failed"
+
+def test_train_model(sample_data):
+    """Test the train_model function."""
+    X_train, _, y_train, _ = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    assert model is not None, "Model training failed"
+
+def test_evaluate_model(sample_data):
+    """Test the evaluate_model function."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert metrics is not None, "Model evaluation failed"
+    assert "accuracy" in metrics, "Missing accuracy metric"
+    assert "precision" in metrics, "Missing precision metric"
+    assert "recall" in metrics, "Missing recall metric"
+    assert "f1_score" in metrics, "Missing f1_score metric"
+
+def test_log_to_mlflow(sample_data):
+    """Test the log_to_mlflow function."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    try:
+        log_to_mlflow(model, metrics)
+        success = True
+    except Exception:
+        success = False
+    assert success, "Logging to MLflow failed"
+```
+
+### (b) GitHub Actions Workflow
+
+Here is a GitHub Actions workflow YAML file to automate the testing of your module using pytest:
+
+```yaml
+name: Pipeline CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow pytest
+
+    - name: Run tests
+      run: |
+        pytest --maxfail=1 --disable-warnings
+```
+
+### Explanation:
+
+- **Pytest Test File**: This includes basic unit tests for each function in your module using pytest. The `sample_data` fixture provides a simple dataset for testing.
+- **GitHub Actions Workflow**: This workflow is triggered on pushes and pull requests to the `main` branch. It sets up a Python environment, installs necessary dependencies, and runs the tests using pytest. Make sure to adjust the `python-version` and dependencies as needed for your environment.
+
+This setup will help ensure your pipeline module is tested automatically whenever updates are made. Adjust paths and configurations according to your specific project structure and requirements.

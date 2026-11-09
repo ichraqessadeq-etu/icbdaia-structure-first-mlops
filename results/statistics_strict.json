@@ -1,0 +1,307 @@
+{
+  "claude-sonnet-4-5": {
+    "batches": [
+      "runs_claude"
+    ],
+    "specified": {
+      "n": {
+        "one_shot": 10,
+        "structure_first": 10
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "5/10",
+        "structure_first": "1/10",
+        "fisher_p": 0.141
+      },
+      "tests_mean": {
+        "one_shot": 31.3,
+        "structure_first": 62.7,
+        "mannwhitney_p": 0.00018
+      },
+      "loc_mean": {
+        "one_shot": 886.4,
+        "structure_first": 1191.6,
+        "mannwhitney_p": 0.0013
+      },
+      "rvh_per_kloc": {
+        "one_shot": 2.26,
+        "structure_first": 2.35,
+        "violations": {
+          "one_shot": 20,
+          "structure_first": 28
+        },
+        "rate_ratio": 1.04,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.0,
+          5.81
+        ],
+        "poisson_rate_test_p": 1.0,
+        "per_artifact_density_mannwhitney_p": 0.11
+      },
+      "tokens_mean": {
+        "one_shot": 18103,
+        "structure_first": 37987
+      },
+      "api_errors": 0
+    },
+    "under_specified": {
+      "n": {
+        "one_shot": 10,
+        "structure_first": 10
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "2/10",
+        "structure_first": "1/10",
+        "fisher_p": 1.0
+      },
+      "tests_mean": {
+        "one_shot": 35.3,
+        "structure_first": 65.9,
+        "mannwhitney_p": 0.00021
+      },
+      "loc_mean": {
+        "one_shot": 842.7,
+        "structure_first": 1669.6,
+        "mannwhitney_p": 0.00018
+      },
+      "rvh_per_kloc": {
+        "one_shot": 0.24,
+        "structure_first": 0.06,
+        "violations": {
+          "one_shot": 2,
+          "structure_first": 1
+        },
+        "rate_ratio": 0.25,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.0,
+          1.1
+        ],
+        "poisson_rate_test_p": 0.2621,
+        "per_artifact_density_mannwhitney_p": 0.5
+      },
+      "tokens_mean": {
+        "one_shot": 16897,
+        "structure_first": 51447
+      },
+      "api_errors": 0
+    },
+    "pooled_prompts": {
+      "n": {
+        "one_shot": 20,
+        "structure_first": 20
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "7/20",
+        "structure_first": "2/20",
+        "fisher_p": 0.127
+      },
+      "tests_mean": {
+        "one_shot": 33.3,
+        "structure_first": 64.3,
+        "mannwhitney_p": 7e-08
+      },
+      "loc_mean": {
+        "one_shot": 864.6,
+        "structure_first": 1430.6,
+        "mannwhitney_p": 4.5e-07
+      },
+      "rvh_per_kloc": {
+        "one_shot": 1.27,
+        "structure_first": 1.01,
+        "violations": {
+          "one_shot": 22,
+          "structure_first": 29
+        },
+        "rate_ratio": 0.8,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.0,
+          4.92
+        ],
+        "poisson_rate_test_p": 0.4704,
+        "per_artifact_density_mannwhitney_p": 0.067
+      },
+      "tokens_mean": {
+        "one_shot": 17500,
+        "structure_first": 44717
+      },
+      "api_errors": 0
+    }
+  },
+  "gpt-4o": {
+    "batches": [
+      "runs_gpt4o_batch1",
+      "runs_gpt4o_batch2"
+    ],
+    "specified": {
+      "n": {
+        "one_shot": 40,
+        "structure_first": 40
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "3/40",
+        "structure_first": "8/40",
+        "fisher_p": 0.193
+      },
+      "tests_mean": {
+        "one_shot": 3.12,
+        "structure_first": 5.2,
+        "mannwhitney_p": 3.1e-10
+      },
+      "loc_mean": {
+        "one_shot": 91.2,
+        "structure_first": 98.7,
+        "mannwhitney_p": 0.0043
+      },
+      "rvh_per_kloc": {
+        "one_shot": 2.19,
+        "structure_first": 4.56,
+        "violations": {
+          "one_shot": 8,
+          "structure_first": 18
+        },
+        "rate_ratio": 2.08,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.48,
+          15.64
+        ],
+        "poisson_rate_test_p": 0.1147,
+        "per_artifact_density_mannwhitney_p": 0.12
+      },
+      "tokens_mean": {
+        "one_shot": 1460,
+        "structure_first": 4130
+      },
+      "api_errors": 0
+    },
+    "under_specified": {
+      "n": {
+        "one_shot": 40,
+        "structure_first": 40
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "9/40",
+        "structure_first": "9/40",
+        "fisher_p": 1.0
+      },
+      "tests_mean": {
+        "one_shot": 3.5,
+        "structure_first": 6.62,
+        "mannwhitney_p": 3.4e-14
+      },
+      "loc_mean": {
+        "one_shot": 53.4,
+        "structure_first": 106.6,
+        "mannwhitney_p": 1.4e-14
+      },
+      "rvh_per_kloc": {
+        "one_shot": 14.51,
+        "structure_first": 3.05,
+        "violations": {
+          "one_shot": 31,
+          "structure_first": 13
+        },
+        "rate_ratio": 0.21,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.07,
+          0.76
+        ],
+        "poisson_rate_test_p": 0.0,
+        "per_artifact_density_mannwhitney_p": 0.68
+      },
+      "tokens_mean": {
+        "one_shot": 1032,
+        "structure_first": 4207
+      },
+      "api_errors": 0
+    },
+    "pooled_prompts": {
+      "n": {
+        "one_shot": 80,
+        "structure_first": 80
+      },
+      "invalid": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "iih": {
+        "one_shot": 0,
+        "structure_first": 0
+      },
+      "rvh_artifacts": {
+        "one_shot": "12/80",
+        "structure_first": "17/80",
+        "fisher_p": 0.412
+      },
+      "tests_mean": {
+        "one_shot": 3.31,
+        "structure_first": 5.91,
+        "mannwhitney_p": 5.1e-21
+      },
+      "loc_mean": {
+        "one_shot": 72.3,
+        "structure_first": 102.7,
+        "mannwhitney_p": 6.2e-15
+      },
+      "rvh_per_kloc": {
+        "one_shot": 6.74,
+        "structure_first": 3.77,
+        "violations": {
+          "one_shot": 39,
+          "structure_first": 31
+        },
+        "rate_ratio": 0.56,
+        "rate_ratio_ci95_cluster_bootstrap": [
+          0.23,
+          1.59
+        ],
+        "poisson_rate_test_p": 0.0204,
+        "per_artifact_density_mannwhitney_p": 0.5
+      },
+      "tokens_mean": {
+        "one_shot": 1246,
+        "structure_first": 4169
+      },
+      "api_errors": 0
+    }
+  }
+}

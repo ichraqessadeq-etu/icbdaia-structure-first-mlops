@@ -1,0 +1,87 @@
+{
+  "n_python_blocks": 2,
+  "n_parse_ok": 2,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": true,
+  "is_iih": false,
+  "n_tests": 6,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": false,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 18
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 19
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.choice(...) with no global seed set",
+            "lineno": 20
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.choice(...) with no global seed set",
+            "lineno": 29
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 27
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.rand(...) with no global seed set",
+            "lineno": 28
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 20,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 1927,
+    "completion_tokens": 2666,
+    "errors": [],
+    "seconds": 15.78
+  }
+}

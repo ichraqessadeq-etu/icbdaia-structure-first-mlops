@@ -1,0 +1,570 @@
+```python
+"""Main ML pipeline for fraud detection model training and evaluation."""
+
+import logging
+import os
+import json
+from typing import Tuple, Dict, Any
+from datetime import datetime
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    classification_report,
+    roc_auc_score,
+    precision_recall_fscore_support,
+    confusion_matrix,
+    average_precision_score,
+    roc_curve
+)
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+import mlflow
+import mlflow.sklearn
+import joblib
+
+
+def setup_logging() -> logging.Logger:
+    """Configure and return logger for pipeline execution."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('pipeline.log')
+        ]
+    )
+    logger = logging.getLogger(__name__)
+    return logger
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from specified path."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_path}")
+    
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Data file not found at {data_path}")
+    
+    try:
+        df = pd.read_csv(data_path)
+        logger.info(f"Successfully loaded {len(df)} rows and {len(df.columns)} columns")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate dataset schema, completeness, and basic statistics."""
+    logger = logging.getLogger(__name__)
+    logger.info("Validating dataset")
+    
+    # Check if dataframe is empty
+    if df.empty:
+        raise ValueError("Dataset is empty")
+    
+    # Check for required columns (assuming 'Class' is the target variable)
+    if 'Class' not in df.columns:
+        raise ValueError("Target column 'Class' not found in dataset")
+    
+    # Check for excessive null values
+    null_percentages = df.isnull().sum() / len(df) * 100
+    high_null_cols = null_percentages[null_percentages > 50]
+    
+    if not high_null_cols.empty:
+        logger.warning(f"Columns with >50% null values: {high_null_cols.to_dict()}")
+    
+    # Log null value summary
+    total_nulls = df.isnull().sum().sum()
+    if total_nulls > 0:
+        logger.warning(f"Total null values found: {total_nulls}")
+    
+    # Basic statistics validation
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    logger.info(f"Numeric columns: {len(numeric_cols)}")
+    
+    # Check class distribution
+    if 'Class' in df.columns:
+        class_dist = df['Class'].value_counts()
+        logger.info(f"Class distribution:\n{class_dist}")
+        
+        # Check for severe imbalance
+        imbalance_ratio = class_dist.max() / class_dist.min()
+        if imbalance_ratio > 100:
+            logger.warning(f"Severe class imbalance detected. Ratio: {imbalance_ratio:.2f}")
+    
+    # Check for infinite values
+    inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum().sum()
+    if inf_count > 0:
+        raise ValueError(f"Dataset contains {inf_count} infinite values")
+    
+    logger.info("Data validation completed successfully")
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    """Preprocess features and separate target variable."""
+    logger = logging.getLogger(__name__)
+    logger.info("Preprocessing data")
+    
+    # Create a copy to avoid modifying original
+    df_processed = df.copy()
+    
+    # Separate target variable
+    if 'Class' not in df_processed.columns:
+        raise ValueError("Target column 'Class' not found")
+    
+    y = df_processed['Class']
+    X = df_processed.drop('Class', axis=1)
+    
+    # Handle missing values
+    if X.isnull().any().any():
+        logger.info("Handling missing values with median imputation")
+        X = X.fillna(X.median())
+    
+    # Remove any non-numeric columns (except already removed target)
+    non_numeric_cols = X.select_dtypes(exclude=[np.number]).columns
+    if len(non_numeric_cols) > 0:
+        logger.info(f"Removing non-numeric columns: {list(non_numeric_cols)}")
+        X = X.select_dtypes(include=[np.number])
+    
+    # Handle infinite values
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(X.median())
+    
+    logger.info(f"Preprocessing complete. Features shape: {X.shape}, Target shape: {y.shape}")
+    
+    return X, y
+
+
+def split_data(
+    X: pd.DataFrame, 
+    y: pd.Series, 
+    test_size: float = 0.2, 
+    random_state: int = 42
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split data into train and test sets with stratification."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Splitting data with test_size={test_size}, random_state={random_state}")
+    
+    # Use stratification to maintain class distribution
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, 
+        test_size=test_size, 
+        random_state=random_state,
+        stratify=y
+    )
+    
+    logger.info(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+    logger.info(f"Train class distribution:\n{y_train.value_counts()}")
+    logger.info(f"Test class distribution:\n{y_test.value_counts()}")
+    
+    return X_train, X_test, y_train, y_test
+
+
+def handle_imbalance(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    strategy: str = "smote"
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """Handle class imbalance using specified strategy (SMOTE, undersampling, or class weights)."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Handling class imbalance using strategy: {strategy}")
+    
+    original_counts = y_train.value_counts()
+    logger.info(f"Original class distribution:\n{original_counts}")
+    
+    if strategy.lower() == "smote":
+        # SMOTE oversampling
+        smote = SMOTE(random_state=42, k_neighbors=5)
+        X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+        
+    elif strategy.lower() == "undersample":
+        # Random undersampling
+        undersampler = RandomUnderSampler(random_state=42)
+        X_resampled, y_resampled = undersampler.fit_resample(X_train, y_train)
+        
+    elif strategy.lower() == "none":
+        # No resampling, return original data
+        logger.info("No resampling applied")
+        return X_train, y_train
+        
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}. Choose 'smote', 'undersample', or 'none'")
+    
+    new_counts = pd.Series(y_resampled).value_counts()
+    logger.info(f"Resampled class distribution:\n{new_counts}")
+    
+    # Convert back to DataFrame/Series with proper column names
+    X_resampled = pd.DataFrame(X_resampled, columns=X_train.columns)
+    y_resampled = pd.Series(y_resampled, name=y_train.name)
+    
+    return X_resampled, y_resampled
+
+
+def train_model(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    hyperparameters: Dict[str, Any]
+) -> RandomForestClassifier:
+    """Train RandomForestClassifier with given hyperparameters."""
+    logger = logging.getLogger(__name__)
+    logger.info("Training RandomForestClassifier")
+    
+    if X_train.empty or len(y_train) == 0:
+        raise ValueError("Training data is empty")
+    
+    # Default hyperparameters
+    default_params = {
+        'n_estimators': 100,
+        'max_depth': 10,
+        'min_samples_split': 2,
+        'min_samples_leaf': 1,
+        'random_state': 42,
+        'n_jobs': -1,
+        'class_weight': 'balanced'
+    }
+    
+    # Update with provided hyperparameters
+    if hyperparameters:
+        default_params.update(hyperparameters)
+    
+    logger.info(f"Using hyperparameters: {default_params}")
+    
+    # Initialize and train model
+    model = RandomForestClassifier(**default_params)
+    model.fit(X_train, y_train)
+    
+    logger.info("Model training completed")
+    
+    return model
+
+
+def evaluate_model(
+    model: RandomForestClassifier, 
+    X_test: pd.DataFrame, 
+    y_test: pd.Series
+) -> Dict[str, Any]:
+    """Evaluate model and return comprehensive metrics including precision, recall, F1, AUC-ROC."""
+    logger = logging.getLogger(__name__)
+    logger.info("Evaluating model performance")
+    
+    # Generate predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculate metrics
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_test, y_pred, average='binary', zero_division=0
+    )
+    
+    # AUC-ROC
+    try:
+        auc_roc = roc_auc_score(y_test, y_pred_proba)
+    except Exception as e:
+        logger.warning(f"Could not calculate AUC-ROC: {str(e)}")
+        auc_roc = 0.0
+    
+    # Average Precision (PR-AUC)
+    try:
+        avg_precision = average_precision_score(y_test, y_pred_proba)
+    except Exception as e:
+        logger.warning(f"Could not calculate Average Precision: {str(e)}")
+        avg_precision = 0.0
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+    
+    # Compile metrics
+    metrics = {
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1_score': float(f1),
+        'auc_roc': float(auc_roc),
+        'average_precision': float(avg_precision),
+        'true_negatives': int(tn),
+        'false_positives': int(fp),
+        'false_negatives': int(fn),
+        'true_positives': int(tp),
+        'accuracy': float((tp + tn) / (tp + tn + fp + fn)) if (tp + tn + fp + fn) > 0 else 0.0,
+        'specificity': float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+    }
+    
+    # Classification report
+    class_report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
+    
+    logger.info(f"Model Performance Metrics:")
+    logger.info(f"  Precision: {metrics['precision']:.4f}")
+    logger.info(f"  Recall: {metrics['recall']:.4f}")
+    logger.info(f"  F1-Score: {metrics['f1_score']:.4f}")
+    logger.info(f"  AUC-ROC: {metrics['auc_roc']:.4f}")
+    logger.info(f"  Average Precision: {metrics['average_precision']:.4f}")
+    logger.info(f"  Confusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}")
+    
+    metrics['classification_report'] = class_report
+    
+    return metrics
+
+
+def log_to_mlflow(
+    model: RandomForestClassifier,
+    metrics: Dict[str, Any],
+    hyperparameters: Dict[str, Any],
+    dataset_info: Dict[str, Any],
+    run_name: str = None
+) -> str:
+    """Log model, parameters, and metrics to MLflow tracking server."""
+    logger = logging.getLogger(__name__)
+    logger.info("Logging to MLflow")
+    
+    # Generate run name if not provided
+    if run_name is None:
+        run_name = f"fraud_detection_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    with mlflow.start_run(run_name=run_name) as run:
+        # Log hyperparameters
+        if hyperparameters:
+            mlflow.log_params(hyperparameters)
+        
+        # Log dataset information
+        if dataset_info:
+            for key, value in dataset_info.items():
+                mlflow.log_param(f"data_{key}", value)
+        
+        # Log metrics (excluding nested dicts)
+        metrics_to_log = {
+            k: v for k, v in metrics.items() 
+            if isinstance(v, (int, float, str)) and not isinstance(v, bool)
+        }
+        mlflow.log_metrics(metrics_to_log)
+        
+        # Log classification report as artifact
+        if 'classification_report' in metrics:
+            report_path = "classification_report.json"
+            with open(report_path, 'w') as f:
+                json.dump(metrics['classification_report'], f, indent=2)
+            mlflow.log_artifact(report_path)
+            os.remove(report_path)
+        
+        # Log model
+        mlflow.sklearn.log_model(
+            model, 
+            "model",
+            registered_model_name="fraud_detection_model"
+        )
+        
+        # Log feature importances
+        if hasattr(model, 'feature_importances_'):
+            feature_importance_path = "feature_importances.json"
+            importances = dict(zip(
+                [f"feature_{i}" for i in range(len(model.feature_importances_))],
+                model.feature_importances_.tolist()
+            ))
+            with open(feature_importance_path, 'w') as f:
+                json.dump(importances, f, indent=2)
+            mlflow.log_artifact(feature_importance_path)
+            os.remove(feature_importance_path)
+        
+        run_id = run.info.run_id
+        logger.info(f"MLflow run completed. Run ID: {run_id}")
+        
+        return run_id
+
+
+def save_model_artifacts(
+    model: RandomForestClassifier,
+    model_path: str,
+    metadata: Dict[str, Any]
+) -> None:
+    """Save trained model and associated metadata to disk."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving model artifacts to {model_path}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(model_path) if os.path.dirname(model_path) else '.', exist_ok=True)
+    
+    # Save model
+    joblib.dump(model, model_path)
+    logger.info(f"Model saved to {model_path}")
+    
+    # Save metadata
+    metadata_path = model_path.replace('.pkl', '_metadata.json')
+    metadata['saved_at'] = datetime.now().isoformat()
+    
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    logger.info(f"Metadata saved to {metadata_path}")
+
+
+def check_model_performance(
+    metrics: Dict[str, Any], 
+    thresholds: Dict[str, float]
+) -> bool:
+    """Check if model meets minimum performance thresholds for deployment."""
+    logger = logging.getLogger(__name__)
+    logger.info("Checking model performance against thresholds")
+    
+    if not thresholds:
+        logger.warning("No thresholds provided, skipping performance check")
+        return True
+    
+    passed = True
+    for metric_name, threshold_value in thresholds.items():
+        if metric_name not in metrics:
+            logger.warning(f"Metric '{metric_name}' not found in evaluation results")
+            continue
+        
+        metric_value = metrics[metric_name]
+        meets_threshold = metric_value >= threshold_value
+        
+        status = "✓ PASS" if meets_threshold else "✗ FAIL"
+        logger.info(f"{status} - {metric_name}: {metric_value:.4f} (threshold: {threshold_value:.4f})")
+        
+        if not meets_threshold:
+            passed = False
+    
+    if passed:
+        logger.info("Model meets all performance thresholds")
+    else:
+        logger.warning("Model does not meet all performance thresholds")
+    
+    return passed
+
+
+def run_pipeline(
+    data_path: str,
+    mlflow_tracking_uri: str,
+    experiment_name: str,
+    hyperparameters: Dict[str, Any] = None,
+    performance_thresholds: Dict[str, float] = None
+) -> Dict[str, Any]:
+    """Execute complete ML pipeline from data loading to model evaluation and logging."""
+    logger = setup_logging()
+    logger.info("=" * 80)
+    logger.info("Starting Fraud Detection ML Pipeline")
+    logger.info("=" * 80)
+    
+    try:
+        # Configure MLflow
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        mlflow.set_experiment(experiment_name)
+        logger.info(f"MLflow tracking URI: {mlflow_tracking_uri}")
+        logger.info(f"MLflow experiment: {experiment_name}")
+        
+        # Step 1: Load data
+        df = load_data(data_path)
+        
+        # Step 2: Validate data
+        validate_data(df)
+        
+        # Step 3: Preprocess data
+        X, y = preprocess_data(df)
+        
+        # Step 4: Split data
+        X_train, X_test, y_train, y_test = split_data(X, y)
+        
+        # Step 5: Handle imbalance
+        X_train_balanced, y_train_balanced = handle_imbalance(
+            X_train, y_train, strategy="smote"
+        )
+        
+        # Step 6: Train model
+        model = train_model(X_train_balanced, y_train_balanced, hyperparameters or {})
+        
+        # Step 7: Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Step 8: Check performance thresholds
+        performance_check_passed = check_model_performance(
+            metrics, performance_thresholds or {}
+        )
+        
+        # Dataset information
+        dataset_info = {
+            'total_samples': len(df),
+            'n_features': X.shape[1],
+            'train_samples': len(X_train_balanced),
+            'test_samples': len(X_test),
+            'fraud_rate': float(y.mean())
+        }
+        
+        # Step 9: Log to MLflow
+        run_id = log_to_mlflow(
+            model=model,
+            metrics=metrics,
+            hyperparameters=hyperparameters or {},
+            dataset_info=dataset_info
+        )
+        
+        # Step 10: Save model artifacts
+        model_path = os.path.join("models", f"fraud_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+        metadata = {
+            'metrics': metrics,
+            'hyperparameters': hyperparameters or {},
+            'dataset_info': dataset_info,
+            'mlflow_run_id': run_id,
+            'performance_check_passed': performance_check_passed
+        }
+        save_model_artifacts(model, model_path, metadata)
+        
+        # Prepare results
+        results = {
+            'success': True,
+            'model_path': model_path,
+            'metrics': metrics,
+            'mlflow_run_id': run_id,
+            'performance_check_passed': performance_check_passed,
+            'dataset_info': dataset_info
+        }
+        
+        logger.info("=" * 80)
+        logger.info("Pipeline completed successfully")
+        logger.info("=" * 80)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed with error: {str(e)}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def main():
+    """Entry point for pipeline execution."""
+    # Default configuration
+    config = {
+        'data_path': os.getenv('DATA_PATH', 'data/creditcard.csv'),
+        'mlflow_tracking_uri': os.getenv('MLFLOW_TRACKING_URI', 'http://localhost:5000'),
+        'experiment_name': os.getenv('MLFLOW_EXPERIMENT_NAME', 'fraud_detection'),
+        'hyperparameters': {
+            'n_estimators': int(os.getenv('N_ESTIMATORS', '100')),
+            'max_depth': int(os.getenv('MAX_DEPTH', '10')),
+            'min_samples_split': int(os.getenv('MIN_SAMPLES_SPLIT', '2')),
+            'random_state': 42,
+            'class_weight': 'balanced'
+        },
+        'performance_thresholds': {
+            'auc_roc': float(os.getenv('MIN_AUC_ROC', '0.85')),
+            'recall': float(os.getenv('MIN_RECALL', '0.75')),
+            'precision': float(os.getenv('MIN_PRECISION', '0.70'))
+        }
+    }
+    
+    # Run pipeline
+    results = run_pipeline(**config)
+    
+    # Exit with appropriate code
+    if results['success'] and results.get('performance_check_passed', False):
+        exit(0)
+    else:
+        exit(1)
+
+
+if __name__ == "__main__":
+    main()
+```

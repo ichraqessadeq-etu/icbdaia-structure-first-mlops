@@ -1,0 +1,107 @@
+Certainly! To ensure your pipeline module is working as expected, we can set up unit tests using `pytest` and automate the testing process using GitHub Actions. Below, you'll find a complete `pytest` test file and a GitHub Actions workflow to run these tests.
+
+### (a) Complete `pytest` Test File
+
+Here's the `test_pipeline.py` file that tests your pipeline module:
+
+```python
+# tests/test_pipeline.py
+import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import make_classification
+from pipeline.data_loader import load_data
+from pipeline.model_trainer import train_model
+from pipeline.model_evaluator import evaluate_model
+
+def test_load_data():
+    # Use a temporary CSV file in memory
+    import pandas as pd
+    from io import StringIO
+
+    csv_data = """A,B,C,Class
+    1,2,3,0
+    4,5,6,1
+    7,8,9,0
+    10,11,12,1"""
+    
+    data = StringIO(csv_data)
+    X, y = load_data(data)
+    
+    assert not X.empty, "Feature set should not be empty"
+    assert y is not None, "Target set should not be None"
+    assert 'Class' not in X.columns, "'Class' should not be in the feature set"
+
+def test_train_model():
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier), "The model should be a RandomForestClassifier"
+    assert model.n_estimators == 100, "The model should have 100 trees"
+
+def test_evaluate_model():
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    assert 'precision' in metrics, "Evaluation metrics should include precision"
+    assert 'recall' in metrics, "Evaluation metrics should include recall"
+    assert 'f1-score' in metrics, "Evaluation metrics should include f1-score"
+
+@pytest.mark.skip(reason="MLflow logging is an integration test and requires MLflow setup.")
+def test_log_to_mlflow():
+    # This test would require an actual MLflow server to test against.
+    pass
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Here's the `ci.yml` file for setting up GitHub Actions to run your tests:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas mlflow
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+### Explanation
+
+- **Test File (`test_pipeline.py`):**
+  - **`test_load_data`**: Tests data loading functionality using an in-memory CSV.
+  - **`test_train_model`**: Verifies that the `train_model` function returns a `RandomForestClassifier` with the correct number of trees.
+  - **`test_evaluate_model`**: Checks that evaluation metrics include precision, recall, and f1-score.
+  - **`test_log_to_mlflow`**: Skipped test as it requires integration with an MLflow server.
+
+- **GitHub Actions Workflow (`ci.yml`):**
+  - **`on`**: Triggered on pushes and pull requests to the `main` branch.
+  - **`jobs`**: Defines the job to run on an `ubuntu-latest` runner.
+  - **`steps`**: Includes steps to checkout code, set up Python, install dependencies, and run tests using `pytest`.
+
+This setup ensures that your code is tested automatically whenever changes are pushed to the repository or when a pull request is made.

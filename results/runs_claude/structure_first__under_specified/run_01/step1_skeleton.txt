@@ -1,0 +1,480 @@
+# Fraud Detection Model CI/CD Pipeline - Structure
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   └── config.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py
+│   └── conftest.py
+├── models/
+│   └── .gitkeep
+├── data/
+│   ├── raw/
+│   └── processed/
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.py
+└── README.md
+```
+
+## Pipeline Module Structure
+
+```python
+# src/pipeline.py
+
+"""Fraud detection model CI/CD pipeline implementation."""
+
+from typing import Tuple, Dict, Any
+import pandas as pd
+from pathlib import Path
+
+
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load raw fraud detection data from specified path."""
+    ...
+
+
+def validate_data_schema(df: pd.DataFrame, expected_schema: Dict[str, str]) -> bool:
+    """Validate that dataframe matches expected schema."""
+    ...
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Preprocess and split data into train and test sets."""
+    ...
+
+
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create engineered features for fraud detection."""
+    ...
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, hyperparameters: Dict[str, Any]) -> Any:
+    """Train fraud detection model with given hyperparameters."""
+    ...
+
+
+def evaluate_model(model: Any, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance and return metrics."""
+    ...
+
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model meets minimum performance thresholds."""
+    ...
+
+
+def check_model_bias(model: Any, X_test: pd.DataFrame, y_test: pd.Series, sensitive_features: list) -> Dict[str, Any]:
+    """Check model for bias across sensitive feature groups."""
+    ...
+
+
+def save_model(model: Any, model_path: Path, metadata: Dict[str, Any]) -> None:
+    """Save trained model with metadata to specified path."""
+    ...
+
+
+def load_model(model_path: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Load model and metadata from specified path."""
+    ...
+
+
+def version_model(model_path: Path, registry_url: str, version: str) -> str:
+    """Version and register model in model registry."""
+    ...
+
+
+def generate_model_card(model: Any, metrics: Dict[str, float], metadata: Dict[str, Any]) -> str:
+    """Generate model card documentation."""
+    ...
+
+
+def run_data_quality_checks(df: pd.DataFrame) -> Dict[str, Any]:
+    """Run comprehensive data quality checks."""
+    ...
+
+
+def detect_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame) -> Dict[str, Any]:
+    """Detect data drift between reference and current datasets."""
+    ...
+
+
+def run_training_pipeline(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute complete training pipeline."""
+    ...
+
+
+def run_validation_pipeline(model_path: Path, test_data_path: Path) -> Dict[str, Any]:
+    """Execute model validation pipeline."""
+    ...
+```
+
+```python
+# src/config.py
+
+"""Configuration management for fraud detection pipeline."""
+
+from typing import Dict, Any
+from pathlib import Path
+
+
+def load_config(config_path: Path) -> Dict[str, Any]:
+    """Load pipeline configuration from file."""
+    ...
+
+
+def get_default_config() -> Dict[str, Any]:
+    """Return default pipeline configuration."""
+    ...
+
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """Validate configuration parameters."""
+    ...
+```
+
+## Test File Structure
+
+```python
+# tests/test_pipeline.py
+
+"""Comprehensive tests for fraud detection pipeline."""
+
+import pytest
+import pandas as pd
+from pathlib import Path
+
+
+def test_load_data_success():
+    """Test successful data loading from valid path."""
+    ...
+
+
+def test_load_data_file_not_found():
+    """Test data loading raises error when file doesn't exist."""
+    ...
+
+
+def test_validate_data_schema_valid():
+    """Test schema validation passes with correct schema."""
+    ...
+
+
+def test_validate_data_schema_invalid():
+    """Test schema validation fails with incorrect schema."""
+    ...
+
+
+def test_preprocess_data_splits_correctly():
+    """Test data preprocessing creates correct train/test split."""
+    ...
+
+
+def test_preprocess_data_handles_missing_values():
+    """Test preprocessing correctly handles missing values."""
+    ...
+
+
+def test_engineer_features_creates_expected_columns():
+    """Test feature engineering creates all expected features."""
+    ...
+
+
+def test_engineer_features_no_data_leakage():
+    """Test feature engineering doesn't leak target information."""
+    ...
+
+
+def test_train_model_returns_valid_model():
+    """Test model training returns a valid trained model."""
+    ...
+
+
+def test_train_model_with_invalid_hyperparameters():
+    """Test model training handles invalid hyperparameters gracefully."""
+    ...
+
+
+def test_evaluate_model_returns_all_metrics():
+    """Test evaluation returns all required metrics."""
+    ...
+
+
+def test_evaluate_model_metrics_in_valid_range():
+    """Test all metrics are within valid ranges (0-1 for probabilities)."""
+    ...
+
+
+def test_validate_model_performance_passes_threshold():
+    """Test performance validation passes when metrics exceed thresholds."""
+    ...
+
+
+def test_validate_model_performance_fails_threshold():
+    """Test performance validation fails when metrics below thresholds."""
+    ...
+
+
+def test_check_model_bias_detects_bias():
+    """Test bias detection identifies biased predictions."""
+    ...
+
+
+def test_check_model_bias_no_bias():
+    """Test bias detection passes for unbiased model."""
+    ...
+
+
+def test_save_and_load_model_roundtrip():
+    """Test saving and loading model preserves model state."""
+    ...
+
+
+def test_save_model_creates_artifacts():
+    """Test model saving creates all expected artifacts."""
+    ...
+
+
+def test_version_model_creates_registry_entry():
+    """Test model versioning creates registry entry."""
+    ...
+
+
+def test_generate_model_card_includes_required_sections():
+    """Test model card contains all required documentation sections."""
+    ...
+
+
+def test_run_data_quality_checks_detects_issues():
+    """Test data quality checks detect common data issues."""
+    ...
+
+
+def test_run_data_quality_checks_passes_clean_data():
+    """Test data quality checks pass for clean data."""
+    ...
+
+
+def test_detect_data_drift_identifies_drift():
+    """Test drift detection identifies significant distribution changes."""
+    ...
+
+
+def test_detect_data_drift_no_drift():
+    """Test drift detection passes when distributions are similar."""
+    ...
+
+
+def test_run_training_pipeline_end_to_end():
+    """Test complete training pipeline executes successfully."""
+    ...
+
+
+def test_run_validation_pipeline_end_to_end():
+    """Test complete validation pipeline executes successfully."""
+    ...
+
+
+def test_pipeline_reproducibility():
+    """Test pipeline produces reproducible results with same seed."""
+    ...
+
+
+def test_pipeline_handles_edge_cases():
+    """Test pipeline handles edge cases (empty data, single class, etc.)."""
+    ...
+```
+
+```python
+# tests/conftest.py
+
+"""Pytest fixtures for fraud detection pipeline tests."""
+
+import pytest
+import pandas as pd
+from pathlib import Path
+
+
+@pytest.fixture
+def sample_fraud_data():
+    """Provide sample fraud detection dataset for testing."""
+    ...
+
+
+@pytest.fixture
+def sample_config():
+    """Provide sample pipeline configuration."""
+    ...
+
+
+@pytest.fixture
+def trained_model():
+    """Provide a pre-trained model for testing."""
+    ...
+
+
+@pytest.fixture
+def temp_model_dir(tmp_path):
+    """Provide temporary directory for model artifacts."""
+    ...
+
+
+@pytest.fixture
+def expected_schema():
+    """Provide expected data schema definition."""
+    ...
+
+
+@pytest.fixture
+def performance_thresholds():
+    """Provide minimum performance thresholds."""
+    ...
+```
+
+## GitHub Actions Workflow Structure
+
+```yaml
+# .github/workflows/ci-cd.yml
+
+name: Fraud Detection Model CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly retraining
+
+jobs:
+  # Job 1: Code Quality & Security
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run linting (flake8, black, isort)
+      - Run type checking (mypy)
+      - Run security scan (bandit)
+      - Run dependency vulnerability check (safety)
+
+  # Job 2: Unit & Integration Tests
+  test:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run pytest with coverage
+      - Upload coverage reports
+      - Generate test report
+
+  # Job 3: Data Validation
+  data-validation:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download/mount data
+      - Run data quality checks
+      - Run data drift detection
+      - Validate data schema
+      - Generate data report
+
+  # Job 4: Model Training
+  train-model:
+    needs: [code-quality, test, data-validation]
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Load training data
+      - Run training pipeline
+      - Save model artifacts
+      - Upload model to artifact storage
+
+  # Job 5: Model Evaluation
+  evaluate-model:
+    needs: train-model
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download model artifacts
+      - Load test data
+      - Run evaluation pipeline
+      - Validate performance thresholds
+      - Check model bias/fairness
+      - Generate evaluation report
+
+  # Job 6: Model Registry & Versioning
+  register-model:
+    needs: evaluate-model
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download model artifacts
+      - Version model
+      - Register in model registry
+      - Generate model card
+      - Tag release
+
+  # Job 7: Deploy to Staging
+  deploy-staging:
+    needs: register-model
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - Checkout code
+      - Setup cloud credentials
+      - Download model from registry
+      - Deploy to staging endpoint
+      - Run smoke tests
+      - Validate endpoint health
+
+  # Job 8: Integration Tests (Staging)
+  integration-test-staging:
+    needs: deploy-staging
+    steps:
+      - Checkout code
+      - Setup Python
+      - Run API integration tests
+      - Run load tests
+      - Validate prediction latency
+      - Check prediction quality
+
+  # Job 9: Deploy to Production
+  deploy-production:
+    needs: integration-test-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Setup cloud credentials
+      - Download model from registry
+      - Deploy to production (blue-green)
+      - Run smoke tests
+      - Switch traffic
+      - Monitor rollout
+
+  # Job 10: Post-Deployment Monitoring
+  post-deployment:
+    needs: deploy-production
+    steps:
+      - Setup monitoring dashboards
+      - Configure alerts
+      - Enable model monitoring
+      - Send deployment notification
+```
+
+---
+
+**Structure complete.** Ready for Step 2 implementation upon request.

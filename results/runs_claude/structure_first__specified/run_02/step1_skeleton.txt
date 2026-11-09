@@ -1,0 +1,755 @@
+# Step 1: Structure and File Layout
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ml_pipeline.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   ├── data_processing.py
+│   ├── model.py
+│   ├── drift_detection.py
+│   └── config.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py
+│   ├── test_data_processing.py
+│   ├── test_model.py
+│   └── test_drift_detection.py
+├── requirements.txt
+├── setup.py
+└── README.md
+```
+
+## Pipeline Module Structure
+
+### `src/config.py`
+
+```python
+"""Configuration management for the fraud detection pipeline."""
+
+from dataclasses import dataclass
+from typing import Dict, Any
+
+
+@dataclass
+class DataConfig:
+    """Data configuration parameters."""
+    ...
+
+
+@dataclass
+class ModelConfig:
+    """Model configuration parameters."""
+    ...
+
+
+@dataclass
+class MLflowConfig:
+    """MLflow tracking configuration."""
+    ...
+
+
+@dataclass
+class DriftConfig:
+    """Drift detection configuration."""
+    ...
+
+
+class PipelineConfig:
+    """Main pipeline configuration."""
+    
+    def __init__(self):
+        """Initialize pipeline configuration."""
+        ...
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary."""
+        ...
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'PipelineConfig':
+        """Load configuration from dictionary."""
+        ...
+```
+
+### `src/data_processing.py`
+
+```python
+"""Data loading and preprocessing for fraud detection."""
+
+import pandas as pd
+import numpy as np
+from typing import Tuple, Optional
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from file."""
+    ...
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate data schema and quality."""
+    ...
+
+
+def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Handle missing values in the dataset."""
+    ...
+
+
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Engineer additional features for fraud detection."""
+    ...
+
+
+def scale_features(X_train: pd.DataFrame, X_test: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, StandardScaler]:
+    """Scale features using StandardScaler."""
+    ...
+
+
+def prepare_data(
+    df: pd.DataFrame,
+    target_column: str = 'Class',
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, StandardScaler]:
+    """Prepare data for model training."""
+    ...
+
+
+def balance_dataset(X: np.ndarray, y: np.ndarray, strategy: str = 'smote') -> Tuple[np.ndarray, np.ndarray]:
+    """Balance imbalanced dataset using specified strategy."""
+    ...
+```
+
+### `src/model.py`
+
+```python
+"""Model training and evaluation for fraud detection."""
+
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, precision_recall_curve
+from typing import Dict, Any, Tuple, Optional
+import joblib
+
+
+class FraudDetectionModel:
+    """Random Forest model for fraud detection."""
+    
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize fraud detection model."""
+        ...
+    
+    def train(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        """Train the Random Forest model."""
+        ...
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Predict fraud labels."""
+        ...
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Predict fraud probabilities."""
+        ...
+    
+    def save(self, path: str) -> None:
+        """Save model to disk."""
+        ...
+    
+    @classmethod
+    def load(cls, path: str) -> 'FraudDetectionModel':
+        """Load model from disk."""
+        ...
+
+
+def evaluate_model(
+    model: FraudDetectionModel,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    threshold: float = 0.5
+) -> Dict[str, Any]:
+    """Evaluate model performance with fraud-specific metrics."""
+    ...
+
+
+def calculate_business_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    avg_transaction_amount: float = 100.0,
+    fraud_investigation_cost: float = 50.0
+) -> Dict[str, float]:
+    """Calculate business-oriented metrics for fraud detection."""
+    ...
+
+
+def find_optimal_threshold(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    metric: str = 'f1'
+) -> Tuple[float, float]:
+    """Find optimal classification threshold."""
+    ...
+```
+
+### `src/drift_detection.py`
+
+```python
+"""Concept drift detection for fraud detection model."""
+
+import numpy as np
+import pandas as pd
+from typing import Dict, Any, Optional, Tuple
+from scipy import stats
+
+
+class DriftDetector:
+    """Detect concept drift in fraud detection data."""
+    
+    def __init__(self, reference_data: np.ndarray, config: Dict[str, Any]):
+        """Initialize drift detector with reference data."""
+        ...
+    
+    def detect_feature_drift(self, current_data: np.ndarray) -> Dict[str, Any]:
+        """Detect drift in feature distributions using KS test."""
+        ...
+    
+    def detect_prediction_drift(
+        self,
+        reference_predictions: np.ndarray,
+        current_predictions: np.ndarray
+    ) -> Dict[str, Any]:
+        """Detect drift in model predictions."""
+        ...
+    
+    def detect_performance_drift(
+        self,
+        reference_metrics: Dict[str, float],
+        current_metrics: Dict[str, float],
+        threshold: float = 0.05
+    ) -> Dict[str, bool]:
+        """Detect significant performance degradation."""
+        ...
+    
+    def should_retrain(self, drift_results: Dict[str, Any]) -> bool:
+        """Determine if model should be retrained based on drift detection."""
+        ...
+
+
+def calculate_psi(
+    reference: np.ndarray,
+    current: np.ndarray,
+    bins: int = 10
+) -> float:
+    """Calculate Population Stability Index (PSI)."""
+    ...
+
+
+def calculate_kl_divergence(reference: np.ndarray, current: np.ndarray) -> float:
+    """Calculate KL divergence between two distributions."""
+    ...
+```
+
+### `src/pipeline.py`
+
+```python
+"""Main ML pipeline orchestration for fraud detection."""
+
+import mlflow
+import mlflow.sklearn
+from typing import Dict, Any, Optional
+import logging
+from pathlib import Path
+import json
+
+from .config import PipelineConfig
+from .data_processing import load_data, prepare_data, balance_dataset
+from .model import FraudDetectionModel, evaluate_model, calculate_business_metrics
+from .drift_detection import DriftDetector
+
+
+logger = logging.getLogger(__name__)
+
+
+class FraudDetectionPipeline:
+    """End-to-end ML pipeline for fraud detection."""
+    
+    def __init__(self, config: PipelineConfig):
+        """Initialize the ML pipeline."""
+        ...
+    
+    def setup_mlflow(self) -> None:
+        """Setup MLflow experiment tracking."""
+        ...
+    
+    def run_training_pipeline(self, data_path: str) -> Dict[str, Any]:
+        """Execute complete training pipeline."""
+        ...
+    
+    def run_evaluation_pipeline(self, model_path: str, data_path: str) -> Dict[str, Any]:
+        """Execute model evaluation pipeline."""
+        ...
+    
+    def run_drift_detection_pipeline(
+        self,
+        reference_data_path: str,
+        current_data_path: str,
+        model_path: str
+    ) -> Dict[str, Any]:
+        """Execute drift detection pipeline."""
+        ...
+    
+    def log_to_mlflow(self, metrics: Dict[str, Any], params: Dict[str, Any], model: FraudDetectionModel) -> None:
+        """Log metrics, parameters, and model to MLflow."""
+        ...
+    
+    def register_model(self, model_uri: str, model_name: str) -> str:
+        """Register model in MLflow Model Registry."""
+        ...
+
+
+def main(
+    mode: str,
+    data_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    config_path: Optional[str] = None
+) -> int:
+    """Main entry point for the pipeline."""
+    ...
+
+
+if __name__ == "__main__":
+    ...
+```
+
+## Test File Structure
+
+### `tests/test_data_processing.py`
+
+```python
+"""Tests for data processing module."""
+
+import pytest
+import pandas as pd
+import numpy as np
+
+
+def test_load_data_valid_file():
+    """Test loading data from a valid CSV file."""
+    ...
+
+
+def test_load_data_missing_file():
+    """Test loading data from non-existent file raises error."""
+    ...
+
+
+def test_validate_data_correct_schema():
+    """Test data validation passes with correct schema."""
+    ...
+
+
+def test_validate_data_missing_columns():
+    """Test data validation fails with missing required columns."""
+    ...
+
+
+def test_handle_missing_values():
+    """Test missing value handling strategies."""
+    ...
+
+
+def test_engineer_features():
+    """Test feature engineering creates expected features."""
+    ...
+
+
+def test_scale_features():
+    """Test feature scaling produces normalized data."""
+    ...
+
+
+def test_prepare_data_split_ratio():
+    """Test data preparation maintains correct train/test split."""
+    ...
+
+
+def test_balance_dataset_smote():
+    """Test SMOTE balancing increases minority class samples."""
+    ...
+
+
+def test_balance_dataset_maintains_feature_shape():
+    """Test balancing maintains feature dimensionality."""
+    ...
+```
+
+### `tests/test_model.py`
+
+```python
+"""Tests for model training and evaluation."""
+
+import pytest
+import numpy as np
+from unittest.mock import Mock, patch
+
+
+def test_fraud_detection_model_initialization():
+    """Test model initializes with correct parameters."""
+    ...
+
+
+def test_model_training_updates_state():
+    """Test model training updates internal state."""
+    ...
+
+
+def test_model_predict_shape():
+    """Test model predictions have correct shape."""
+    ...
+
+
+def test_model_predict_proba_range():
+    """Test prediction probabilities are in valid range [0, 1]."""
+    ...
+
+
+def test_model_save_and_load():
+    """Test model serialization and deserialization."""
+    ...
+
+
+def test_evaluate_model_returns_all_metrics():
+    """Test evaluation returns all required metrics."""
+    ...
+
+
+def test_evaluate_model_with_imbalanced_data():
+    """Test evaluation handles highly imbalanced datasets correctly."""
+    ...
+
+
+def test_calculate_business_metrics():
+    """Test business metrics calculation with known values."""
+    ...
+
+
+def test_find_optimal_threshold():
+    """Test optimal threshold finder returns valid threshold."""
+    ...
+```
+
+### `tests/test_drift_detection.py`
+
+```python
+"""Tests for drift detection module."""
+
+import pytest
+import numpy as np
+
+
+def test_drift_detector_initialization():
+    """Test drift detector initializes with reference data."""
+    ...
+
+
+def test_detect_feature_drift_no_drift():
+    """Test drift detection returns no drift for identical distributions."""
+    ...
+
+
+def test_detect_feature_drift_with_drift():
+    """Test drift detection identifies significant distribution shifts."""
+    ...
+
+
+def test_detect_prediction_drift():
+    """Test prediction drift detection."""
+    ...
+
+
+def test_detect_performance_drift_no_degradation():
+    """Test performance drift when metrics are stable."""
+    ...
+
+
+def test_detect_performance_drift_with_degradation():
+    """Test performance drift detection with significant degradation."""
+    ...
+
+
+def test_should_retrain_true():
+    """Test retrain recommendation when drift exceeds threshold."""
+    ...
+
+
+def test_should_retrain_false():
+    """Test no retrain recommendation when drift is minimal."""
+    ...
+
+
+def test_calculate_psi():
+    """Test PSI calculation with known distributions."""
+    ...
+
+
+def test_calculate_kl_divergence():
+    """Test KL divergence calculation."""
+    ...
+```
+
+### `tests/test_pipeline.py`
+
+```python
+"""Tests for main pipeline orchestration."""
+
+import pytest
+from unittest.mock import Mock, patch, MagicMock
+
+
+def test_pipeline_initialization():
+    """Test pipeline initializes with configuration."""
+    ...
+
+
+def test_setup_mlflow():
+    """Test MLflow experiment setup."""
+    ...
+
+
+def test_run_training_pipeline_success():
+    """Test complete training pipeline executes successfully."""
+    ...
+
+
+def test_run_training_pipeline_data_error():
+    """Test training pipeline handles data loading errors."""
+    ...
+
+
+def test_run_evaluation_pipeline():
+    """Test evaluation pipeline executes successfully."""
+    ...
+
+
+def test_run_drift_detection_pipeline_no_drift():
+    """Test drift detection pipeline when no drift detected."""
+    ...
+
+
+def test_run_drift_detection_pipeline_with_drift():
+    """Test drift detection pipeline triggers retraining."""
+    ...
+
+
+def test_log_to_mlflow():
+    """Test MLflow logging functionality."""
+    ...
+
+
+def test_register_model():
+    """Test model registration in MLflow."""
+    ...
+
+
+def test_main_training_mode():
+    """Test main entry point in training mode."""
+    ...
+
+
+def test_main_drift_detection_mode():
+    """Test main entry point in drift detection mode."""
+    ...
+
+
+def test_main_invalid_mode():
+    """Test main entry point with invalid mode raises error."""
+    ...
+```
+
+## GitHub Actions Workflow Structure
+
+### `.github/workflows/ml_pipeline.yml`
+
+```yaml
+name: Fraud Detection ML Pipeline
+
+on:
+  # Trigger events
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Pipeline mode'
+        required: true
+        default: 'train'
+        type: choice
+        options:
+          - train
+          - evaluate
+          - drift_check
+
+env:
+  # Environment variables
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Run black formatter check
+      - name: Run flake8 linter
+      - name: Run mypy type checker
+      - name: Run bandit security check
+
+  # Job 2: Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Run pytest with coverage
+      - name: Upload coverage reports
+      - name: Check coverage threshold
+
+  # Job 3: Data Validation
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download dataset
+      - name: Validate data schema
+      - name: Check data quality
+      - name: Generate data profile report
+
+  # Job 4: Drift Detection
+  drift-detection:
+    name: Concept Drift Detection
+    runs-on: ubuntu-latest
+    needs: data-validation
+    if: github.event_name == 'schedule' || github.event.inputs.mode == 'drift_check'
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download reference data
+      - name: Download current data
+      - name: Load production model
+      - name: Run drift detection
+      - name: Parse drift results
+      - name: Set retraining flag
+
+  # Job 5: Model Training
+  model-training:
+    name: Model Training
+    runs-on: ubuntu-latest
+    needs: [data-validation, drift-detection]
+    if: |
+      always() &&
+      (needs.data-validation.result == 'success') &&
+      (needs.drift-detection.result == 'success' || needs.drift-detection.result == 'skipped')
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure MLflow
+      - name: Download training data
+      - name: Run training pipeline
+      - name: Save model artifacts
+      - name: Upload model to artifacts
+
+  # Job 6: Model Evaluation
+  model-evaluation:
+    name: Model Evaluation
+    runs-on: ubuntu-latest
+    needs: model-training
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download model artifacts
+      - name: Download test data
+      - name: Run evaluation pipeline
+      - name: Generate evaluation report
+      - name: Check performance thresholds
+      - name: Upload evaluation results
+
+  # Job 7: Model Registration
+  model-registration:
+    name: Model Registration
+    runs-on: ubuntu-latest
+    needs: model-evaluation
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure MLflow
+      - name: Download model artifacts
+      - name: Register model in MLflow
+      - name: Transition model to staging
+      - name: Tag model version
+
+  # Job 8: Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: model-registration
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Load registered model
+      - name: Run end-to-end tests
+      - name: Test API endpoints
+      - name: Validate predictions
+
+  # Job 9: Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Configure AWS credentials
+      - name: Download model artifacts
+      - name: Deploy to staging environment
+      - name: Run smoke tests
+      - name: Update deployment status
+
+  # Job 10: Notification
+  notification:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: always()
+    steps:
+      - name: Determine workflow status
+      - name: Send Slack notification
+      - name: Update monitoring dashboard
+```

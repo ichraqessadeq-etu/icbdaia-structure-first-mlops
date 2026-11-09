@@ -1,0 +1,547 @@
+# CI/CD Pipeline Structure for Fraud Detection Model
+
+## File Layout
+
+```
+fraud-detection-pipeline/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+├── src/
+│   └── pipeline/
+│       ├── __init__.py
+│       ├── data_validation.py
+│       ├── model_training.py
+│       ├── model_evaluation.py
+│       ├── model_registry.py
+│       └── deployment.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_data_validation.py
+│   ├── test_model_training.py
+│   ├── test_model_evaluation.py
+│   ├── test_model_registry.py
+│   └── test_deployment.py
+├── config/
+│   ├── model_config.yaml
+│   └── deployment_config.yaml
+├── requirements.txt
+├── requirements-dev.txt
+└── README.md
+```
+
+## Pipeline Module Functions
+
+### `src/pipeline/data_validation.py`
+
+```python
+"""Data validation module for fraud detection pipeline."""
+
+from typing import Dict, Tuple
+import pandas as pd
+
+
+def validate_schema(data: pd.DataFrame, expected_schema: Dict) -> bool:
+    """Validate that the data matches the expected schema."""
+    ...
+
+
+def check_data_quality(data: pd.DataFrame) -> Dict[str, any]:
+    """Check data quality metrics like missing values, duplicates, and outliers."""
+    ...
+
+
+def validate_feature_distributions(data: pd.DataFrame, reference_stats: Dict) -> bool:
+    """Validate that feature distributions haven't drifted beyond thresholds."""
+    ...
+
+
+def check_target_balance(data: pd.DataFrame, target_col: str) -> Dict[str, float]:
+    """Check the balance of fraud vs non-fraud cases."""
+    ...
+
+
+def validate_data_pipeline(data_path: str, config: Dict) -> Tuple[pd.DataFrame, Dict]:
+    """Run full data validation pipeline and return validated data and metrics."""
+    ...
+```
+
+### `src/pipeline/model_training.py`
+
+```python
+"""Model training module for fraud detection pipeline."""
+
+from typing import Dict, Any
+import pandas as pd
+from sklearn.base import BaseEstimator
+
+
+def prepare_features(data: pd.DataFrame, config: Dict) -> Tuple[pd.DataFrame, pd.Series]:
+    """Prepare features and target for model training."""
+    ...
+
+
+def create_model(config: Dict) -> BaseEstimator:
+    """Create and configure the fraud detection model."""
+    ...
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, model: BaseEstimator, config: Dict) -> BaseEstimator:
+    """Train the fraud detection model."""
+    ...
+
+
+def save_model_artifacts(model: BaseEstimator, feature_names: list, output_path: str) -> None:
+    """Save trained model and associated artifacts."""
+    ...
+
+
+def run_training_pipeline(data_path: str, config: Dict) -> Dict[str, Any]:
+    """Execute the complete model training pipeline."""
+    ...
+```
+
+### `src/pipeline/model_evaluation.py`
+
+```python
+"""Model evaluation module for fraud detection pipeline."""
+
+from typing import Dict, List
+import pandas as pd
+from sklearn.base import BaseEstimator
+
+
+def calculate_classification_metrics(y_true: pd.Series, y_pred: pd.Series, y_pred_proba: pd.Series) -> Dict[str, float]:
+    """Calculate precision, recall, F1, AUC-ROC, and other classification metrics."""
+    ...
+
+
+def evaluate_at_thresholds(y_true: pd.Series, y_pred_proba: pd.Series, thresholds: List[float]) -> pd.DataFrame:
+    """Evaluate model performance at different probability thresholds."""
+    ...
+
+
+def calculate_business_metrics(y_true: pd.Series, y_pred: pd.Series, transaction_amounts: pd.Series) -> Dict[str, float]:
+    """Calculate business-relevant metrics like detected fraud amount and false positive cost."""
+    ...
+
+
+def compare_with_baseline(current_metrics: Dict, baseline_metrics: Dict, tolerance: float) -> bool:
+    """Compare current model metrics with baseline to ensure no regression."""
+    ...
+
+
+def generate_evaluation_report(model: BaseEstimator, X_test: pd.DataFrame, y_test: pd.Series, config: Dict) -> Dict[str, Any]:
+    """Generate comprehensive evaluation report with all metrics."""
+    ...
+```
+
+### `src/pipeline/model_registry.py`
+
+```python
+"""Model registry module for fraud detection pipeline."""
+
+from typing import Dict, Optional
+from pathlib import Path
+
+
+def register_model(model_path: str, metrics: Dict, metadata: Dict, registry_uri: str) -> str:
+    """Register model in the model registry (e.g., MLflow)."""
+    ...
+
+
+def get_latest_model_version(model_name: str, registry_uri: str) -> Optional[str]:
+    """Retrieve the latest version of a model from the registry."""
+    ...
+
+
+def promote_model_to_stage(model_name: str, version: str, stage: str, registry_uri: str) -> None:
+    """Promote a model version to a specific stage (staging/production)."""
+    ...
+
+
+def compare_model_versions(model_name: str, version1: str, version2: str, registry_uri: str) -> Dict:
+    """Compare metrics between two model versions."""
+    ...
+
+
+def archive_old_models(model_name: str, keep_n_versions: int, registry_uri: str) -> None:
+    """Archive old model versions keeping only the N most recent."""
+    ...
+```
+
+### `src/pipeline/deployment.py`
+
+```python
+"""Deployment module for fraud detection pipeline."""
+
+from typing import Dict, Optional
+
+
+def build_model_container(model_path: str, config: Dict) -> str:
+    """Build Docker container with the model for deployment."""
+    ...
+
+
+def validate_deployment_endpoint(endpoint_url: str, test_data: Dict) -> bool:
+    """Validate that the deployed model endpoint is responding correctly."""
+    ...
+
+
+def run_smoke_tests(endpoint_url: str, test_cases: list) -> Dict[str, bool]:
+    """Run smoke tests against the deployed model."""
+    ...
+
+
+def deploy_to_staging(model_uri: str, config: Dict) -> str:
+    """Deploy model to staging environment."""
+    ...
+
+
+def deploy_to_production(model_uri: str, config: Dict, approval_required: bool = True) -> str:
+    """Deploy model to production environment."""
+    ...
+
+
+def rollback_deployment(deployment_name: str, previous_version: str) -> bool:
+    """Rollback to a previous model version."""
+    ...
+```
+
+## Test Functions
+
+### `tests/test_data_validation.py`
+
+```python
+"""Tests for data validation module."""
+
+
+def test_validate_schema_with_valid_data():
+    """Test schema validation passes with correct data structure."""
+    ...
+
+
+def test_validate_schema_with_missing_columns():
+    """Test schema validation fails when columns are missing."""
+    ...
+
+
+def test_check_data_quality_detects_missing_values():
+    """Test data quality check identifies missing values."""
+    ...
+
+
+def test_check_data_quality_detects_duplicates():
+    """Test data quality check identifies duplicate records."""
+    ...
+
+
+def test_validate_feature_distributions_no_drift():
+    """Test feature distribution validation passes when no drift detected."""
+    ...
+
+
+def test_validate_feature_distributions_with_drift():
+    """Test feature distribution validation fails when significant drift detected."""
+    ...
+
+
+def test_check_target_balance_imbalanced_dataset():
+    """Test target balance check on imbalanced fraud dataset."""
+    ...
+
+
+def test_validate_data_pipeline_end_to_end():
+    """Test complete data validation pipeline execution."""
+    ...
+```
+
+### `tests/test_model_training.py`
+
+```python
+"""Tests for model training module."""
+
+
+def test_prepare_features_splits_correctly():
+    """Test feature preparation correctly separates features and target."""
+    ...
+
+
+def test_create_model_with_valid_config():
+    """Test model creation with valid configuration."""
+    ...
+
+
+def test_create_model_with_invalid_config():
+    """Test model creation fails gracefully with invalid configuration."""
+    ...
+
+
+def test_train_model_converges():
+    """Test model training completes successfully and converges."""
+    ...
+
+
+def test_save_model_artifacts_creates_files():
+    """Test model artifacts are saved to correct location."""
+    ...
+
+
+def test_run_training_pipeline_produces_valid_model():
+    """Test complete training pipeline produces a valid trained model."""
+    ...
+
+
+def test_training_reproducibility_with_seed():
+    """Test training produces same results with fixed random seed."""
+    ...
+```
+
+### `tests/test_model_evaluation.py`
+
+```python
+"""Tests for model evaluation module."""
+
+
+def test_calculate_classification_metrics_perfect_predictions():
+    """Test metrics calculation with perfect predictions."""
+    ...
+
+
+def test_calculate_classification_metrics_random_predictions():
+    """Test metrics calculation with random predictions."""
+    ...
+
+
+def test_evaluate_at_thresholds_multiple_values():
+    """Test threshold evaluation across multiple probability cutoffs."""
+    ...
+
+
+def test_calculate_business_metrics_fraud_detection():
+    """Test business metrics calculation for fraud detection use case."""
+    ...
+
+
+def test_compare_with_baseline_passes_threshold():
+    """Test baseline comparison passes when metrics are acceptable."""
+    ...
+
+
+def test_compare_with_baseline_fails_threshold():
+    """Test baseline comparison fails when metrics degrade."""
+    ...
+
+
+def test_generate_evaluation_report_completeness():
+    """Test evaluation report contains all required metrics."""
+    ...
+```
+
+### `tests/test_model_registry.py`
+
+```python
+"""Tests for model registry module."""
+
+
+def test_register_model_success():
+    """Test successful model registration in registry."""
+    ...
+
+
+def test_register_model_with_metadata():
+    """Test model registration includes all metadata."""
+    ...
+
+
+def test_get_latest_model_version_exists():
+    """Test retrieval of latest model version when models exist."""
+    ...
+
+
+def test_get_latest_model_version_not_found():
+    """Test handling when no model versions exist."""
+    ...
+
+
+def test_promote_model_to_staging():
+    """Test model promotion to staging stage."""
+    ...
+
+
+def test_promote_model_to_production():
+    """Test model promotion to production stage."""
+    ...
+
+
+def test_compare_model_versions_metrics():
+    """Test comparison of metrics between model versions."""
+    ...
+
+
+def test_archive_old_models_keeps_recent():
+    """Test archiving keeps specified number of recent versions."""
+    ...
+```
+
+### `tests/test_deployment.py`
+
+```python
+"""Tests for deployment module."""
+
+
+def test_build_model_container_success():
+    """Test Docker container build completes successfully."""
+    ...
+
+
+def test_validate_deployment_endpoint_healthy():
+    """Test endpoint validation passes for healthy deployment."""
+    ...
+
+
+def test_validate_deployment_endpoint_unhealthy():
+    """Test endpoint validation fails for unhealthy deployment."""
+    ...
+
+
+def test_run_smoke_tests_all_pass():
+    """Test smoke tests pass for correct model behavior."""
+    ...
+
+
+def test_run_smoke_tests_with_failures():
+    """Test smoke test failure detection."""
+    ...
+
+
+def test_deploy_to_staging_success():
+    """Test successful deployment to staging environment."""
+    ...
+
+
+def test_deploy_to_production_with_approval():
+    """Test production deployment respects approval requirement."""
+    ...
+
+
+def test_rollback_deployment_to_previous_version():
+    """Test successful rollback to previous model version."""
+    ...
+```
+
+## GitHub Actions Workflow Outline
+
+### `.github/workflows/ci-cd.yml`
+
+```yaml
+name: Fraud Detection Model CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.10"
+  MODEL_NAME: "fraud-detection-model"
+
+jobs:
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run linting (flake8, black)
+      - Run type checking (mypy)
+      - Run security scan (bandit)
+
+  unit-tests:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run pytest with coverage
+      - Upload coverage reports
+      - Check coverage threshold (80%)
+
+  data-validation:
+    needs: [unit-tests]
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download sample dataset
+      - Run data validation pipeline
+      - Upload validation report
+
+  model-training:
+    needs: [data-validation]
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download validated data
+      - Train model
+      - Save model artifacts
+      - Upload trained model
+
+  model-evaluation:
+    needs: [model-training]
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download trained model
+      - Run evaluation pipeline
+      - Compare with baseline metrics
+      - Upload evaluation report
+      - Fail if metrics below threshold
+
+  model-registration:
+    needs: [model-evaluation]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Setup Python
+      - Download model artifacts
+      - Register model in MLflow
+      - Tag with git commit SHA
+      - Store model version
+
+  deploy-staging:
+    needs: [model-registration]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Setup cloud credentials
+      - Build Docker container
+      - Push to container registry
+      - Deploy to staging environment
+      - Run smoke tests
+      - Validate endpoint health
+
+  deploy-production:
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Setup cloud credentials
+      - Require manual approval
+      - Deploy to production (blue-green)
+      - Run production smoke tests
+      - Switch traffic to new version
+      - Monitor metrics
+      - Rollback on failure
+
+  notify:
+    needs: [deploy-production]
+    if: always()
+    steps:
+      - Send Slack notification
+      - Update deployment dashboard
+```
+
+---
+
+**Structure complete.** Ready for Step 2 implementation when requested.

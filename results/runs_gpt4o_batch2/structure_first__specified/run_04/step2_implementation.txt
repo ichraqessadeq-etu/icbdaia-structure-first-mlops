@@ -1,0 +1,75 @@
+```python
+# pipeline/__init__.py
+# This file can remain empty or be used to initialize the module.
+
+# pipeline/data_loader.py
+import pandas as pd
+
+def load_data(file_path: str) -> tuple:
+    """Load and return the credit card fraud dataset."""
+    try:
+        data = pd.read_csv(file_path)
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        return X, y
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        raise
+
+# pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train: any, y_train: any) -> any:
+    """Train a RandomForestClassifier model."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# pipeline/model_evaluator.py
+from sklearn.metrics import classification_report
+
+def evaluate_model(model: any, X_test: any, y_test: any) -> dict:
+    """Evaluate the model and return the evaluation metrics."""
+    predictions = model.predict(X_test)
+    report = classification_report(y_test, predictions, output_dict=True)
+    return report
+
+# pipeline/mlflow_logger.py
+import mlflow
+import mlflow.sklearn
+
+def log_to_mlflow(params: dict, metrics: dict, model: any):
+    """Log model parameters and metrics to MLflow."""
+    with mlflow.start_run():
+        mlflow.log_params(params)
+        mlflow.log_metrics(metrics)
+        mlflow.sklearn.log_model(model, "model")
+
+# pipeline/main.py
+from sklearn.model_selection import train_test_split
+from pipeline.data_loader import load_data
+from pipeline.model_trainer import train_model
+from pipeline.model_evaluator import evaluate_model
+from pipeline.mlflow_logger import log_to_mlflow
+
+def main():
+    """Execute the complete workflow: data loading, model training, evaluation, and logging."""
+    # Load data
+    X, y = load_data('data/creditcard.csv')
+    
+    # Split data into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Train the model
+    model = train_model(X_train, y_train)
+
+    # Evaluate the model
+    metrics = evaluate_model(model, X_test, y_test)
+
+    # Log to MLflow
+    params = {"n_estimators": 100, "random_state": 42}
+    log_to_mlflow(params, metrics, model)
+
+if __name__ == "__main__":
+    main()
+```

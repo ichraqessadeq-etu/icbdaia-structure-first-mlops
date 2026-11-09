@@ -1,0 +1,218 @@
+Here's the complete implementation of the pipeline module based on the provided structure. This implementation includes all the necessary components for loading data, training, evaluating, detecting drift, logging with MLflow, and running the main pipeline:
+
+```python
+# src/data_loader.py
+
+import pandas as pd
+
+def load_credit_card_data(file_path: str) -> tuple:
+    """Load and return training and test datasets."""
+    data = pd.read_csv(file_path)
+    X = data.drop('Class', axis=1)
+    y = data['Class']
+    # Assuming a simple train-test split for demonstration purposes
+    X_train, X_test = X[:int(0.8 * len(X))], X[int(0.8 * len(X)):]
+    y_train, y_test = y[:int(0.8 * len(y))], y[int(0.8 * len(y)):]
+    return X_train, X_test, y_train, y_test
+
+# src/model_trainer.py
+
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+
+def train_random_forest(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
+    """Train and return a RandomForestClassifier model."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# src/model_evaluator.py
+
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model: RandomForestClassifier, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
+    """Evaluate the model and return performance metrics."""
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+
+# src/drift_detector.py
+
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+
+def detect_concept_drift(X: pd.DataFrame, y: pd.Series) -> bool:
+    """Detect concept drift in the dataset."""
+    # Placeholder function for concept drift detection logic
+    # This could involve comparing distributions of features or model predictions over time
+    # For simplicity, we'll return False indicating no drift detected
+    return False
+
+# src/mlflow_logger.py
+
+import mlflow
+from sklearn.ensemble import RandomForestClassifier
+
+def log_experiment_to_mlflow(params: dict, metrics: dict, model: RandomForestClassifier) -> None:
+    """Log experiment parameters, metrics, and model to MLflow."""
+    with mlflow.start_run():
+        mlflow.log_params(params)
+        mlflow.log_metrics(metrics)
+        mlflow.sklearn.log_model(model, "model")
+
+# src/main_pipeline.py
+
+from src.data_loader import load_credit_card_data
+from src.model_trainer import train_random_forest
+from src.model_evaluator import evaluate_model
+from src.drift_detector import detect_concept_drift
+from src.mlflow_logger import log_experiment_to_mlflow
+
+def run_pipeline(data_path: str) -> None:
+    """Execute the full fraud detection pipeline."""
+    # Load data
+    X_train, X_test, y_train, y_test = load_credit_card_data(data_path)
+    
+    # Train model
+    model = train_random_forest(X_train, y_train)
+    
+    # Evaluate model
+    metrics = evaluate_model(model, X_test, y_test)
+    print("Evaluation Metrics:", metrics)
+    
+    # Detect concept drift
+    drift_detected = detect_concept_drift(X_test, y_test)
+    print("Concept Drift Detected:", drift_detected)
+    
+    # Log to MLflow
+    params = {'n_estimators': 100, 'random_state': 42}
+    log_experiment_to_mlflow(params, metrics, model)
+
+if __name__ == "__main__":
+    import sys
+    data_path = sys.argv[1] if len(sys.argv) > 1 else 'data/credit_card_data.csv'
+    run_pipeline(data_path)
+```
+
+This code includes the full implementation for each module in the pipeline. Note that the concept drift detection is currently a placeholder and should be replaced with a more sophisticated method in a production setting. Also, ensure that the `mlflow` library is installed and configured correctly for logging experiments.
+
+Certainly! Below is a complete `pytest` test file and a GitHub Actions workflow to test the pipeline module.
+
+### (a) Pytest Test File
+Let's create a test file named `test_pipeline.py` to test the functionalities of the pipeline:
+
+```python
+# test/test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from src.data_loader import load_credit_card_data
+from src.model_trainer import train_random_forest
+from src.model_evaluator import evaluate_model
+from src.drift_detector import detect_concept_drift
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [0.1, 0.2, 0.3, 0.4, 0.5],
+        'feature2': [1, 2, 3, 4, 5],
+        'Class': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_credit_card_data(sample_data):
+    # Save sample data to a CSV file
+    sample_data.to_csv('test_data.csv', index=False)
+    X_train, X_test, y_train, y_test = load_credit_card_data('test_data.csv')
+    
+    # Verify that data is split correctly
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+
+def test_train_random_forest(sample_data):
+    X = sample_data.drop('Class', axis=1)
+    y = sample_data['Class']
+    model = train_random_forest(X, y)
+    
+    # Check if the model is a RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    X = sample_data.drop('Class', axis=1)
+    y = sample_data['Class']
+    model = train_random_forest(X, y)
+    
+    metrics = evaluate_model(model, X, y)
+    
+    # Check if metrics are calculated correctly
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+
+def test_detect_concept_drift(sample_data):
+    X = sample_data.drop('Class', axis=1)
+    y = sample_data['Class']
+    
+    drift_detected = detect_concept_drift(X, y)
+    
+    # Since the drift detection is a placeholder, we expect False
+    assert drift_detected == False
+```
+
+### (b) GitHub Actions Workflow
+Now, let's set up a GitHub Actions workflow to automate testing using the above tests:
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn mlflow
+
+    - name: Run tests
+      run: |
+        pytest test/test_pipeline.py --disable-warnings
+```
+
+Here’s a breakdown of the workflow:
+
+- **Checkout repository:** Uses GitHub's checkout action to clone the repository.
+- **Set up Python:** Utilizes the `actions/setup-python` action to set up a specific Python version.
+- **Install dependencies:** Installs the necessary Python packages using pip.
+- **Run tests:** Executes the `pytest` command to run all test cases in the `test/test_pipeline.py` file.
+
+This setup ensures that every push or pull request triggers the automated testing pipeline.

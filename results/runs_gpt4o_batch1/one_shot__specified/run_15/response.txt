@@ -1,0 +1,180 @@
+Certainly! Below are the complete scripts and configurations needed for a CI/CD pipeline for a fraud detection model using a `RandomForestClassifier` with MLflow and pytest integration.
+
+### 1. Python Pipeline Script
+
+Here's a Python script that loads data, trains a model, evaluates it, and logs the results to MLflow.
+
+```python
+# file: fraud_detection_pipeline.py
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+import mlflow
+import mlflow.sklearn
+from sklearn.utils import resample
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    try:
+        df = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return df
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(df):
+    try:
+        # Handling class imbalance with resampling
+        df_majority = df[df.Class == 0]
+        df_minority = df[df.Class == 1]
+
+        df_minority_upsampled = resample(df_minority, 
+                                         replace=True,
+                                         n_samples=df_majority.shape[0],
+                                         random_state=42)
+
+        df_upsampled = pd.concat([df_majority, df_minority_upsampled])
+
+        X = df_upsampled.drop('Class', axis=1)
+        y = df_upsampled['Class']
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        logger.info("Data preprocessed successfully.")
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        logger.error(f"Error in data preprocessing: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model trained successfully.")
+        return model
+    except Exception as e:
+        logger.error(f"Error in model training: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        auc_score = roc_auc_score(y_test, predictions)
+        report = classification_report(y_test, predictions)
+        conf_matrix = confusion_matrix(y_test, predictions)
+        logger.info("Model evaluated successfully.")
+        return auc_score, report, conf_matrix
+    except Exception as e:
+        logger.error(f"Error in model evaluation: {e}")
+        raise
+
+def log_to_mlflow(model, auc_score, report, conf_matrix):
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, "random_forest_model")
+            mlflow.log_metric("AUC", auc_score)
+            mlflow.log_param("Confusion Matrix", conf_matrix)
+            mlflow.log_text(report, "classification_report.txt")
+        logger.info("Logged to MLflow successfully.")
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+if __name__ == "__main__":
+    data_file_path = 'creditcard.csv'  # Path to your dataset
+    df = load_data(data_file_path)
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    model = train_model(X_train, y_train)
+    auc_score, report, conf_matrix = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, auc_score, report, conf_matrix)
+```
+
+### 2. Pytest Test File
+
+Here is a test file with three tests to ensure the pipeline behaves correctly.
+
+```python
+# file: test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import load_data, preprocess_data, train_model
+
+def test_load_data():
+    df = load_data('creditcard.csv')  # Ensure this path is correct for testing
+    assert not df.empty, "Dataframe is empty"
+    assert 'Class' in df.columns, "'Class' column is missing"
+
+def test_preprocess_data():
+    df = pd.read_csv('creditcard.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    assert X_train.shape[0] > 0, "X_train is empty"
+    assert y_train.shape[0] > 0, "y_train is empty"
+    assert set(y_train.unique()).issubset({0, 1}), "Unexpected values in y_train"
+
+def test_train_model():
+    df = pd.read_csv('creditcard.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    model = train_model(X_train, y_train)
+    assert hasattr(model, "predict"), "Model does not have predict method"
+```
+
+### 3. GitHub Actions YAML Workflow
+
+Here is a GitHub Actions workflow file for automating the CI/CD pipeline.
+
+```yaml
+# file: .github/workflows/ci-cd-pipeline.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *'  # Run daily
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+
+    - name: Run pipeline
+      env:
+        MLFLOW_TRACKING_URI: '<Your_MLflow_Server_URI>'
+      run: |
+        python fraud_detection_pipeline.py
+```
+
+### Notes
+
+- **Data File Path**: Make sure to replace `'creditcard.csv'` with the correct path to your dataset in both the pipeline and test files.
+- **MLflow URI**: Ensure the `MLFLOW_TRACKING_URI` is set to your MLflow server's URI for logging results.
+- **Requirements File**: Ensure you have a `requirements.txt` file with necessary dependencies such as `pandas`, `scikit-learn`, `mlflow`, and `pytest`.

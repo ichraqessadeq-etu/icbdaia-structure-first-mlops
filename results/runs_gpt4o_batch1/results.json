@@ -1,0 +1,81 @@
+{
+  "meta": {
+    "utc": "2026-11-08T18:24:14.357487+00:00",
+    "model": "gpt-4o",
+    "temperature": 0.7,
+    "n_per_cell": 20,
+    "python": "3.13.0",
+    "dry_run": false,
+    "script_sha256": "210cc886aed9bd0855126c7e712de80211918b1cdee1655e0ee5785b6a84c567"
+  },
+  "cells": [
+    {
+      "n": 20,
+      "n_valid": 20,
+      "invalid_rate": 0.0,
+      "rvh_rate": 0.15,
+      "iih_rate": 0.0,
+      "complete_rate": 1.0,
+      "mean_tests": 3.1,
+      "mlflow_rate": 1.0,
+      "error_handling_rate": 1.0,
+      "mean_calls": 1.0,
+      "mean_tokens": 1461.0,
+      "n_api_errors": 0,
+      "cell": "one_shot__specified",
+      "strategy": "one_shot",
+      "prompt": "specified"
+    },
+    {
+      "n": 20,
+      "n_valid": 20,
+      "invalid_rate": 0.0,
+      "rvh_rate": 0.25,
+      "iih_rate": 0.0,
+      "complete_rate": 1.0,
+      "mean_tests": 3.4,
+      "mlflow_rate": 0.0,
+      "error_handling_rate": 0.1,
+      "mean_calls": 1.0,
+      "mean_tokens": 1018.5,
+      "n_api_errors": 0,
+      "cell": "one_shot__under_specified",
+      "strategy": "one_shot",
+      "prompt": "under_specified"
+    },
+    {
+      "n": 20,
+      "n_valid": 20,
+      "invalid_rate": 0.0,
+      "rvh_rate": 0.2,
+      "iih_rate": 0.0,
+      "complete_rate": 1.0,
+      "mean_tests": 4.8,
+      "mlflow_rate": 0.9,
+      "error_handling_rate": 0.35,
+      "mean_calls": 3.0,
+      "mean_tokens": 4096.8,
+      "n_api_errors": 0,
+      "cell": "structure_first__specified",
+      "strategy": "structure_first",
+      "prompt": "specified"
+    },
+    {
+      "n": 20,
+      "n_valid": 20,
+      "invalid_rate": 0.0,
+      "rvh_rate": 0.4,
+      "iih_rate": 0.0,
+      "complete_rate": 1.0,
+      "mean_tests": 6.3,
+      "mlflow_rate": 0.0,
+      "error_handling_rate": 0.6,
+      "mean_calls": 3.0,
+      "mean_tokens": 4074.7,
+      "n_api_errors": 0,
+      "cell": "structure_first__under_specified",
+      "strategy": "structure_first",
+      "prompt": "under_specified"
+    }
+  ]
+}

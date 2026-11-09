@@ -1,0 +1,1671 @@
+# (a) Complete Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+"""Comprehensive test suite for fraud detection ML pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import tempfile
+import shutil
+import json
+from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+
+from src.pipeline import (
+    load_data,
+    validate_data_schema,
+    preprocess_data,
+    engineer_features,
+    train_model,
+    evaluate_model,
+    validate_model_performance,
+    check_model_bias,
+    save_model,
+    load_model,
+    version_model,
+    generate_model_card,
+    run_data_quality_checks,
+    detect_data_drift,
+    run_training_pipeline,
+    run_validation_pipeline,
+)
+
+
+# Fixtures
+@pytest.fixture
+def sample_data():
+    """Create sample fraud detection dataset."""
+    np.random.seed(42)
+    n_samples = 1000
+    
+    data = {
+        'amount': np.random.exponential(100, n_samples),
+        'user_id': np.random.randint(1, 100, n_samples),
+        'merchant_id': np.random.randint(1, 50, n_samples),
+        'timestamp': pd.date_range('2024-01-01', periods=n_samples, freq='1H'),
+        'latitude': np.random.uniform(-90, 90, n_samples),
+        'longitude': np.random.uniform(-180, 180, n_samples),
+        'category': np.random.choice(['retail', 'food', 'travel', 'entertainment'], n_samples),
+        'device_type': np.random.choice(['mobile', 'desktop', 'tablet'], n_samples),
+        'is_fraud': np.random.choice([0, 1], n_samples, p=[0.95, 0.05])
+    }
+    
+    return pd.DataFrame(data)
+
+
+@pytest.fixture
+def sample_data_with_missing():
+    """Create sample dataset with missing values."""
+    np.random.seed(42)
+    n_samples = 100
+    
+    data = {
+        'amount': np.random.exponential(100, n_samples),
+        'user_id': np.random.randint(1, 100, n_samples),
+        'is_fraud': np.random.choice([0, 1], n_samples, p=[0.95, 0.05])
+    }
+    
+    df = pd.DataFrame(data)
+    # Introduce missing values
+    df.loc[0:10, 'amount'] = np.nan
+    df.loc[20:25, 'user_id'] = np.nan
+    
+    return df
+
+
+@pytest.fixture
+def expected_schema():
+    """Define expected data schema."""
+    return {
+        'amount': 'float64',
+        'user_id': 'int64',
+        'merchant_id': 'int64',
+        'timestamp': 'object',
+        'latitude': 'float64',
+        'longitude': 'float64',
+        'category': 'object',
+        'device_type': 'object',
+        'is_fraud': 'int64'
+    }
+
+
+@pytest.fixture
+def temp_dir():
+    """Create temporary directory for test files."""
+    temp_path = tempfile.mkdtemp()
+    yield Path(temp_path)
+    shutil.rmtree(temp_path)
+
+
+@pytest.fixture
+def trained_model(sample_data):
+    """Create a trained model for testing."""
+    train_df, test_df = preprocess_data(sample_data)
+    train_df = engineer_features(train_df)
+    
+    X_train = train_df.drop(columns=['is_fraud'])
+    y_train = train_df['is_fraud']
+    
+    hyperparameters = {
+        'n_estimators': 10,
+        'max_depth': 5,
+        'random_state': 42
+    }
+    
+    return train_model(X_train, y_train, hyperparameters)
+
+
+# Test load_data
+class TestLoadData:
+    """Test data loading functionality."""
+    
+    def test_load_csv(self, sample_data, temp_dir):
+        """Test loading CSV file."""
+        csv_path = temp_dir / 'data.csv'
+        sample_data.to_csv(csv_path, index=False)
+        
+        loaded_df = load_data(csv_path)
+        
+        assert len(loaded_df) == len(sample_data)
+        assert list(loaded_df.columns) == list(sample_data.columns)
+    
+    def test_load_parquet(self, sample_data, temp_dir):
+        """Test loading Parquet file."""
+        parquet_path = temp_dir / 'data.parquet'
+        sample_data.to_parquet(parquet_path, index=False)
+        
+        loaded_df = load_data(parquet_path)
+        
+        assert len(loaded_df) == len(sample_data)
+        assert list(loaded_df.columns) == list(sample_data.columns)
+    
+    def test_load_json(self, sample_data, temp_dir):
+        """Test loading JSON file."""
+        json_path = temp_dir / 'data.json'
+        sample_data.to_json(json_path, orient='records')
+        
+        loaded_df = load_data(json_path)
+        
+        assert len(loaded_df) == len(sample_data)
+    
+    def test_file_not_found(self, temp_dir):
+        """Test error handling for missing file."""
+        with pytest.raises(FileNotFoundError):
+            load_data(temp_dir / 'nonexistent.csv')
+    
+    def test_unsupported_format(self, temp_dir):
+        """Test error handling for unsupported file format."""
+        unsupported_path = temp_dir / 'data.txt'
+        unsupported_path.touch()
+        
+        with pytest.raises(ValueError, match="Unsupported file format"):
+            load_data(unsupported_path)
+
+
+# Test validate_data_schema
+class TestValidateDataSchema:
+    """Test data schema validation."""
+    
+    def test_valid_schema(self, sample_data, expected_schema):
+        """Test validation with correct schema."""
+        assert validate_data_schema(sample_data, expected_schema) is True
+    
+    def test_missing_columns(self, sample_data):
+        """Test validation with missing columns."""
+        schema = {
+            'amount': 'float64',
+            'user_id': 'int64',
+            'missing_column': 'int64'
+        }
+        
+        assert validate_data_schema(sample_data, schema) is False
+    
+    def test_wrong_dtype(self, sample_data):
+        """Test validation with incorrect data types."""
+        schema = {
+            'amount': 'int64',  # Should be float64
+            'user_id': 'int64',
+        }
+        
+        assert validate_data_schema(sample_data, schema) is False
+    
+    def test_empty_dataframe(self):
+        """Test validation with empty DataFrame."""
+        empty_df = pd.DataFrame()
+        schema = {'column': 'int64'}
+        
+        assert validate_data_schema(empty_df, schema) is False
+
+
+# Test preprocess_data
+class TestPreprocessData:
+    """Test data preprocessing."""
+    
+    def test_basic_split(self, sample_data):
+        """Test basic train/test split."""
+        train_df, test_df = preprocess_data(sample_data)
+        
+        assert len(train_df) + len(test_df) == len(sample_data)
+        assert len(train_df) > len(test_df)
+        assert 'is_fraud' in train_df.columns
+        assert 'is_fraud' in test_df.columns
+    
+    def test_missing_value_handling(self, sample_data_with_missing):
+        """Test missing value imputation."""
+        train_df, test_df = preprocess_data(sample_data_with_missing)
+        
+        # Check no missing values remain
+        assert train_df.isnull().sum().sum() == 0
+        assert test_df.isnull().sum().sum() == 0
+    
+    def test_duplicate_removal(self, sample_data):
+        """Test duplicate row removal."""
+        # Add duplicates
+        df_with_dupes = pd.concat([sample_data, sample_data.head(10)])
+        
+        train_df, test_df = preprocess_data(df_with_dupes)
+        
+        # Should have removed duplicates
+        assert len(train_df) + len(test_df) < len(df_with_dupes)
+    
+    def test_stratified_split(self, sample_data):
+        """Test stratified split maintains class distribution."""
+        train_df, test_df = preprocess_data(sample_data)
+        
+        train_fraud_rate = train_df['is_fraud'].mean()
+        test_fraud_rate = test_df['is_fraud'].mean()
+        overall_fraud_rate = sample_data['is_fraud'].mean()
+        
+        # Fraud rates should be similar
+        assert abs(train_fraud_rate - overall_fraud_rate) < 0.05
+        assert abs(test_fraud_rate - overall_fraud_rate) < 0.05
+
+
+# Test engineer_features
+class TestEngineerFeatures:
+    """Test feature engineering."""
+    
+    def test_amount_features(self, sample_data):
+        """Test amount-based feature engineering."""
+        featured_df = engineer_features(sample_data)
+        
+        assert 'amount_log' in featured_df.columns
+        assert 'amount_squared' in featured_df.columns
+        assert 'amount_sqrt' in featured_df.columns
+    
+    def test_time_features(self, sample_data):
+        """Test time-based feature engineering."""
+        featured_df = engineer_features(sample_data)
+        
+        assert 'hour' in featured_df.columns
+        assert 'day_of_week' in featured_df.columns
+        assert 'is_weekend' in featured_df.columns
+        assert 'is_night' in featured_df.columns
+    
+    def test_user_aggregation_features(self, sample_data):
+        """Test user aggregation features."""
+        featured_df = engineer_features(sample_data)
+        
+        assert 'user_avg_amount' in featured_df.columns
+        assert 'user_std_amount' in featured_df.columns
+        assert 'user_max_amount' in featured_df.columns
+        assert 'user_transaction_count' in featured_df.columns
+        assert 'amount_deviation' in featured_df.columns
+    
+    def test_merchant_features(self, sample_data):
+        """Test merchant aggregation features."""
+        featured_df = engineer_features(sample_data)
+        
+        assert 'merchant_avg_amount' in featured_df.columns
+        assert 'merchant_transaction_count' in featured_df.columns
+    
+    def test_location_features(self, sample_data):
+        """Test location-based features."""
+        featured_df = engineer_features(sample_data)
+        
+        assert 'distance_from_origin' in featured_df.columns
+    
+    def test_categorical_encoding(self, sample_data):
+        """Test categorical variable encoding."""
+        featured_df = engineer_features(sample_data)
+        
+        # Should have one-hot encoded category columns
+        category_cols = [col for col in featured_df.columns if col.startswith('category_')]
+        assert len(category_cols) > 0
+    
+    def test_no_missing_values(self, sample_data):
+        """Test that feature engineering handles missing values."""
+        featured_df = engineer_features(sample_data)
+        
+        # Numeric columns should have no NaN (except user_std for single transactions)
+        numeric_cols = featured_df.select_dtypes(include=[np.number]).columns
+        # User std might have NaN for users with single transaction, but should be filled
+        assert featured_df[numeric_cols].isnull().sum().sum() == 0
+
+
+# Test train_model
+class TestTrainModel:
+    """Test model training."""
+    
+    def test_basic_training(self, sample_data):
+        """Test basic model training."""
+        train_df, _ = preprocess_data(sample_data)
+        train_df = engineer_features(train_df)
+        
+        X_train = train_df.drop(columns=['is_fraud'])
+        y_train = train_df['is_fraud']
+        
+        hyperparameters = {
+            'n_estimators': 10,
+            'max_depth': 5,
+            'random_state': 42
+        }
+        
+        model = train_model(X_train, y_train, hyperparameters)
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert hasattr(model, 'scaler')
+        assert hasattr(model, 'feature_columns')
+    
+    def test_hyperparameter_application(self, sample_data):
+        """Test that hyperparameters are correctly applied."""
+        train_df, _ = preprocess_data(sample_data)
+        train_df = engineer_features(train_df)
+        
+        X_train = train_df.drop(columns=['is_fraud'])
+        y_train = train_df['is_fraud']
+        
+        hyperparameters = {
+            'n_estimators': 50,
+            'max_depth': 8,
+            'min_samples_split': 5,
+        }
+        
+        model = train_model(X_train, y_train, hyperparameters)
+        
+        assert model.n_estimators == 50
+        assert model.max_depth == 8
+        assert model.min_samples_split == 5
+    
+    def test_empty_data_error(self):
+        """Test error handling for empty training data."""
+        X_train = pd.DataFrame()
+        y_train = pd.Series()
+        
+        with pytest.raises(ValueError, match="Training data cannot be empty"):
+            train_model(X_train, y_train, {})
+    
+    def test_mismatched_lengths(self, sample_data):
+        """Test error handling for mismatched X and y lengths."""
+        train_df, _ = preprocess_data(sample_data)
+        train_df = engineer_features(train_df)
+        
+        X_train = train_df.drop(columns=['is_fraud'])
+        y_train = train_df['is_fraud'].head(10)  # Different length
+        
+        with pytest.raises(ValueError, match="must have same length"):
+            train_model(X_train, y_train, {})
+
+
+# Test evaluate_model
+class TestEvaluateModel:
+    """Test model evaluation."""
+    
+    def test_basic_evaluation(self, sample_data, trained_model):
+        """Test basic model evaluation."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        metrics = evaluate_model(trained_model, X_test, y_test)
+        
+        assert 'accuracy' in metrics
+        assert 'precision' in metrics
+        assert 'recall' in metrics
+        assert 'f1_score' in metrics
+        assert 'roc_auc' in metrics
+        assert 'true_positives' in metrics
+        assert 'false_positives' in metrics
+        assert 'true_negatives' in metrics
+        assert 'false_negatives' in metrics
+    
+    def test_metric_ranges(self, sample_data, trained_model):
+        """Test that metrics are in valid ranges."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        metrics = evaluate_model(trained_model, X_test, y_test)
+        
+        # All metrics should be between 0 and 1
+        for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']:
+            assert 0 <= metrics[metric] <= 1
+    
+    def test_confusion_matrix_sum(self, sample_data, trained_model):
+        """Test that confusion matrix sums to total samples."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        metrics = evaluate_model(trained_model, X_test, y_test)
+        
+        total = (metrics['true_positives'] + metrics['false_positives'] +
+                metrics['true_negatives'] + metrics['false_negatives'])
+        
+        assert total == len(y_test)
+
+
+# Test validate_model_performance
+class TestValidateModelPerformance:
+    """Test model performance validation."""
+    
+    def test_all_thresholds_met(self):
+        """Test validation when all thresholds are met."""
+        metrics = {
+            'accuracy': 0.95,
+            'precision': 0.90,
+            'recall': 0.85,
+            'f1_score': 0.87
+        }
+        
+        thresholds = {
+            'accuracy': 0.90,
+            'precision': 0.85,
+            'recall': 0.80,
+            'f1_score': 0.80
+        }
+        
+        assert validate_model_performance(metrics, thresholds) is True
+    
+    def test_threshold_not_met(self):
+        """Test validation when threshold is not met."""
+        metrics = {
+            'accuracy': 0.85,
+            'precision': 0.90,
+        }
+        
+        thresholds = {
+            'accuracy': 0.90,  # Not met
+            'precision': 0.85,
+        }
+        
+        assert validate_model_performance(metrics, thresholds) is False
+    
+    def test_missing_metric(self):
+        """Test handling of missing metrics."""
+        metrics = {
+            'accuracy': 0.95,
+        }
+        
+        thresholds = {
+            'accuracy': 0.90,
+            'missing_metric': 0.85,
+        }
+        
+        # Should still pass for available metrics
+        result = validate_model_performance(metrics, thresholds)
+        assert result is True
+
+
+# Test check_model_bias
+class TestCheckModelBias:
+    """Test model bias detection."""
+    
+    def test_bias_detection(self, sample_data, trained_model):
+        """Test bias detection across groups."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        sensitive_features = ['device_type']
+        bias_report = check_model_bias(trained_model, X_test, y_test, sensitive_features)
+        
+        assert 'device_type' in bias_report
+        assert 'bias_detected' in bias_report['device_type']
+    
+    def test_group_metrics(self, sample_data, trained_model):
+        """Test that metrics are calculated for each group."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        sensitive_features = ['device_type']
+        bias_report = check_model_bias(trained_model, X_test, y_test, sensitive_features)
+        
+        device_report = bias_report['device_type']
+        
+        # Should have metrics for each device type
+        for device in ['mobile', 'desktop', 'tablet']:
+            if device in device_report:
+                assert 'accuracy' in device_report[device]
+                assert 'precision' in device_report[device]
+                assert 'recall' in device_report[device]
+    
+    def test_missing_sensitive_feature(self, sample_data, trained_model):
+        """Test handling of missing sensitive features."""
+        _, test_df = preprocess_data(sample_data)
+        test_df = engineer_features(test_df)
+        
+        X_test = test_df.drop(columns=['is_fraud'])
+        y_test = test_df['is_fraud']
+        
+        sensitive_features = ['nonexistent_feature']
+        bias_report = check_model_bias(trained_model, X_test, y_test, sensitive_features)
+        
+        # Should handle gracefully
+        assert isinstance(bias_report, dict)
+
+
+# Test save_model and load_model
+class TestModelPersistence:
+    """Test model saving and loading."""
+    
+    def test_save_and_load(self, trained_model, temp_dir):
+        """Test saving and loading model."""
+        model_path = temp_dir / 'model'
+        metadata = {
+            'version': '1.0.0',
+            'dataset_name': 'test_data',
+        }
+        
+        save_model(trained_model, model_path, metadata)
+        
+        # Check files exist
+        assert (model_path / 'model.joblib').exists()
+        assert (model_path / 'metadata.json').exists()
+        assert (model_path / 'features.json').exists()
+        
+        # Load model
+        loaded_model, loaded_metadata = load_model(model_path)
+        
+        assert isinstance(loaded_model, RandomForestClassifier)
+        assert loaded_metadata['version'] == '1.0.0'
+        assert 'saved_at' in loaded_metadata
+    
+    def test_load_nonexistent_model(self, temp_dir):
+        """Test error handling when loading nonexistent model."""
+        with pytest.raises(FileNotFoundError):
+            load_model(temp_dir / 'nonexistent')
+
+
+# Test version_model
+class TestVersionModel:
+    """Test model versioning."""
+    
+    def test_version_registration(self, trained_model, temp_dir):
+        """Test model version registration."""
+        model_path = temp_dir / 'model'
+        model_path.mkdir()
+        
+        registry_url = 'http://registry.example.com'
+        version = 'v1.0.0'
+        
+        registry_id = version_model(model_path, registry_url, version)
+        
+        assert registry_url in registry_id
+        assert version in registry_id
+        assert (model_path / 'registry.json').exists()
+        
+        # Check registry content
+        with open(model_path / 'registry.json', 'r') as f:
+            registry = json.load(f)
+        
+        assert 'versions' in registry
+        assert registry['latest_version'] == version
+    
+    def test_multiple_versions(self, trained_model, temp_dir):
+        """Test registering multiple versions."""
+        model_path = temp_dir / 'model'
+        model_path.mkdir()
+        
+        registry_url = 'http://registry.example.com'
+        
+        version_model(model_path, registry_url, 'v1.0.0')
+        version_model(model_path, registry_url, 'v1.1.0')
+        
+        with open(model_path / 'registry.json', 'r') as f:
+            registry = json.load(f)
+        
+        assert len(registry['versions']) == 2
+        assert registry['latest_version'] == 'v1.1.0'
+
+
+# Test generate_model_card
+class TestGenerateModelCard:
+    """Test model card generation."""
+    
+    def test_model_card_content(self, trained_model):
+        """Test model card contains required information."""
+        metrics = {
+            'accuracy': 0.95,
+            'precision': 0.90,
+            'recall': 0.85,
+            'f1_score': 0.87,
+            'roc_auc': 0.92,
+            'true_positives': 100,
+            'false_positives': 10,
+            'true_negatives': 800,
+            'false_negatives': 90,
+        }
+        
+        metadata = {
+            'version': '1.0.0',
+            'dataset_name': 'fraud_data',
+            'n_train_samples': 1000,
+            'n_features': 20,
+        }
+        
+        model_card = generate_model_card(trained_model, metrics, metadata)
+        
+        assert 'Model Card' in model_card
+        assert 'Performance Metrics' in model_card
+        assert '0.95' in model_card  # accuracy
+        assert '1.0.0' in model_card  # version
+        assert 'Ethical Considerations' in model_card
+
+
+# Test run_data_quality_checks
+class TestRunDataQualityChecks:
+    """Test data quality checking."""
+    
+    def test_quality_checks_on_good_data(self, sample_data):
+        """Test quality checks on clean data."""
+        quality_report = run_data_quality_checks(sample_data)
+        
+        assert quality_report['checks_passed'] is True
+        assert quality_report['total_rows'] == len(sample_data)
+        assert quality_report['total_columns'] == len(sample_data.columns)
+    
+    def test_missing_values_detection(self, sample_data_with_missing):
+        """Test detection of missing values."""
+        quality_report = run_data_quality_checks(sample_data_with_missing)
+        
+        assert 'missing_values' in quality_report
+        assert 'amount' in quality_report['missing_values']
+    
+    def test_duplicate_detection(self, sample_data):
+        """Test detection of duplicate rows."""
+        df_with_dupes = pd.concat([sample_data, sample_data.head(10)])
+        quality_report = run_data_quality_checks(df_with_dupes)
+        
+        assert 'duplicate_rows' in quality_report
+        assert quality_report['duplicate_rows'] > 0
+    
+    def test_constant_column_detection(self, sample_data):
+        """Test detection of constant columns."""
+        sample_data['constant_col'] = 1
+        quality_report = run_data_quality_checks(sample_data)
+        
+        assert 'constant_columns' in quality_report
+        assert 'constant_col' in quality_report['constant_columns']
+    
+    def test_empty_dataframe(self):
+        """Test quality checks on empty DataFrame."""
+        empty_df = pd.DataFrame()
+        quality_report = run_data_quality_checks(empty_df)
+        
+        assert quality_report['checks_passed'] is False
+        assert 'DataFrame is empty' in quality_report['issues']
+
+
+# Test detect_data_drift
+class TestDetectDataDrift:
+    """Test data drift detection."""
+    
+    def test_no_drift(self, sample_data):
+        """Test when there is no significant drift."""
+        # Use same data for reference and current
+        drift_report = detect_data_drift(sample_data, sample_data)
+        
+        assert drift_report['drift_detected'] is False
+        assert drift_report['n_drifted_features'] == 0
+    
+    def test_drift_detection(self, sample_data):
+        """Test detection of data drift."""
+        # Create drifted data
+        drifted_data = sample_data.copy()
+        drifted_data['amount'] = drifted_data['amount'] * 2  # Significant shift
+        
+        drift_report = detect_data_drift(sample_data, drifted_data)
+        
+        assert 'amount' in drift_report['feature_drift_scores']
+        # May or may not detect drift depending on distribution
+    
+    def test_drift_report_structure(self, sample_data):
+        """Test structure of drift report."""
+        drift_report = detect_data_drift(sample_data, sample_data)
+        
+        assert 'drift_detected' in drift_report
+        assert 'drifted_features' in drift_report
+        assert 'feature_drift_scores' in drift_report
+        assert 'n_drifted_features' in drift_report
+        assert 'total_features_checked' in drift_report
+
+
+# Test run_training_pipeline
+class TestRunTrainingPipeline:
+    """Test complete training pipeline."""
+    
+    def test_successful_pipeline(self, sample_data, temp_dir):
+        """Test successful execution of training pipeline."""
+        # Save sample data
+        data_path = temp_dir / 'data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        config = {
+            'data_path': str(data_path),
+            'target_column': 'is_fraud',
+            'model_path': str(temp_dir / 'model'),
+            'version': '1.0.0',
+            'dataset_name': 'test_fraud_data',
+            'hyperparameters': {
+                'n_estimators': 10,
+                'max_depth': 5,
+                'random_state': 42,
+            },
+            'performance_thresholds': {
+                'accuracy': 0.5,
+                'f1_score': 0.3,
+            }
+        }
+        
+        results = run_training_pipeline(config)
+        
+        assert results['status'] == 'success'
+        assert results['data_loaded'] is True
+        assert results['model_trained'] is True
+        assert results['model_saved'] is True
+        assert 'metrics' in results
+        assert 'model_path' in results
+    
+    def test_pipeline_with_schema_validation(self, sample_data, expected_schema, temp_dir):
+        """Test pipeline with schema validation."""
+        data_path = temp_dir / 'data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        config = {
+            'data_path': str(data_path),
+            'expected_schema': expected_schema,
+            'target_column': 'is_fraud',
+            'model_path': str(temp_dir / 'model'),
+            'hyperparameters': {'n_estimators': 10},
+        }
+        
+        results = run_training_pipeline(config)
+        
+        assert results['schema_valid'] is True
+    
+    def test_pipeline_failure_handling(self, temp_dir):
+        """Test pipeline error handling."""
+        config = {
+            'data_path': str(temp_dir / 'nonexistent.csv'),
+            'model_path': str(temp_dir / 'model'),
+        }
+        
+        with pytest.raises(Exception):
+            run_training_pipeline(config)
+
+
+# Test run_validation_pipeline
+class TestRunValidationPipeline:
+    """Test model validation pipeline."""
+    
+    def test_validation_pipeline(self, sample_data, trained_model, temp_dir):
+        """Test validation pipeline execution."""
+        # Save model
+        model_path = temp_dir / 'model'
+        metadata = {
+            'version': '1.0.0',
+            'metrics': {
+                'accuracy': 0.90,
+                'precision': 0.85,
+            }
+        }
+        save_model(trained_model, model_path, metadata)
+        
+        # Save test data
+        test_data_path = temp_dir / 'test_data.csv'
+        sample_data.to_csv(test_data_path, index=False)
+        
+        results = run_validation_pipeline(model_path, test_data_path)
+        
+        assert results['status'] == 'success'
+        assert results['model_loaded'] is True
+        assert results['test_data_loaded'] is True
+        assert 'metrics' in results
+    
+    def test_validation_with_metric_comparison(self, sample_data, trained_model, temp_dir):
+        """Test validation with metric comparison."""
+        model_path = temp_dir / 'model'
+        metadata = {
+            'version': '1.0.0',
+            'metrics': {
+                'accuracy': 0.90,
+                'f1_score': 0.85,
+            }
+        }
+        save_model(trained_model, model_path, metadata)
+        
+        test_data_path = temp_dir / 'test_data.csv'
+        sample_data.to_csv(test_data_path, index=False)
+        
+        results = run_validation_pipeline(model_path, test_data_path)
+        
+        assert 'metric_comparison' in results
+
+
+# Integration tests
+class TestIntegration:
+    """Integration tests for complete workflows."""
+    
+    def test_end_to_end_workflow(self, sample_data, temp_dir):
+        """Test complete end-to-end ML workflow."""
+        # 1. Save data
+        data_path = temp_dir / 'data.csv'
+        sample_data.to_csv(data_path, index=False)
+        
+        # 2. Run training pipeline
+        config = {
+            'data_path': str(data_path),
+            'target_column': 'is_fraud',
+            'model_path': str(temp_dir / 'model'),
+            'version': '1.0.0',
+            'hyperparameters': {
+                'n_estimators': 10,
+                'max_depth': 5,
+            },
+            'performance_thresholds': {
+                'accuracy': 0.5,
+            }
+        }
+        
+        train_results = run_training_pipeline(config)
+        assert train_results['status'] == 'success'
+        
+        # 3. Run validation pipeline
+        test_data_path = temp_dir / 'test_data.csv'
+        sample_data.to_csv(test_data_path, index=False)
+        
+        val_results = run_validation_pipeline(
+            Path(train_results['model_path']),
+            test_data_path
+        )
+        assert val_results['status'] == 'success'
+        
+        # 4. Verify artifacts
+        model_path = Path(train_results['model_path'])
+        assert (model_path / 'model.joblib').exists()
+        assert (model_path / 'metadata.json').exists()
+        assert (model_path / 'model_card.md').exists()
+
+
+# Performance tests
+class TestPerformance:
+    """Performance and scalability tests."""
+    
+    def test_large_dataset_processing(self):
+        """Test processing of larger dataset."""
+        np.random.seed(42)
+        n_samples = 10000
+        
+        large_data = pd.DataFrame({
+            'amount': np.random.exponential(100, n_samples),
+            'user_id': np.random.randint(1, 1000, n_samples),
+            'merchant_id': np.random.randint(1, 500, n_samples),
+            'timestamp': pd.date_range('2024-01-01', periods=n_samples, freq='1min'),
+            'is_fraud': np.random.choice([0, 1], n_samples, p=[0.95, 0.05])
+        })
+        
+        # Should complete without errors
+        train_df, test_df = preprocess_data(large_data)
+        featured_df = engineer_features(train_df)
+        
+        assert len(featured_df) > 0
+    
+    def test_training_time_reasonable(self, sample_data):
+        """Test that training completes in reasonable time."""
+        import time
+        
+        train_df, _ = preprocess_data(sample_data)
+        train_df = engineer_features(train_df)
+        
+        X_train = train_df.drop(columns=['is_fraud'])
+        y_train = train_df['is_fraud']
+        
+        start_time = time.time()
+        model = train_model(X_train, y_train, {'n_estimators': 10})
+        end_time = time.time()
+        
+        # Should complete in under 30 seconds
+        assert (end_time - start_time) < 30
+
+
+# Edge cases and error handling
+class TestEdgeCases:
+    """Test edge cases and error conditions."""
+    
+    def test_single_class_data(self):
+        """Test handling of data with single class."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300],
+            'user_id': [1, 2, 3],
+            'is_fraud': [0, 0, 0]  # All same class
+        })
+        
+        # Should handle gracefully
+        train_df, test_df = preprocess_data(df)
+        assert len(train_df) > 0
+    
+    def test_all_missing_column(self):
+        """Test handling of column with all missing values."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300],
+            'all_missing': [np.nan, np.nan, np.nan],
+            'is_fraud': [0, 1, 0]
+        })
+        
+        train_df, test_df = preprocess_data(df)
+        # Should fill with median/mode
+        assert train_df['all_missing'].isnull().sum() == 0
+    
+    def test_extreme_values(self):
+        """Test handling of extreme values."""
+        df = pd.DataFrame({
+            'amount': [1e-10, 1e10, 100],
+            'user_id': [1, 2, 3],
+            'is_fraud': [0, 1, 0]
+        })
+        
+        featured_df = engineer_features(df)
+        # Should handle without errors
+        assert len(featured_df) == 3
+```
+
+# (b) Complete GitHub Actions Workflow
+
+```yaml
+name: Fraud Detection ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly on Mondays at 2 AM UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: '3.9'
+  MODEL_REGISTRY_URL: 'http://mlflow.example.com'
+
+jobs:
+  # Job 1: Code Quality and Linting
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort mypy pylint
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      
+      - name: Run Black formatter check
+        run: |
+          black --check --diff src/ tests/
+      
+      - name: Run isort import check
+        run: |
+          isort --check-only --diff src/ tests/
+      
+      - name: Run Flake8 linter
+        run: |
+          flake8 src/ tests/ --max-line-length=100 --exclude=__pycache__,.git
+      
+      - name: Run Pylint
+        run: |
+          pylint src/ --disable=C0111,R0913,R0914 --max-line-length=100
+        continue-on-error: true
+      
+      - name: Run MyPy type checking
+        run: |
+          mypy src/ --ignore-missing-imports
+        continue-on-error: true
+
+  # Job 2: Unit and Integration Tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-xdist
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Create test data directory
+        run: mkdir -p data/test
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --cov-report=term -n auto
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-${{ matrix.python-version }}
+          fail_ci_if_error: false
+      
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: |
+            htmlcov/
+            coverage.xml
+          retention-days: 30
+
+  # Job 3: Data Validation
+  data-validation:
+    name: Data Quality Validation
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Download sample data
+        run: |
+          mkdir -p data
+          # In real scenario, download from S3, GCS, or other data source
+          # For demo, we'll create synthetic data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          df = pd.DataFrame({
+              'amount': np.random.exponential(100, 10000),
+              'user_id': np.random.randint(1, 1000, 10000),
+              'merchant_id': np.random.randint(1, 500, 10000),
+              'timestamp': pd.date_range('2024-01-01', periods=10000, freq='1H'),
+              'latitude': np.random.uniform(-90, 90, 10000),
+              'longitude': np.random.uniform(-180, 180, 10000),
+              'category': np.random.choice(['retail', 'food', 'travel'], 10000),
+              'device_type': np.random.choice(['mobile', 'desktop'], 10000),
+              'is_fraud': np.random.choice([0, 1], 10000, p=[0.95, 0.05])
+          })
+          df.to_csv('data/train_data.csv', index=False)
+          "
+      
+      - name: Run data quality checks
+        run: |
+          python -c "
+          from src.pipeline import load_data, run_data_quality_checks
+          from pathlib import Path
+          
+          df = load_data(Path('data/train_data.csv'))
+          quality_report = run_data_quality_checks(df)
+          
+          print('Data Quality Report:')
+          print(f\"Total rows: {quality_report['total_rows']}\")
+          print(f\"Checks passed: {quality_report['checks_passed']}\")
+          
+          if not quality_report['checks_passed']:
+              print('Issues found:')
+              for issue in quality_report.get('issues', []):
+                  print(f\"  - {issue}\")
+              exit(1)
+          "
+      
+      - name: Validate data schema
+        run: |
+          python -c "
+          from src.pipeline import load_data, validate_data_schema
+          from pathlib import Path
+          
+          df = load_data(Path('data/train_data.csv'))
+          
+          expected_schema = {
+              'amount': 'float64',
+              'user_id': 'int64',
+              'merchant_id': 'int64',
+              'is_fraud': 'int64'
+          }
+          
+          if not validate_data_schema(df, expected_schema):
+              print('Schema validation failed!')
+              exit(1)
+          print('Schema validation passed!')
+          "
+      
+      - name: Check for data drift
+        run: |
+          python -c "
+          from src.pipeline import load_data, detect_data_drift
+          from pathlib import Path
+          
+          # Use same data as reference for demo
+          df = load_data(Path('data/train_data.csv'))
+          drift_report = detect_data_drift(df, df)
+          
+          print(f\"Drift detected: {drift_report['drift_detected']}\")
+          print(f\"Drifted features: {drift_report['drifted_features']}\")
+          
+          if drift_report['drift_detected']:
+              print('Warning: Data drift detected!')
+          "
+        continue-on-error: true
+
+  # Job 4: Model Training
+  train-model:
+    name: Train ML Model
+    runs-on: ubuntu-latest
+    needs: data-validation
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Prepare training data
+        run: |
+          mkdir -p data models
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          df = pd.DataFrame({
+              'amount': np.random.exponential(100, 10000),
+              'user_id': np.random.randint(1, 1000, 10000),
+              'merchant_id': np.random.randint(1, 500, 10000),
+              'timestamp': pd.date_range('2024-01-01', periods=10000, freq='1H'),
+              'latitude': np.random.uniform(-90, 90, 10000),
+              'longitude': np.random.uniform(-180, 180, 10000),
+              'category': np.random.choice(['retail', 'food', 'travel'], 10000),
+              'device_type': np.random.choice(['mobile', 'desktop'], 10000),
+              'is_fraud': np.random.choice([0, 1], 10000, p=[0.95, 0.05])
+          })
+          df.to_csv('data/train_data.csv', index=False)
+          "
+      
+      - name: Train model
+        run: |
+          python -c "
+          from src.pipeline import run_training_pipeline
+          import json
+          
+          config = {
+              'data_path': 'data/train_data.csv',
+              'target_column': 'is_fraud',
+              'model_path': 'models/fraud_detector',
+              'version': '1.0.0-${{ github.sha }}',
+              'dataset_name': 'fraud_transactions',
+              'hyperparameters': {
+                  'n_estimators': 100,
+                  'max_depth': 10,
+                  'min_samples_split': 5,
+                  'random_state': 42,
+                  'class_weight': 'balanced'
+              },
+              'performance_thresholds': {
+                  'accuracy': 0.85,
+                  'precision': 0.70,
+                  'recall': 0.60,
+                  'f1_score': 0.65,
+                  'roc_auc': 0.80
+              },
+              'sensitive_features': ['device_type']
+          }
+          
+          results = run_training_pipeline(config)
+          
+          print('Training Results:')
+          print(json.dumps(results['metrics'], indent=2))
+          
+          # Save results for later jobs
+          with open('training_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          if results['status'] != 'success':
+              print('Training failed!')
+              exit(1)
+          "
+      
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: trained-model
+          path: |
+            models/
+            training_results.json
+          retention-days: 30
+      
+      - name: Upload training results
+        uses: actions/upload-artifact@v3
+        with:
+          name: training-results
+          path: training_results.json
+          retention-days: 90
+
+  # Job 5: Model Evaluation and Validation
+  evaluate-model:
+    name: Evaluate Model Performance
+    runs-on: ubuntu-latest
+    needs: train-model
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model
+      
+      - name: Prepare test data
+        run: |
+          mkdir -p data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(123)  # Different seed for test data
+          df = pd.DataFrame({
+              'amount': np.random.exponential(100, 2000),
+              'user_id': np.random.randint(1, 1000, 2000),
+              'merchant_id': np.random.randint(1, 500, 2000),
+              'timestamp': pd.date_range('2024-02-01', periods=2000, freq='1H'),
+              'latitude': np.random.uniform(-90, 90, 2000),
+              'longitude': np.random.uniform(-180, 180, 2000),
+              'category': np.random.choice(['retail', 'food', 'travel'], 2000),
+              'device_type': np.random.choice(['mobile', 'desktop'], 2000),
+              'is_fraud': np.random.choice([0, 1], 2000, p=[0.95, 0.05])
+          })
+          df.to_csv('data/test_data.csv', index=False)
+          "
+      
+      - name: Run validation pipeline
+        run: |
+          python -c "
+          from src.pipeline import run_validation_pipeline
+          from pathlib import Path
+          import json
+          
+          results = run_validation_pipeline(
+              Path('models/fraud_detector'),
+              Path('data/test_data.csv')
+          )
+          
+          print('Validation Results:')
+          print(json.dumps(results['metrics'], indent=2))
+          
+          with open('validation_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          # Check for metric degradation
+          if 'metric_comparison' in results:
+              for metric, comparison in results['metric_comparison'].items():
+                  if comparison.get('degradation', False):
+                      print(f\"Warning: {metric} degraded by {comparison['difference']:.4f}\")
+          "
+      
+      - name: Check model bias
+        run: |
+          python -c "
+          from src.pipeline import load_model, load_data, engineer_features, check_model_bias, preprocess_data
+          from pathlib import Path
+          import json
+          
+          model, metadata = load_model(Path('models/fraud_detector'))
+          test_df = load_data(Path('data/test_data.csv'))
+          test_df = engineer_features(test_df)
+          
+          X_test = test_df.drop(columns=['is_fraud'])
+          y_test = test_df['is_fraud']
+          
+          bias_report = check_model_bias(model, X_test, y_test, ['device_type'])
+          
+          print('Bias Report:')
+          print(json.dumps(bias_report, indent=2))
+          
+          # Check if bias detected
+          for feature, report in bias_report.items():
+              if report.get('bias_detected', False):
+                  print(f\"Warning: Bias detected in {feature}\")
+          "
+      
+      - name: Upload validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: validation-results
+          path: validation_results.json
+          retention-days: 90
+
+  # Job 6: Security Scanning
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Run Safety check for vulnerable dependencies
+        run: |
+          safety check --json || true
+      
+      - name: Run Bandit security linter
+        run: |
+          bandit -r src/ -f json -o bandit-report.json || true
+          bandit -r src/ -f screen
+      
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+          retention-days: 30
+
+  # Job 7: Build and Push Docker Image
+  build-docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [evaluate-model, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model
+          path: models/
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/fraud-detector
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            latest
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 8: Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.fraud-detector.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model
+          path: models/
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: Upload model to S3
+        run: |
+          aws s3 sync models/ s3://fraud-detector-models/staging/latest/ --delete
+      
+      - name: Deploy to staging (simulation)
+        run: |
+          echo "Deploying to staging environment..."
+          echo "Model version: ${{ github.sha }}"
+          # In real scenario, this would deploy to K8s, ECS, or other platform
+          # kubectl apply -f k8s/staging/ --context=staging
+      
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          # curl -X POST https://staging.fraud-detector.example.com/health
+          # curl -X POST https://staging.fraud-detector.example.com/predict -d '{"amount": 100}'
+      
+      - name: Notify deployment
+        if: always()
+        run: |
+          echo "Deployment to staging completed"
+          # Send notification to Slack, email, etc.
+
+  # Job 9: Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_environment == 'production'
+    environment:
+      name: production
+      url: https://fraud-detector.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model
+          path: models/
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: Upload model to S3
+        run: |
+          aws s3 sync models/ s3://fraud-detector-models/production/v${{ github.sha }}/ --delete
+          aws s3 sync models/ s3://fraud-detector-models/production/latest/ --delete
+      
+      - name: Create model version tag
+        run: |
+          python -c "
+          from src.pipeline import version_model
+          from pathlib import Path
+          
+          version_id = version_model(
+              Path('models/fraud_detector'),
+              '${{ env.MODEL_REGISTRY_URL }}',
+              'v1.0.0-${{ github.sha }}'
+          )
+          print(f'Model registered: {version_id}')
+          "
+      
+      - name: Blue-Green deployment
+        run: |
+          echo "Starting blue-green deployment..."
+          # Deploy new version alongside old version
+          # Gradually shift traffic
+          # Monitor metrics
+          # Complete cutover or rollback
+      
+      - name: Run production validation
+        run: |
+          echo "Running production validation..."
+          # Test prediction endpoint
+          # Verify model performance
+          # Check latency and throughput
+      
+      - name: Notify production deployment
+        if: always()
+        run: |
+          echo "Production deployment completed"
+          # Send notification to team
+
+  # Job 10: Monitor and Alert
+  monitor:
+    name: Setup Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download training results
+        uses: actions/download-artifact@v3
+        with:
+          name: training-results
+      
+      - name: Setup performance monitoring
+        run: |
+          echo "Setting up performance monitoring..."
+          python -c "
+          import json
+          
+          with open('training_results.json', 'r') as f:
+              results = json.load(f)
+          
+          metrics = results.get('metrics', {})
+          
+          # Set up alerts for metric degradation
+          print('Baseline metrics:')
+          for metric, value in metrics.items():
+              print(f'  {metric}: {value}')
+          
+          # In production, this would configure CloudWatch, Datadog, etc.
+          "
+      
+      - name: Configure drift detection
+        run: |
+          echo "Configuring data drift detection..."
+          # Set up scheduled drift detection jobs
+          # Configure alerts for drift detection
+      
+      - name: Setup model performance dashboard
+        run: |
+          echo "Setting up performance dashboard..."
+          # Configure Grafana, Kibana, or custom dashboard
+          # Set up real-time metrics collection
+```
+
+This comprehensive test suite and CI/CD workflow provides:
+
+**Test Coverage:**
+- Unit tests for all major functions
+- Integration tests for complete workflows
+- Edge case and error handling tests
+- Performance tests
+- Data quality validation tests
+
+**CI/CD Pipeline:**
+- Code quality checks (linting, formatting, type checking)
+- Multi-version Python testing
+- Data validation and drift detection
+- Automated model training and evaluation
+- Security scanning
+- Docker image building
+- Staged deployment (staging → production)
+- Monitoring and alerting setup
+
+The workflow follows MLOps best practices with proper artifact management, environment isolation, and comprehensive validation at each stage.

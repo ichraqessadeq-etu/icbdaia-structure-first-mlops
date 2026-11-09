@@ -1,0 +1,176 @@
+Here's the complete implementation of the `pipeline.py` module for your fraud detection model:
+
+```python
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import mlflow
+import mlflow.sklearn
+import numpy as np
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load dataset from a given file path."""
+    try:
+        data = pd.read_csv(file_path)
+        print(f"Data loaded successfully from {file_path}")
+        return data
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data: pd.DataFrame) -> (pd.DataFrame, pd.Series):
+    """Preprocess the data and return features and target."""
+    # Assuming the last column is the target and the rest are features
+    features = data.iloc[:, :-1]
+    target = data.iloc[:, -1]
+    print("Data preprocessing completed")
+    return features, target
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
+    """Train the RandomForestClassifier model."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    print("Model training completed")
+    return model
+
+def evaluate_model(model: RandomForestClassifier, X_test: pd.DataFrame, y_test: pd.Series) -> float:
+    """Evaluate the model and return the accuracy score."""
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    print(f"Model accuracy: {accuracy}")
+    return accuracy
+
+def log_to_mlflow(model: RandomForestClassifier, accuracy: float):
+    """Log model and metrics to MLflow."""
+    mlflow.start_run()
+    mlflow.sklearn.log_model(model, "random_forest_model")
+    mlflow.log_metric("accuracy", accuracy)
+    mlflow.end_run()
+    print("Model and metrics logged to MLflow")
+
+def detect_concept_drift() -> bool:
+    """Detect if concept drift has occurred."""
+    # Dummy implementation for concept drift detection
+    # In a real scenario, this would involve statistical tests or monitoring model performance over time
+    drift_detected = np.random.rand() < 0.1  # Simulating a 10% chance of drift detection
+    if drift_detected:
+        print("Concept drift detected")
+    else:
+        print("No concept drift detected")
+    return drift_detected
+
+def main():
+    """Main function to run the pipeline."""
+    # Example file path, replace with actual path
+    file_path = 'path_to_your_dataset.csv'
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, accuracy)
+
+    if detect_concept_drift():
+        print("Retraining model due to concept drift")
+        model = train_model(X_train, y_train)
+        accuracy = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, accuracy)
+
+if __name__ == "__main__":
+    main()
+```
+
+This implementation includes data loading, preprocessing, model training and evaluation, logging to MLflow, and a simple concept drift detection mechanism. Ensure that you replace `'path_to_your_dataset.csv'` with your actual dataset path.
+
+Certainly! Below is the complete pytest test file for the provided pipeline module, and a GitHub Actions workflow for automating the testing process.
+
+### (a) Pytest Test File
+
+Save this as `test_pipeline.py`.
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow, detect_concept_drift
+
+def test_load_data():
+    file_path = 'test_data.csv'
+    with patch('pandas.read_csv') as mock_read_csv:
+        mock_read_csv.return_value = pd.DataFrame({'feature1': [1, 2], 'target': [0, 1]})
+        data = load_data(file_path)
+        mock_read_csv.assert_called_once_with(file_path)
+        assert not data.empty
+
+def test_preprocess_data():
+    data = pd.DataFrame({'feature1': [1, 2], 'target': [0, 1]})
+    features, target = preprocess_data(data)
+    assert len(features) == 2
+    assert len(target) == 2
+    assert list(target) == [0, 1]
+
+def test_train_model():
+    X_train = pd.DataFrame({'feature1': [1, 2]})
+    y_train = pd.Series([0, 1])
+    model = train_model(X_train, y_train)
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    X_test = pd.DataFrame({'feature1': [1, 2]})
+    y_test = pd.Series([0, 1])
+    model = MagicMock()
+    model.predict.return_value = [0, 1]
+    accuracy = evaluate_model(model, X_test, y_test)
+    assert accuracy == 1.0
+
+def test_log_to_mlflow():
+    model = MagicMock()
+    accuracy = 0.95
+    with patch('mlflow.start_run'), patch('mlflow.sklearn.log_model'), patch('mlflow.log_metric'), patch('mlflow.end_run'):
+        log_to_mlflow(model, accuracy)
+
+def test_detect_concept_drift():
+    with patch('numpy.random.rand', return_value=0.05):
+        assert detect_concept_drift() == True
+    with patch('numpy.random.rand', return_value=0.15):
+        assert detect_concept_drift() == False
+```
+
+### (b) GitHub Actions Workflow
+
+Save this as `.github/workflows/python-app.yml`.
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow numpy pytest
+
+    - name: Test with pytest
+      run: |
+        pytest test_pipeline.py
+```
+
+This setup will run tests using GitHub Actions whenever there is a push or pull request to the main branch, ensuring the integrity of your pipeline module. Make sure to adjust any paths or module names as necessary for your specific project structure.

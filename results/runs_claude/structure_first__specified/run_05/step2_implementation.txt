@@ -1,0 +1,531 @@
+```python
+"""Main ML pipeline for fraud detection model training and evaluation."""
+
+import logging
+import os
+import json
+from typing import Tuple, Dict, Any
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    classification_report,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    precision_recall_curve,
+    roc_curve
+)
+from sklearn.utils.class_weight import compute_class_weight
+import mlflow
+import mlflow.sklearn
+import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+def setup_logging(log_level: str = "INFO") -> None:
+    """Configure logging for the pipeline."""
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_level}")
+    
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    
+    # Suppress verbose logging from other libraries
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from CSV file."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_path}")
+    
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Data file not found: {data_path}")
+    
+    try:
+        df = pd.read_csv(data_path)
+        logger.info(f"Successfully loaded {len(df)} records with {len(df.columns)} columns")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load data: {str(e)}")
+        raise
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate dataset schema and data quality."""
+    logger = logging.getLogger(__name__)
+    logger.info("Validating dataset schema and quality")
+    
+    # Check for empty dataframe
+    if df.empty:
+        raise ValueError("Dataset is empty")
+    
+    # Check for required columns
+    required_columns = ["Class"]  # Class is the target variable
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+    
+    # Check for feature columns (assuming V1-V28 + Time + Amount for credit card dataset)
+    feature_columns = [col for col in df.columns if col != "Class"]
+    if len(feature_columns) == 0:
+        raise ValueError("No feature columns found in dataset")
+    
+    # Validate data types
+    if not pd.api.types.is_numeric_dtype(df["Class"]):
+        raise TypeError("Target column 'Class' must be numeric")
+    
+    # Check for invalid values in target
+    valid_classes = {0, 1}
+    unique_classes = set(df["Class"].unique())
+    if not unique_classes.issubset(valid_classes):
+        raise ValueError(f"Invalid class values found: {unique_classes - valid_classes}")
+    
+    # Check for excessive missing values
+    missing_percentage = (df.isnull().sum() / len(df)) * 100
+    high_missing_cols = missing_percentage[missing_percentage > 50].index.tolist()
+    if high_missing_cols:
+        logger.warning(f"Columns with >50% missing values: {high_missing_cols}")
+    
+    # Check for duplicate rows
+    duplicates = df.duplicated().sum()
+    if duplicates > 0:
+        logger.warning(f"Found {duplicates} duplicate rows ({duplicates/len(df)*100:.2f}%)")
+    
+    # Log class distribution
+    class_dist = df["Class"].value_counts()
+    logger.info(f"Class distribution: {class_dist.to_dict()}")
+    fraud_rate = (class_dist.get(1, 0) / len(df)) * 100
+    logger.info(f"Fraud rate: {fraud_rate:.4f}%")
+    
+    logger.info("Data validation completed successfully")
+
+
+def preprocess_data(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split and preprocess data into train/test sets."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Preprocessing data with test_size={test_size}, random_state={random_state}")
+    
+    # Separate features and target
+    X = df.drop("Class", axis=1).values
+    y = df["Class"].values
+    
+    # Handle any remaining missing values
+    if np.isnan(X).any():
+        logger.warning("Found NaN values in features, filling with column means")
+        col_means = np.nanmean(X, axis=0)
+        inds = np.where(np.isnan(X))
+        X[inds] = np.take(col_means, inds[1])
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+    
+    logger.info(f"Training set: {X_train.shape[0]} samples")
+    logger.info(f"Test set: {X_test.shape[0]} samples")
+    logger.info(f"Training set fraud rate: {(y_train.sum() / len(y_train)) * 100:.4f}%")
+    logger.info(f"Test set fraud rate: {(y_test.sum() / len(y_test)) * 100:.4f}%")
+    
+    return X_train, X_test, y_train, y_test
+
+
+def handle_class_imbalance(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    strategy: str = "class_weight"
+) -> Dict[str, Any]:
+    """Compute parameters to handle class imbalance."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Handling class imbalance using strategy: {strategy}")
+    
+    unique_classes = np.unique(y_train)
+    class_counts = np.bincount(y_train.astype(int))
+    
+    logger.info(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
+    
+    if strategy == "class_weight":
+        # Compute class weights
+        class_weights = compute_class_weight(
+            class_weight="balanced",
+            classes=unique_classes,
+            y=y_train
+        )
+        class_weight_dict = dict(zip(unique_classes, class_weights))
+        
+        logger.info(f"Computed class weights: {class_weight_dict}")
+        
+        return {
+            "class_weight": class_weight_dict,
+            "strategy": strategy
+        }
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+
+def train_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    hyperparameters: Dict[str, Any]
+) -> RandomForestClassifier:
+    """Train RandomForest classifier with given hyperparameters."""
+    logger = logging.getLogger(__name__)
+    logger.info("Training RandomForest classifier")
+    logger.info(f"Hyperparameters: {hyperparameters}")
+    
+    # Create and train model
+    model = RandomForestClassifier(
+        random_state=hyperparameters.get("random_state", 42),
+        n_jobs=-1,
+        **{k: v for k, v in hyperparameters.items() if k != "random_state"}
+    )
+    
+    model.fit(X_train, y_train)
+    
+    logger.info("Model training completed")
+    logger.info(f"Number of trees: {model.n_estimators}")
+    logger.info(f"Number of features: {model.n_features_in_}")
+    
+    return model
+
+
+def evaluate_model(
+    model: RandomForestClassifier,
+    X_test: np.ndarray,
+    y_test: np.ndarray
+) -> Dict[str, float]:
+    """Evaluate model performance on test set."""
+    logger = logging.getLogger(__name__)
+    logger.info("Evaluating model performance")
+    
+    # Make predictions
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Compute metrics
+    metrics = {
+        "accuracy": float(np.mean(y_pred == y_test)),
+        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
+        "f1_score": float(f1_score(y_test, y_pred, zero_division=0)),
+        "roc_auc": float(roc_auc_score(y_test, y_proba))
+    }
+    
+    # Compute confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    metrics.update({
+        "true_negatives": int(tn),
+        "false_positives": int(fp),
+        "false_negatives": int(fn),
+        "true_positives": int(tp)
+    })
+    
+    # Log classification report
+    logger.info("\nClassification Report:")
+    logger.info("\n" + classification_report(y_test, y_pred))
+    
+    # Log metrics
+    for metric_name, metric_value in metrics.items():
+        logger.info(f"{metric_name}: {metric_value}")
+    
+    return metrics
+
+
+def compute_business_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    threshold: float = 0.5
+) -> Dict[str, float]:
+    """Compute business-specific metrics for fraud detection."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Computing business metrics with threshold={threshold}")
+    
+    # Apply custom threshold
+    y_pred_custom = (y_proba >= threshold).astype(int)
+    
+    # Confusion matrix components
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_custom).ravel()
+    
+    # Business cost assumptions (can be parameterized)
+    cost_per_fp = 10  # Cost of investigating false positive
+    cost_per_fn = 100  # Cost of missing fraud
+    revenue_per_tp = 90  # Revenue saved by catching fraud
+    
+    # Calculate business metrics
+    total_cost = (fp * cost_per_fp) + (fn * cost_per_fn)
+    total_savings = tp * revenue_per_tp
+    net_benefit = total_savings - total_cost
+    
+    # Calculate fraud catch rate
+    fraud_catch_rate = tp / (tp + fn) if (tp + fn) > 0 else 0
+    
+    # Calculate precision at different recall levels
+    precision_vals, recall_vals, thresholds = precision_recall_curve(y_true, y_proba)
+    
+    # Find precision at 90% recall
+    recall_90_idx = np.argmin(np.abs(recall_vals - 0.9))
+    precision_at_90_recall = precision_vals[recall_90_idx]
+    
+    business_metrics = {
+        "total_cost": float(total_cost),
+        "total_savings": float(total_savings),
+        "net_benefit": float(net_benefit),
+        "fraud_catch_rate": float(fraud_catch_rate),
+        "false_positive_rate": float(fp / (fp + tn)) if (fp + tn) > 0 else 0,
+        "precision_at_90_recall": float(precision_at_90_recall),
+        "threshold_used": float(threshold)
+    }
+    
+    logger.info("Business metrics:")
+    for metric_name, metric_value in business_metrics.items():
+        logger.info(f"{metric_name}: {metric_value}")
+    
+    return business_metrics
+
+
+def log_to_mlflow(
+    model: RandomForestClassifier,
+    metrics: Dict[str, float],
+    hyperparameters: Dict[str, Any],
+    artifacts: Dict[str, str]
+) -> str:
+    """Log model, metrics, and artifacts to MLflow."""
+    logger = logging.getLogger(__name__)
+    logger.info("Logging to MLflow")
+    
+    # Log hyperparameters
+    mlflow.log_params(hyperparameters)
+    
+    # Log metrics
+    mlflow.log_metrics(metrics)
+    
+    # Log model
+    mlflow.sklearn.log_model(
+        model,
+        "model",
+        registered_model_name="fraud-detection-rf"
+    )
+    
+    # Log artifacts
+    for artifact_name, artifact_path in artifacts.items():
+        if os.path.exists(artifact_path):
+            mlflow.log_artifact(artifact_path, artifact_name)
+            logger.info(f"Logged artifact: {artifact_name}")
+    
+    # Get run ID
+    run_id = mlflow.active_run().info.run_id
+    logger.info(f"MLflow run ID: {run_id}")
+    
+    return run_id
+
+
+def save_model_artifacts(
+    model: RandomForestClassifier,
+    output_dir: str
+) -> Dict[str, str]:
+    """Save model and related artifacts to disk."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving model artifacts to {output_dir}")
+    
+    # Create output directory
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    artifacts = {}
+    
+    # Save model
+    model_path = os.path.join(output_dir, "model.joblib")
+    joblib.dump(model, model_path)
+    artifacts["model"] = model_path
+    logger.info(f"Saved model to {model_path}")
+    
+    # Save feature importance
+    if hasattr(model, "feature_importances_"):
+        feature_importance_path = os.path.join(output_dir, "feature_importance.json")
+        feature_importance = {
+            f"feature_{i}": float(importance)
+            for i, importance in enumerate(model.feature_importances_)
+        }
+        with open(feature_importance_path, "w") as f:
+            json.dump(feature_importance, f, indent=2)
+        artifacts["feature_importance"] = feature_importance_path
+        logger.info(f"Saved feature importance to {feature_importance_path}")
+        
+        # Create feature importance plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        top_n = min(20, len(model.feature_importances_))
+        top_indices = np.argsort(model.feature_importances_)[-top_n:]
+        
+        ax.barh(range(top_n), model.feature_importances_[top_indices])
+        ax.set_yticks(range(top_n))
+        ax.set_yticklabels([f"Feature {i}" for i in top_indices])
+        ax.set_xlabel("Feature Importance")
+        ax.set_title(f"Top {top_n} Feature Importances")
+        plt.tight_layout()
+        
+        plot_path = os.path.join(output_dir, "feature_importance.png")
+        plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        artifacts["feature_importance_plot"] = plot_path
+        logger.info(f"Saved feature importance plot to {plot_path}")
+    
+    # Save model metadata
+    metadata = {
+        "model_type": type(model).__name__,
+        "n_estimators": int(model.n_estimators),
+        "max_depth": int(model.max_depth) if model.max_depth else None,
+        "n_features": int(model.n_features_in_),
+        "n_classes": int(model.n_classes_)
+    }
+    metadata_path = os.path.join(output_dir, "model_metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    artifacts["metadata"] = metadata_path
+    logger.info(f"Saved model metadata to {metadata_path}")
+    
+    return artifacts
+
+
+def run_pipeline(
+    data_path: str,
+    experiment_name: str = "fraud-detection",
+    mlflow_tracking_uri: str = None
+) -> Tuple[RandomForestClassifier, Dict[str, float], str]:
+    """Execute the complete ML pipeline end-to-end."""
+    logger = logging.getLogger(__name__)
+    logger.info("Starting ML pipeline execution")
+    
+    # Setup MLflow
+    if mlflow_tracking_uri:
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+    mlflow.set_experiment(experiment_name)
+    
+    with mlflow.start_run():
+        # Step 1: Load data
+        df = load_data(data_path)
+        
+        # Step 2: Validate data
+        validate_data(df)
+        
+        # Step 3: Preprocess data
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        # Step 4: Handle class imbalance
+        imbalance_params = handle_class_imbalance(X_train, y_train)
+        
+        # Step 5: Define hyperparameters
+        hyperparameters = {
+            "n_estimators": 100,
+            "max_depth": 10,
+            "min_samples_split": 10,
+            "min_samples_leaf": 4,
+            "max_features": "sqrt",
+            "class_weight": imbalance_params["class_weight"],
+            "random_state": 42
+        }
+        
+        # Step 6: Train model
+        model = train_model(X_train, y_train, hyperparameters)
+        
+        # Step 7: Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Step 8: Compute business metrics
+        y_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = model.predict(X_test)
+        business_metrics = compute_business_metrics(y_test, y_pred, y_proba)
+        
+        # Combine all metrics
+        all_metrics = {**metrics, **business_metrics}
+        
+        # Step 9: Save artifacts
+        output_dir = "models/latest"
+        artifacts = save_model_artifacts(model, output_dir)
+        
+        # Step 10: Log to MLflow
+        run_id = log_to_mlflow(model, all_metrics, hyperparameters, artifacts)
+        
+        logger.info("Pipeline execution completed successfully")
+        
+        return model, all_metrics, run_id
+
+
+def main() -> None:
+    """Main entry point for the pipeline."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Fraud Detection ML Pipeline")
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        required=True,
+        help="Path to the fraud detection dataset CSV file"
+    )
+    parser.add_argument(
+        "--experiment-name",
+        type=str,
+        default="fraud-detection",
+        help="MLflow experiment name"
+    )
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        type=str,
+        default=None,
+        help="MLflow tracking URI"
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level"
+    )
+    
+    args = parser.parse_args()
+    
+    # Setup logging
+    setup_logging(args.log_level)
+    
+    try:
+        # Run pipeline
+        model, metrics, run_id = run_pipeline(
+            data_path=args.data_path,
+            experiment_name=args.experiment_name,
+            mlflow_tracking_uri=args.mlflow_tracking_uri
+        )
+        
+        print("\n" + "="*50)
+        print("Pipeline completed successfully!")
+        print("="*50)
+        print(f"\nMLflow Run ID: {run_id}")
+        print("\nKey Metrics:")
+        print(f"  ROC-AUC: {metrics.get('roc_auc', 0):.4f}")
+        print(f"  Precision: {metrics.get('precision', 0):.4f}")
+        print(f"  Recall: {metrics.get('recall', 0):.4f}")
+        print(f"  F1-Score: {metrics.get('f1_score', 0):.4f}")
+        print(f"  Net Benefit: ${metrics.get('net_benefit', 0):.2f}")
+        print("="*50 + "\n")
+        
+    except Exception as e:
+        logging.error(f"Pipeline failed: {str(e)}", exc_info=True)
+        raise
+
+
+if __name__ == "__main__":
+    main()
+```

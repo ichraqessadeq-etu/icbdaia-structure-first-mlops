@@ -1,0 +1,162 @@
+### 1. Python Pipeline Script
+
+Below is a complete Python script for a CI/CD pipeline for a fraud detection model using a `RandomForestClassifier`. This script includes data loading, training, evaluation, and logging to MLflow.
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+import mlflow
+import mlflow.sklearn
+from sklearn.utils import resample
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        print("Data loaded successfully.")
+        return data
+    except Exception as e:
+        raise RuntimeError(f"Failed to load data: {e}")
+
+def preprocess_data(data):
+    try:
+        # Separate majority and minority classes
+        majority = data[data.Class == 0]
+        minority = data[data.Class == 1]
+
+        # Upsample minority class
+        minority_upsampled = resample(minority, 
+                                      replace=True,     # sample with replacement
+                                      n_samples=len(majority),    # to match majority class
+                                      random_state=123) # reproducible results
+
+        # Combine majority class with upsampled minority class
+        data_upsampled = pd.concat([majority, minority_upsampled])
+        
+        X = data_upsampled.drop('Class', axis=1)
+        y = data_upsampled['Class']
+        print("Data preprocessing completed.")
+        return train_test_split(X, y, test_size=0.2, random_state=42)
+    except Exception as e:
+        raise RuntimeError(f"Failed to preprocess data: {e}")
+
+def train_model(X_train, y_train):
+    try:
+        clf = RandomForestClassifier(n_estimators=100, random_state=42)
+        clf.fit(X_train, y_train)
+        print("Model training completed.")
+        return clf
+    except Exception as e:
+        raise RuntimeError(f"Failed to train model: {e}")
+
+def evaluate_model(clf, X_test, y_test):
+    try:
+        y_pred = clf.predict(X_test)
+        y_proba = clf.predict_proba(X_test)[:, 1]
+        print("Model evaluation completed.")
+        return {
+            "classification_report": classification_report(y_test, y_pred),
+            "roc_auc_score": roc_auc_score(y_test, y_proba),
+            "confusion_matrix": confusion_matrix(y_test, y_pred).tolist()
+        }
+    except Exception as e:
+        raise RuntimeError(f"Failed to evaluate model: {e}")
+
+def log_to_mlflow(clf, evaluation_results):
+    try:
+        mlflow.set_experiment("fraud_detection")
+        with mlflow.start_run():
+            mlflow.log_param("n_estimators", clf.n_estimators)
+            mlflow.log_metrics({
+                "roc_auc_score": evaluation_results["roc_auc_score"]
+            })
+            mlflow.sklearn.log_model(clf, "model")
+            print("Logging to MLflow completed.")
+    except Exception as e:
+        raise RuntimeError(f"Failed to log to MLflow: {e}")
+
+def main(file_path):
+    data = load_data(file_path)
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    evaluation_results = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, evaluation_results)
+    print(evaluation_results["classification_report"])
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### 2. Pytest Test File
+
+Below is a pytest test file with three test cases for ensuring the integrity of the pipeline.
+
+```python
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+
+def test_load_data():
+    data = load_data("creditcard.csv")
+    assert isinstance(data, pd.DataFrame), "Data should be a DataFrame."
+
+def test_preprocess_data():
+    data = load_data("creditcard.csv")
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) > 0 and len(X_test) > 0, "Train and test splits should not be empty."
+    assert len(y_train) > 0 and len(y_test) > 0, "Targets should not be empty."
+
+def test_train_model():
+    data = load_data("creditcard.csv")
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier."
+    score = model.score(X_test, y_test)
+    assert score > 0.5, "Model should have a reasonable accuracy."
+
+```
+
+### 3. GitHub Actions YAML Workflow
+
+Below is a GitHub Actions workflow file for automating the CI/CD pipeline.
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install scikit-learn pandas mlflow pytest
+
+    - name: Run tests
+      run: pytest tests/
+
+    - name: Run pipeline
+      run: python pipeline.py
+```
+
+This CI/CD pipeline is designed to be run automatically upon changes to the main branch, and it includes error handling throughout the Python scripts to ensure robustness.

@@ -1,0 +1,117 @@
+Certainly! Below is a complete `pytest` test file to test the pipeline module you provided, followed by a GitHub Actions workflow file to automate the testing process.
+
+### (a) Pytest Test File
+
+Create a file named `test_pipeline.py` to implement the tests:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, split_data, train_model, evaluate_model, save_model, load_model, predict
+
+# Sample data for testing
+SAMPLE_DATA = pd.DataFrame({
+    'feature1': [1, 2, 3, 4, 5],
+    'feature2': ['A', 'B', 'A', 'B', 'A'],
+    'label': [0, 1, 0, 1, 0]
+})
+
+MODEL_PARAMS = {'n_estimators': 10, 'max_depth': 3}
+
+def test_load_data(tmpdir):
+    # Create a temporary CSV file
+    file_path = tmpdir.join("sample.csv")
+    SAMPLE_DATA.to_csv(file_path, index=False)
+
+    # Test loading the data
+    data = load_data(file_path)
+    pd.testing.assert_frame_equal(data, SAMPLE_DATA)
+
+def test_preprocess_data():
+    preprocessed_data = preprocess_data(SAMPLE_DATA)
+
+    # Check if missing values are dropped (none in this case)
+    assert not preprocessed_data.isnull().values.any()
+
+    # Check if categorical variables are encoded
+    assert 'feature2_A' in preprocessed_data.columns
+    assert 'feature2_B' in preprocessed_data.columns
+
+def test_split_data():
+    X_train, X_test, y_train, y_test = split_data(SAMPLE_DATA, 0.2)
+
+    # Check dimensions
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+
+def test_train_model():
+    train_data = split_data(SAMPLE_DATA, 0.2)
+    model = train_model(train_data, MODEL_PARAMS)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    train_data = split_data(SAMPLE_DATA, 0.2)
+    model = train_model(train_data, MODEL_PARAMS)
+    accuracy = evaluate_model(model, train_data)
+    assert 0 <= accuracy <= 1
+
+def test_save_and_load_model(tmpdir):
+    model = RandomForestClassifier(**MODEL_PARAMS)
+    model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+
+    # Save model
+    model_path = tmpdir.join("model.joblib")
+    save_model(model, model_path)
+
+    # Load model
+    loaded_model = load_model(model_path)
+    assert isinstance(loaded_model, RandomForestClassifier)
+
+def test_predict():
+    model = RandomForestClassifier(**MODEL_PARAMS)
+    model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+    predictions = predict(model, SAMPLE_DATA.drop('label', axis=1))
+    assert len(predictions) == len(SAMPLE_DATA)
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/test.yml` in your repository for the GitHub Actions workflow:
+
+```yaml
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+```
+
+This workflow will automatically run whenever there is a push or pull request to the `main` branch. It checks out the code, sets up Python, installs the necessary dependencies, and runs the `pytest` tests.

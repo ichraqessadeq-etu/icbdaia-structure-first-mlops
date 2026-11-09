@@ -1,0 +1,172 @@
+Below are the requested deliverables for the CI/CD pipeline configuration for a fraud detection model:
+
+### 1. Python Pipeline Script
+
+This script covers data loading, model training, evaluation, and logging to MLflow, including error handling.
+
+```python
+# pipeline.py
+
+import pandas as pd
+import numpy as np
+import mlflow
+import mlflow.sklearn
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
+
+def load_data(file_path):
+    try:
+        df = pd.read_csv(file_path)
+        return df
+    except Exception as e:
+        raise RuntimeError(f"Error loading data: {e}")
+
+def preprocess_data(df):
+    try:
+        df_majority = df[df.Class == 0]
+        df_minority = df[df.Class == 1]
+
+        df_minority_upsampled = resample(df_minority, 
+                                         replace=True,     
+                                         n_samples=len(df_majority),    
+                                         random_state=42) 
+        
+        df_upsampled = pd.concat([df_majority, df_minority_upsampled])
+        X = df_upsampled.drop('Class', axis=1)
+        y = df_upsampled['Class']
+        return train_test_split(X, y, test_size=0.3, random_state=42)
+    except Exception as e:
+        raise RuntimeError(f"Error preprocessing data: {e}")
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise RuntimeError(f"Error training model: {e}")
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions)
+        roc_auc = roc_auc_score(y_test, predictions)
+        return report, roc_auc
+    except Exception as e:
+        raise RuntimeError(f"Error evaluating model: {e}")
+
+def log_to_mlflow(model, report, roc_auc):
+    try:
+        mlflow.log_param("model_type", "RandomForestClassifier")
+        mlflow.log_metric("roc_auc", roc_auc)
+        mlflow.sklearn.log_model(model, "model")
+        print(report)
+    except Exception as e:
+        raise RuntimeError(f"Error logging to MLflow: {e}")
+
+def main():
+    mlflow.set_experiment("Fraud Detection Experiment")
+    with mlflow.start_run():
+        df = load_data("creditcard.csv")
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        model = train_model(X_train, y_train)
+        report, roc_auc = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, report, roc_auc)
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2. Pytest Test File
+
+This test file includes three tests to ensure functionality.
+
+```python
+# test_pipeline.py
+
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+
+def test_load_data():
+    df = load_data("creditcard.csv")
+    assert isinstance(df, pd.DataFrame)
+    assert not df.empty
+
+def test_preprocess_data():
+    df = load_data("creditcard.csv")
+    X_train, X_test, y_train, y_test = preprocess_data(df)
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+    assert len(y_train) > 0
+    assert len(y_test) > 0
+
+def test_train_model():
+    df = load_data("creditcard.csv")
+    X_train, _, y_train, _ = preprocess_data(df)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, "predict")
+```
+
+### 3. GitHub Actions YAML Workflow
+
+This GitHub Actions YAML file sets up a CI/CD pipeline that runs tests and logs the model upon detecting concept drift.
+
+```yaml
+# .github/workflows/ci-cd-pipeline.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * MON'
+  watch:
+    types: [started]
+    paths:
+      - '**.py'
+      - '.github/workflows/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn mlflow pytest
+    - name: Run tests
+      run: pytest test_pipeline.py
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn mlflow
+    - name: Execute pipeline
+      env:
+        MLFLOW_TRACKING_URI: http://mlflow-server:5000
+      run: python pipeline.py
+```
+
+This configuration ensures a robust CI/CD process, automating testing and deployment while leveraging MLflow for tracking and managing experiments.

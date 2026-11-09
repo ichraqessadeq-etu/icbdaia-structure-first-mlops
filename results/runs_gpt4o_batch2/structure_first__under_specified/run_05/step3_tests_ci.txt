@@ -1,0 +1,112 @@
+Certainly! Below is a complete `pytest` test file and a GitHub Actions workflow file to test and automate your pipeline module.
+
+### (a) Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+import numpy as np
+from pipeline.data_preprocessing import load_data, clean_data
+from pipeline.feature_engineering import generate_features
+from pipeline.model_training import train_model
+from pipeline.model_evaluation import evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+
+# Test data
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'transaction_amount': [100, 200, np.nan, 400, 500],
+        'label': [0, 1, 0, 1, 1]
+    })
+
+def test_load_data(tmpdir):
+    file_path = tmpdir.join("test_data.csv")
+    data = "transaction_amount,label\n100,0\n200,1\n300,0\n400,1\n500,1"
+    file_path.write(data)
+    
+    df = load_data(file_path)
+    assert not df.empty
+    assert "transaction_amount" in df.columns
+    assert "label" in df.columns
+
+def test_clean_data(sample_data):
+    cleaned_df = clean_data(sample_data)
+    assert cleaned_df.isnull().sum().sum() == 0
+    assert cleaned_df.duplicated().sum() == 0
+
+def test_generate_features(sample_data):
+    sample_data.dropna(inplace=True)
+    features_df = generate_features(sample_data)
+    assert 'transaction_amount_log' in features_df.columns
+    assert not features_df['transaction_amount_log'].isnull().any()
+
+def test_train_model(sample_data):
+    sample_data.dropna(inplace=True)
+    features = sample_data[['transaction_amount']]
+    labels = sample_data['label']
+    model = train_model(features, labels)
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_estimators == 100
+
+def test_evaluate_model(sample_data):
+    sample_data.dropna(inplace=True)
+    features = sample_data[['transaction_amount']]
+    labels = sample_data['label']
+    model = train_model(features, labels)
+    
+    metrics = evaluate_model(model, features, labels)
+    assert "accuracy" in metrics
+    assert metrics["accuracy"] >= 0.0
+    assert "precision" in metrics
+    assert "recall" in metrics
+    assert "f1_score" in metrics
+```
+
+### (b) GitHub Actions Workflow File
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn pytest
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+### Explanation
+
+- **Pytest Test File**: This file contains tests for each function in the pipeline. It uses `pytest` fixtures to set up sample data and tests functions for data loading, cleaning, feature engineering, model training, and evaluation.
+
+- **GitHub Actions Workflow**: This configuration sets up a continuous integration (CI) workflow that triggers on pushes and pull requests to the main branch. It checks out the repository, sets up Python, installs dependencies, and runs the tests using `pytest`. 
+
+Make sure you have your directory structure set up correctly, and the necessary dependencies specified in your `requirements.txt` or similar dependency management file.

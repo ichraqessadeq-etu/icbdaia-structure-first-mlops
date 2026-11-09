@@ -1,0 +1,211 @@
+Below are the complete Python pipeline module, pytest test file, and GitHub Actions YAML workflow for a production-ready CI/CD pipeline configured for a fraud detection model using scikit-learn's `RandomForestClassifier`.
+
+### Python Pipeline Module
+
+```python
+# fraud_detection_pipeline.py
+
+import os
+import logging
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+import mlflow
+import mlflow.sklearn
+from sklearn.utils import resample
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        # Splitting data into majority and minority classes
+        majority = data[data.Class == 0]
+        minority = data[data.Class == 1]
+
+        # Upsample minority class
+        minority_upsampled = resample(minority, replace=True, n_samples=len(majority), random_state=42)
+        
+        # Combine majority and upsampled minority
+        data_upsampled = pd.concat([majority, minority_upsampled])
+        
+        X = data_upsampled.drop('Class', axis=1)
+        y = data_upsampled['Class']
+        logger.info("Data preprocessing completed.")
+        return X, y
+    except Exception as e:
+        logger.error(f"Error in data preprocessing: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed.")
+        return model
+    except Exception as e:
+        logger.error(f"Error in model training: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions)
+        roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+        logger.info("Model evaluation completed.")
+        return report, roc_auc
+    except Exception as e:
+        logger.error(f"Error in model evaluation: {e}")
+        raise
+
+def log_to_mlflow(model, report, roc_auc):
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, "random_forest_model")
+            mlflow.log_metric("roc_auc", roc_auc)
+            mlflow.log_text(report, "classification_report.txt")
+        logger.info("Model logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Error in logging to MLflow: {e}")
+        raise
+
+def main():
+    file_path = 'creditcard.csv'
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    report, roc_auc = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, report, roc_auc)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import load_data, preprocess_data, train_model
+
+@pytest.fixture
+def load_sample_data():
+    data = {'V1': [0.1, 0.2, -0.1, -0.2],
+            'V2': [0.3, 0.1, -0.3, -0.1],
+            'Class': [0, 0, 1, 1]}
+    return pd.DataFrame(data)
+
+def test_load_data():
+    # Assuming the current directory contains a file named 'creditcard.csv'
+    try:
+        data = load_data('creditcard.csv')
+        assert data is not None
+        assert 'Class' in data.columns
+        assert len(data) > 0
+    except FileNotFoundError:
+        pytest.fail("File not found.")
+
+def test_preprocess_data(load_sample_data):
+    X, y = preprocess_data(load_sample_data)
+    assert len(X) == len(y)
+    assert 'Class' not in X.columns
+
+def test_train_model(load_sample_data):
+    X, y = preprocess_data(load_sample_data)
+    model = train_model(X, y)
+    assert model is not None
+    assert hasattr(model, "predict")
+```
+
+### GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci-cd-pipeline.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0' # Weekly run at midnight on Sundays
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest --maxfail=1 --disable-warnings
+
+    - name: Run pipeline
+      run: |
+        python fraud_detection_pipeline.py
+
+  # Add concept drift detection job
+  drift-detection:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Check for concept drift
+      run: |
+        python check_concept_drift.py  # Assuming a script to check for concept drift
+
+    - name: Trigger retraining if concept drift detected
+      if: ${{ steps.drift-detection.outputs.drift_detected == 'true' }}
+      run: |
+        python fraud_detection_pipeline.py
+```
+
+### Notes:
+1. **Concept Drift Detection**: The GitHub Actions workflow includes a placeholder for concept drift detection (`check_concept_drift.py`). Implement this script to detect concept drift and output `drift_detected` as `true` or `false` to trigger retraining.
+2. **MLflow Setup**: Ensure MLflow is set up and running, either locally or on a server, and replace the URI in the script if needed.
+3. **Data File**: The script expects a `creditcard.csv` file in the same directory or provide a correct path.

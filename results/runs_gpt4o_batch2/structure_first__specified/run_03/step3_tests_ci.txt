@@ -1,0 +1,114 @@
+Certainly! Below is a complete pytest test file to test the pipeline functions and a GitHub Actions workflow to automate testing.
+
+### (a) Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline.pipeline import (
+    load_data,
+    check_concept_drift,
+    train_model,
+    evaluate_model,
+    log_experiment_to_mlflow
+)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+import mlflow
+
+@pytest.fixture
+def sample_data():
+    """Fixture for sample data."""
+    # Create a small sample dataset
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4],
+        'feature2': [4, 3, 2, 1],
+        'label': [0, 1, 0, 1]
+    })
+    return data
+
+def test_load_data(mocker):
+    """Test the load_data function."""
+    mocker.patch('pandas.read_csv', return_value=pd.DataFrame({'a': [1, 2], 'label': [0, 1]}))
+    data = load_data('dummy_path')
+    assert not data.isnull().values.any(), "Data should not have NaN values after loading."
+
+def test_check_concept_drift(sample_data):
+    """Test the check_concept_drift function."""
+    assert not check_concept_drift(sample_data), "No concept drift should be detected in sample data."
+
+def test_train_model(sample_data):
+    """Test the train_model function."""
+    labels = sample_data.pop('label')
+    model = train_model(sample_data, labels)
+    assert isinstance(model, RandomForestClassifier), "Model should be an instance of RandomForestClassifier."
+
+def test_evaluate_model(sample_data):
+    """Test the evaluate_model function."""
+    labels = sample_data.pop('label')
+    train_data, test_data, train_labels, test_labels = train_test_split(sample_data, labels, test_size=0.5, random_state=42)
+    model = train_model(train_data, train_labels)
+    metrics = evaluate_model(model, test_data, test_labels)
+
+    assert 'accuracy' in metrics, "Metrics should include accuracy."
+    assert 'precision' in metrics, "Metrics should include precision."
+    assert 'recall' in metrics, "Metrics should include recall."
+
+def test_log_experiment_to_mlflow(mocker, sample_data):
+    """Test the log_experiment_to_mlflow function."""
+    labels = sample_data.pop('label')
+    model = train_model(sample_data, labels)
+    metrics = {'accuracy': 1.0, 'precision': 1.0, 'recall': 1.0}
+    
+    mocker.patch.object(mlflow, 'log_params')
+    mocker.patch.object(mlflow, 'log_metrics')
+    mocker.patch.object(mlflow.sklearn, 'log_model')
+
+    log_experiment_to_mlflow(model, metrics)
+
+    mlflow.log_params.assert_called_once()
+    mlflow.log_metrics.assert_called_once_with(metrics)
+    mlflow.sklearn.log_model.assert_called_once_with(model, "random_forest_model")
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-mock pandas scikit-learn mlflow
+
+      - name: Run tests
+        run: pytest tests
+```
+
+This configuration provides a pytest test suite for the pipeline and a GitHub Actions workflow to execute the tests automatically on pushes and pull requests to the main branch.

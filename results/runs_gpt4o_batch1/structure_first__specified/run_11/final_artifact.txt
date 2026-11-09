@@ -1,0 +1,185 @@
+Certainly! Below is a complete implementation of the pipeline module, broken down into the files specified in your structure. Each function follows the specified signatures.
+
+```python
+# fraud_detection/pipeline/__init__.py
+
+# This file can be left empty or used to initialize package-level variables
+```
+
+```python
+# fraud_detection/pipeline/data_loader.py
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data() -> tuple:
+    """Load and return the credit card fraud dataset."""
+    # Assuming the dataset is a CSV file named 'creditcard.csv' in the data directory
+    df = pd.read_csv('data/creditcard.csv')
+    X = df.drop('Class', axis=1)
+    y = df['Class']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return (X_train, X_test, y_train, y_test)
+```
+
+```python
+# fraud_detection/pipeline/model_trainer.py
+
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(data: tuple) -> RandomForestClassifier:
+    """Train the RandomForestClassifier on the given dataset."""
+    X_train, X_test, y_train, y_test = data
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+```
+
+```python
+# fraud_detection/pipeline/model_evaluator.py
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model: RandomForestClassifier, data: tuple) -> dict:
+    """Evaluate the model and return evaluation metrics."""
+    X_train, X_test, y_train, y_test = data
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+```
+
+```python
+# fraud_detection/pipeline/mlflow_logger.py
+
+import mlflow
+from sklearn.ensemble import RandomForestClassifier
+
+def log_to_mlflow(params: dict, metrics: dict, model: RandomForestClassifier) -> None:
+    """Log parameters, metrics, and model to MLflow."""
+    with mlflow.start_run():
+        mlflow.log_params(params)
+        mlflow.log_metrics(metrics)
+        mlflow.sklearn.log_model(model, "model")
+```
+
+This implementation assumes you have the necessary packages installed and a CSV file named `creditcard.csv` in a `data` directory. You'll need to adjust paths and configurations depending on your project's setup and data location. Additionally, you may want to refine and expand the logic to better suit your specific requirements, such as adding more robust error handling or data preprocessing steps.
+
+Certainly! Below is a complete pytest test file and GitHub Actions workflow to test and automate the CI/CD pipeline for your fraud detection module. 
+
+### Part (a): Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from fraud_detection.pipeline.data_loader import load_data
+from fraud_detection.pipeline.model_trainer import train_model
+from fraud_detection.pipeline.model_evaluator import evaluate_model
+
+def test_load_data():
+    # Test if data is loaded and split correctly
+    data = load_data()
+    assert len(data) == 4, "Data should be split into four parts: X_train, X_test, y_train, y_test."
+    assert data[0].shape[0] > 0, "X_train should not be empty."
+    assert data[2].shape[0] > 0, "y_train should not be empty."
+
+def test_train_model():
+    # Test if the model is trained
+    data = load_data()
+    model = train_model(data)
+    assert model is not None, "Model should be trained and not None."
+    assert hasattr(model, "predict"), "Trained model should have a predict method."
+
+def test_evaluate_model():
+    # Test if model evaluation returns valid metrics
+    data = load_data()
+    model = train_model(data)
+    metrics = evaluate_model(model, data)
+    assert 'accuracy' in metrics, "Metrics should include 'accuracy'."
+    assert 0.0 <= metrics['accuracy'] <= 1.0, "Accuracy should be between 0 and 1."
+    assert 'precision' in metrics, "Metrics should include 'precision'."
+    assert 0.0 <= metrics['precision'] <= 1.0, "Precision should be between 0 and 1."
+    assert 'recall' in metrics, "Metrics should include 'recall'."
+    assert 0.0 <= metrics['recall'] <= 1.0, "Recall should be between 0 and 1."
+    assert 'f1_score' in metrics, "Metrics should include 'f1_score'."
+    assert 0.0 <= metrics['f1_score'] <= 1.0, "F1 Score should be between 0 and 1."
+```
+
+### Part (b): GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        pip install flake8
+
+    - name: Run Linting
+      run: |
+        flake8 fraud_detection/pipeline/
+```
+
+### Explanation:
+
+- **Test File**: The test file includes tests for loading data, training the model, and evaluating the model.
+    - `test_load_data`: Ensures data loading and splitting.
+    - `test_train_model`: Ensures the model is trained and has a predict method.
+    - `test_evaluate_model`: Ensures evaluation metrics are computed and are within valid ranges.
+
+- **GitHub Actions Workflow**:
+    - Two jobs: `test` and `lint`.
+    - `test` job checks out the code, sets up Python, installs dependencies, and runs the tests.
+    - `lint` job ensures code quality using `flake8`.
+    - Triggered on push and pull requests to the `main` branch.
+
+Ensure you have a `requirements.txt` file that includes all necessary dependencies such as `pytest`, `pandas`, `scikit-learn`, `mlflow`, and `flake8` for this setup to work seamlessly.

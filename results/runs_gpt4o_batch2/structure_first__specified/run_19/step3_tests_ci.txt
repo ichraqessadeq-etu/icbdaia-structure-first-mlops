@@ -1,0 +1,97 @@
+Certainly! Below is a complete `pytest` test file implementing the planned tests for the fraud detection pipeline, and a GitHub Actions workflow for running these tests.
+
+### (a) Complete `pytest` Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.datasets import make_classification
+from fraud_detection_pipeline.data.load_data import load_data
+from fraud_detection_pipeline.model.train import train_model
+from fraud_detection_pipeline.model.evaluate import evaluate_model
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    data = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+    data['label'] = y
+    return data
+
+def test_load_data(sample_data, tmpdir):
+    """Test the data loading function."""
+    file_path = tmpdir.join("sample_data.csv")
+    sample_data.to_csv(file_path, index=False)
+    X, y = load_data(str(file_path))
+    assert not X.empty, "Features should not be empty"
+    assert not y.empty, "Labels should not be empty"
+    assert len(X) == len(y), "Features and labels should have the same length"
+
+def test_train_model(sample_data):
+    """Test the model training function."""
+    X, y = sample_data.drop('label', axis=1), sample_data['label']
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier), "Model should be an instance of RandomForestClassifier"
+    assert hasattr(model, 'predict'), "Model should have a predict method"
+
+def test_evaluate_model(sample_data):
+    """Test the model evaluation function."""
+    X, y = sample_data.drop('label', axis=1), sample_data['label']
+    model = train_model(X, y)
+    metrics = evaluate_model(model, X, y)
+    for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
+        assert metric in metrics, f"{metric} should be in evaluation metrics"
+        assert 0 <= metrics[metric] <= 1, f"{metric} should be between 0 and 1"
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov
+        pip install -r requirements.txt
+
+    - name: Test with pytest
+      run: |
+        pytest --cov=fraud_detection_pipeline tests/
+```
+
+### Explanation
+
+- **Test File**: 
+  - The `pytest` test file contains three test functions to verify the functionality of the `load_data`, `train_model`, and `evaluate_model` functions.
+  - A `pytest` fixture is used to generate sample data for testing.
+  - Assertions are used to validate that the functions are working as expected.
+
+- **GitHub Actions Workflow**:
+  - The workflow triggers on pushes and pull requests to the `main` branch.
+  - The job runs on the latest Ubuntu environment, sets up Python 3.8, and installs the necessary dependencies.
+  - It then runs the `pytest` command to execute the test suite and generate a coverage report.

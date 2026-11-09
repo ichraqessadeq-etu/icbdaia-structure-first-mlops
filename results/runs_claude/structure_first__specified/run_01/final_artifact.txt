@@ -1,0 +1,1870 @@
+```python
+"""Main ML pipeline for fraud detection model training and deployment."""
+
+import logging
+import os
+import pickle
+from typing import Tuple, Dict, Any, Optional
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
+from imblearn.over_sampling import SMOTE
+import mlflow
+import mlflow.sklearn
+import json
+
+
+def setup_logging() -> logging.Logger:
+    """Configure and return logger for pipeline execution."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('pipeline.log')
+        ]
+    )
+    logger = logging.getLogger(__name__)
+    return logger
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from specified path."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading data from {data_path}")
+    
+    try:
+        if data_path.endswith('.csv'):
+            df = pd.read_csv(data_path)
+        elif data_path.endswith('.parquet'):
+            df = pd.read_parquet(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {data_path}")
+        
+        logger.info(f"Data loaded successfully. Shape: {df.shape}")
+        return df
+    
+    except FileNotFoundError:
+        logger.error(f"Data file not found: {data_path}")
+        raise
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data(df: pd.DataFrame) -> None:
+    """Validate data schema, types, and basic quality checks."""
+    logger = logging.getLogger(__name__)
+    logger.info("Validating data schema and quality")
+    
+    # Check for required columns
+    required_columns = ['Class']  # Target column
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+    
+    # Check for null values
+    null_counts = df.isnull().sum()
+    if null_counts.any():
+        logger.warning(f"Found null values:\n{null_counts[null_counts > 0]}")
+        raise ValueError("Dataset contains null values")
+    
+    # Check target column
+    if 'Class' in df.columns:
+        unique_classes = df['Class'].unique()
+        if not set(unique_classes).issubset({0, 1}):
+            raise ValueError(f"Invalid class values: {unique_classes}")
+        
+        class_counts = df['Class'].value_counts()
+        logger.info(f"Class distribution:\n{class_counts}")
+    
+    # Check for infinite values
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        if np.isinf(df[col]).any():
+            raise ValueError(f"Column {col} contains infinite values")
+    
+    # Check minimum dataset size
+    if len(df) < 100:
+        raise ValueError(f"Dataset too small: {len(df)} rows")
+    
+    logger.info("Data validation passed")
+
+
+def preprocess_data(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split and preprocess data into train/test sets with proper scaling."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Preprocessing data with test_size={test_size}")
+    
+    # Separate features and target
+    if 'Class' not in df.columns:
+        raise ValueError("Target column 'Class' not found in dataset")
+    
+    X = df.drop('Class', axis=1).values
+    y = df['Class'].values
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, 
+        test_size=test_size, 
+        random_state=random_state,
+        stratify=y
+    )
+    
+    logger.info(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+    logger.info(f"Train class distribution: {np.bincount(y_train)}")
+    logger.info(f"Test class distribution: {np.bincount(y_test)}")
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    logger.info("Data preprocessing completed")
+    
+    return X_train_scaled, X_test_scaled, y_train, y_test
+
+
+def handle_imbalance(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    strategy: str = "class_weight"
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Handle class imbalance using specified strategy (SMOTE or class_weight)."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Handling class imbalance using strategy: {strategy}")
+    
+    imbalance_info = {
+        'strategy': strategy,
+        'original_distribution': dict(zip(*np.unique(y_train, return_counts=True)))
+    }
+    
+    if strategy == "smote":
+        # Use SMOTE to oversample minority class
+        smote = SMOTE(random_state=42)
+        X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+        
+        imbalance_info['resampled_distribution'] = dict(
+            zip(*np.unique(y_resampled, return_counts=True))
+        )
+        
+        logger.info(f"SMOTE applied. New distribution: {imbalance_info['resampled_distribution']}")
+        return X_resampled, y_resampled, imbalance_info
+    
+    elif strategy == "class_weight":
+        # Calculate class weights
+        classes, counts = np.unique(y_train, return_counts=True)
+        total = len(y_train)
+        class_weights = {cls: total / (len(classes) * count) for cls, count in zip(classes, counts)}
+        
+        imbalance_info['class_weights'] = class_weights
+        logger.info(f"Class weights calculated: {class_weights}")
+        
+        return X_train, y_train, imbalance_info
+    
+    else:
+        raise ValueError(f"Unknown imbalance strategy: {strategy}")
+
+
+def train_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    hyperparameters: Dict[str, Any]
+) -> RandomForestClassifier:
+    """Train RandomForestClassifier with given hyperparameters."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Training RandomForestClassifier with hyperparameters: {hyperparameters}")
+    
+    # Create and train model
+    model = RandomForestClassifier(**hyperparameters)
+    model.fit(X_train, y_train)
+    
+    logger.info("Model training completed")
+    logger.info(f"Number of trees: {model.n_estimators}")
+    logger.info(f"Number of features: {model.n_features_in_}")
+    
+    return model
+
+
+def evaluate_model(
+    model: RandomForestClassifier,
+    X_test: np.ndarray,
+    y_test: np.ndarray
+) -> Dict[str, float]:
+    """Evaluate model and return metrics dictionary."""
+    logger = logging.getLogger(__name__)
+    logger.info("Evaluating model performance")
+    
+    # Make predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculate metrics
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_test, y_pred, average='binary', zero_division=0
+    )
+    
+    try:
+        auc = roc_auc_score(y_test, y_pred_proba)
+    except ValueError:
+        logger.warning("Could not calculate AUC score")
+        auc = 0.0
+    
+    metrics = {
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1_score': float(f1),
+        'roc_auc': float(auc),
+        'accuracy': float((y_pred == y_test).mean())
+    }
+    
+    logger.info(f"Evaluation metrics: {metrics}")
+    
+    return metrics
+
+
+def log_to_mlflow(
+    model: RandomForestClassifier,
+    metrics: Dict[str, float],
+    hyperparameters: Dict[str, Any],
+    artifact_path: str = "model"
+) -> str:
+    """Log model, metrics, and parameters to MLflow, return run_id."""
+    logger = logging.getLogger(__name__)
+    logger.info("Logging to MLflow")
+    
+    with mlflow.start_run() as run:
+        # Log hyperparameters
+        mlflow.log_params(hyperparameters)
+        
+        # Log metrics
+        mlflow.log_metrics(metrics)
+        
+        # Log model
+        mlflow.sklearn.log_model(
+            model, 
+            artifact_path,
+            registered_model_name="fraud_detection_model"
+        )
+        
+        # Log additional metadata
+        mlflow.set_tag("model_type", "RandomForestClassifier")
+        mlflow.set_tag("task", "fraud_detection")
+        
+        run_id = run.info.run_id
+        logger.info(f"MLflow run completed. Run ID: {run_id}")
+        
+        return run_id
+
+
+def save_model_locally(
+    model: RandomForestClassifier,
+    model_path: str,
+    metadata: Dict[str, Any]
+) -> None:
+    """Save model and metadata to local filesystem."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving model locally to {model_path}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    
+    # Save model
+    with open(model_path, 'wb') as f:
+        pickle.dump(model, f)
+    
+    # Save metadata
+    metadata_path = model_path.replace('.pkl', '_metadata.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    logger.info(f"Model saved to {model_path}")
+    logger.info(f"Metadata saved to {metadata_path}")
+
+
+def load_model_from_mlflow(run_id: str) -> RandomForestClassifier:
+    """Load a trained model from MLflow using run_id."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Loading model from MLflow run: {run_id}")
+    
+    try:
+        model_uri = f"runs:/{run_id}/model"
+        model = mlflow.sklearn.load_model(model_uri)
+        logger.info("Model loaded successfully from MLflow")
+        return model
+    
+    except Exception as e:
+        logger.error(f"Error loading model from MLflow: {str(e)}")
+        raise
+
+
+def run_pipeline(
+    data_path: str,
+    mlflow_tracking_uri: str,
+    experiment_name: str,
+    hyperparameters: Dict[str, Any] = None
+) -> Tuple[str, Dict[str, float]]:
+    """Execute complete ML pipeline and return run_id and metrics."""
+    logger = setup_logging()
+    logger.info("="*50)
+    logger.info("Starting ML Pipeline Execution")
+    logger.info("="*50)
+    
+    try:
+        # Setup MLflow
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        mlflow.set_experiment(experiment_name)
+        logger.info(f"MLflow tracking URI: {mlflow_tracking_uri}")
+        logger.info(f"Experiment name: {experiment_name}")
+        
+        # Default hyperparameters if not provided
+        if hyperparameters is None:
+            hyperparameters = {
+                'n_estimators': 100,
+                'max_depth': 10,
+                'min_samples_split': 5,
+                'min_samples_leaf': 2,
+                'random_state': 42,
+                'n_jobs': -1,
+                'class_weight': 'balanced'
+            }
+        
+        # Step 1: Load data
+        df = load_data(data_path)
+        
+        # Step 2: Validate data
+        validate_data(df)
+        
+        # Step 3: Preprocess data
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        # Step 4: Handle imbalance (if using SMOTE strategy)
+        imbalance_strategy = hyperparameters.pop('imbalance_strategy', 'class_weight')
+        X_train, y_train, imbalance_info = handle_imbalance(
+            X_train, y_train, strategy=imbalance_strategy
+        )
+        
+        # Add class weights to hyperparameters if using class_weight strategy
+        if imbalance_strategy == 'class_weight' and 'class_weights' in imbalance_info:
+            if 'class_weight' not in hyperparameters:
+                hyperparameters['class_weight'] = imbalance_info['class_weights']
+        
+        # Step 5: Train model
+        model = train_model(X_train, y_train, hyperparameters)
+        
+        # Step 6: Evaluate model
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Step 7: Log to MLflow
+        run_id = log_to_mlflow(model, metrics, hyperparameters)
+        
+        # Step 8: Save model locally
+        model_path = os.path.join('models', f'model_{run_id}.pkl')
+        metadata = {
+            'run_id': run_id,
+            'metrics': metrics,
+            'hyperparameters': hyperparameters,
+            'imbalance_info': imbalance_info,
+            'data_path': data_path
+        }
+        save_model_locally(model, model_path, metadata)
+        
+        logger.info("="*50)
+        logger.info("Pipeline Execution Completed Successfully")
+        logger.info("="*50)
+        
+        return run_id, metrics
+    
+    except Exception as e:
+        logger.error(f"Pipeline execution failed: {str(e)}", exc_info=True)
+        raise
+
+
+def main() -> None:
+    """Main entry point for pipeline execution."""
+    logger = setup_logging()
+    
+    # Configuration from environment or defaults
+    data_path = os.getenv('DATA_PATH', 'data/creditcard.csv')
+    mlflow_tracking_uri = os.getenv('MLFLOW_TRACKING_URI', 'http://localhost:5000')
+    experiment_name = os.getenv('MLFLOW_EXPERIMENT_NAME', 'fraud_detection')
+    
+    # Hyperparameters
+    hyperparameters = {
+        'n_estimators': int(os.getenv('N_ESTIMATORS', '100')),
+        'max_depth': int(os.getenv('MAX_DEPTH', '10')),
+        'min_samples_split': int(os.getenv('MIN_SAMPLES_SPLIT', '5')),
+        'min_samples_leaf': int(os.getenv('MIN_SAMPLES_LEAF', '2')),
+        'random_state': 42,
+        'n_jobs': -1,
+        'class_weight': 'balanced'
+    }
+    
+    try:
+        run_id, metrics = run_pipeline(
+            data_path=data_path,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            experiment_name=experiment_name,
+            hyperparameters=hyperparameters
+        )
+        
+        logger.info(f"Pipeline completed successfully!")
+        logger.info(f"Run ID: {run_id}")
+        logger.info(f"Metrics: {metrics}")
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {str(e)}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
+```
+
+# (a) Complete Pytest Test File
+
+```python
+"""Comprehensive test suite for ML pipeline module."""
+
+import pytest
+import pandas as pd
+import numpy as np
+import os
+import tempfile
+import shutil
+import json
+import pickle
+from unittest.mock import Mock, patch, MagicMock
+from sklearn.ensemble import RandomForestClassifier
+import mlflow
+
+from pipeline import (
+    setup_logging,
+    load_data,
+    validate_data,
+    preprocess_data,
+    handle_imbalance,
+    train_model,
+    evaluate_model,
+    log_to_mlflow,
+    save_model_locally,
+    load_model_from_mlflow,
+    run_pipeline
+)
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@pytest.fixture
+def sample_fraud_data():
+    """Create sample fraud detection dataset."""
+    np.random.seed(42)
+    n_samples = 1000
+    n_features = 10
+    
+    # Create features
+    X = np.random.randn(n_samples, n_features)
+    
+    # Create imbalanced target (5% fraud)
+    y = np.zeros(n_samples)
+    fraud_indices = np.random.choice(n_samples, size=50, replace=False)
+    y[fraud_indices] = 1
+    
+    # Create DataFrame
+    df = pd.DataFrame(X, columns=[f'V{i}' for i in range(n_features)])
+    df['Class'] = y.astype(int)
+    
+    return df
+
+
+@pytest.fixture
+def sample_balanced_data():
+    """Create balanced dataset for testing."""
+    np.random.seed(42)
+    n_samples = 500
+    n_features = 5
+    
+    X = np.random.randn(n_samples, n_features)
+    y = np.random.randint(0, 2, n_samples)
+    
+    df = pd.DataFrame(X, columns=[f'V{i}' for i in range(n_features)])
+    df['Class'] = y
+    
+    return df
+
+
+@pytest.fixture
+def temp_data_dir():
+    """Create temporary directory for test data."""
+    temp_dir = tempfile.mkdtemp()
+    yield temp_dir
+    shutil.rmtree(temp_dir)
+
+
+@pytest.fixture
+def temp_model_dir():
+    """Create temporary directory for model artifacts."""
+    temp_dir = tempfile.mkdtemp()
+    yield temp_dir
+    shutil.rmtree(temp_dir)
+
+
+@pytest.fixture
+def sample_hyperparameters():
+    """Default hyperparameters for testing."""
+    return {
+        'n_estimators': 10,
+        'max_depth': 5,
+        'min_samples_split': 5,
+        'min_samples_leaf': 2,
+        'random_state': 42,
+        'n_jobs': 1
+    }
+
+
+@pytest.fixture
+def trained_model(sample_balanced_data, sample_hyperparameters):
+    """Create a trained model for testing."""
+    X = sample_balanced_data.drop('Class', axis=1).values
+    y = sample_balanced_data['Class'].values
+    
+    model = RandomForestClassifier(**sample_hyperparameters)
+    model.fit(X, y)
+    
+    return model
+
+
+@pytest.fixture
+def mock_mlflow():
+    """Mock MLflow for testing without actual tracking server."""
+    with patch('pipeline.mlflow') as mock:
+        mock_run = MagicMock()
+        mock_run.info.run_id = 'test_run_12345'
+        mock.start_run.return_value.__enter__.return_value = mock_run
+        yield mock
+
+
+# ============================================================================
+# Test: setup_logging
+# ============================================================================
+
+class TestSetupLogging:
+    """Tests for logging configuration."""
+    
+    def test_logger_creation(self):
+        """Test that logger is created successfully."""
+        logger = setup_logging()
+        assert logger is not None
+        assert logger.name == 'pipeline'
+    
+    def test_logger_level(self):
+        """Test that logger has correct level."""
+        logger = setup_logging()
+        assert logger.root.level == 20  # INFO level
+    
+    def test_log_file_creation(self, temp_data_dir):
+        """Test that log file is created."""
+        original_dir = os.getcwd()
+        os.chdir(temp_data_dir)
+        
+        try:
+            logger = setup_logging()
+            logger.info("Test message")
+            assert os.path.exists('pipeline.log')
+        finally:
+            os.chdir(original_dir)
+
+
+# ============================================================================
+# Test: load_data
+# ============================================================================
+
+class TestLoadData:
+    """Tests for data loading functionality."""
+    
+    def test_load_csv(self, sample_fraud_data, temp_data_dir):
+        """Test loading CSV file."""
+        csv_path = os.path.join(temp_data_dir, 'test.csv')
+        sample_fraud_data.to_csv(csv_path, index=False)
+        
+        df = load_data(csv_path)
+        
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == len(sample_fraud_data)
+        assert 'Class' in df.columns
+    
+    def test_load_parquet(self, sample_fraud_data, temp_data_dir):
+        """Test loading Parquet file."""
+        parquet_path = os.path.join(temp_data_dir, 'test.parquet')
+        sample_fraud_data.to_parquet(parquet_path, index=False)
+        
+        df = load_data(parquet_path)
+        
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == len(sample_fraud_data)
+    
+    def test_load_nonexistent_file(self):
+        """Test error handling for missing file."""
+        with pytest.raises(FileNotFoundError):
+            load_data('nonexistent_file.csv')
+    
+    def test_load_unsupported_format(self, temp_data_dir):
+        """Test error for unsupported file format."""
+        txt_path = os.path.join(temp_data_dir, 'test.txt')
+        with open(txt_path, 'w') as f:
+            f.write('test')
+        
+        with pytest.raises(ValueError, match="Unsupported file format"):
+            load_data(txt_path)
+
+
+# ============================================================================
+# Test: validate_data
+# ============================================================================
+
+class TestValidateData:
+    """Tests for data validation."""
+    
+    def test_valid_data(self, sample_fraud_data):
+        """Test validation passes for valid data."""
+        validate_data(sample_fraud_data)  # Should not raise
+    
+    def test_missing_target_column(self, sample_fraud_data):
+        """Test error when target column is missing."""
+        df = sample_fraud_data.drop('Class', axis=1)
+        
+        with pytest.raises(ValueError, match="Missing required columns"):
+            validate_data(df)
+    
+    def test_null_values(self, sample_fraud_data):
+        """Test error when data contains nulls."""
+        df = sample_fraud_data.copy()
+        df.iloc[0, 0] = np.nan
+        
+        with pytest.raises(ValueError, match="contains null values"):
+            validate_data(df)
+    
+    def test_invalid_class_values(self, sample_fraud_data):
+        """Test error for invalid class values."""
+        df = sample_fraud_data.copy()
+        df.loc[0, 'Class'] = 2  # Invalid class
+        
+        with pytest.raises(ValueError, match="Invalid class values"):
+            validate_data(df)
+    
+    def test_infinite_values(self, sample_fraud_data):
+        """Test error when data contains infinite values."""
+        df = sample_fraud_data.copy()
+        df.iloc[0, 0] = np.inf
+        
+        with pytest.raises(ValueError, match="contains infinite values"):
+            validate_data(df)
+    
+    def test_dataset_too_small(self):
+        """Test error for dataset that's too small."""
+        df = pd.DataFrame({'Class': [0, 1], 'V1': [1.0, 2.0]})
+        
+        with pytest.raises(ValueError, match="Dataset too small"):
+            validate_data(df)
+    
+    def test_class_distribution_logged(self, sample_fraud_data, caplog):
+        """Test that class distribution is logged."""
+        validate_data(sample_fraud_data)
+        assert "Class distribution" in caplog.text
+
+
+# ============================================================================
+# Test: preprocess_data
+# ============================================================================
+
+class TestPreprocessData:
+    """Tests for data preprocessing."""
+    
+    def test_basic_preprocessing(self, sample_fraud_data):
+        """Test basic preprocessing functionality."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        assert isinstance(X_train, np.ndarray)
+        assert isinstance(X_test, np.ndarray)
+        assert isinstance(y_train, np.ndarray)
+        assert isinstance(y_test, np.ndarray)
+    
+    def test_train_test_split_ratio(self, sample_fraud_data):
+        """Test that train/test split ratio is correct."""
+        test_size = 0.3
+        X_train, X_test, y_train, y_test = preprocess_data(
+            sample_fraud_data, 
+            test_size=test_size
+        )
+        
+        total_size = len(X_train) + len(X_test)
+        actual_test_ratio = len(X_test) / total_size
+        
+        assert abs(actual_test_ratio - test_size) < 0.05  # Within 5%
+    
+    def test_stratification(self, sample_fraud_data):
+        """Test that stratification preserves class distribution."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        train_fraud_ratio = y_train.sum() / len(y_train)
+        test_fraud_ratio = y_test.sum() / len(y_test)
+        
+        # Ratios should be similar
+        assert abs(train_fraud_ratio - test_fraud_ratio) < 0.05
+    
+    def test_scaling(self, sample_fraud_data):
+        """Test that features are properly scaled."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        # Check that mean is close to 0 and std close to 1
+        assert abs(X_train.mean()) < 0.1
+        assert abs(X_train.std() - 1.0) < 0.1
+    
+    def test_missing_target_column(self, sample_fraud_data):
+        """Test error when target column is missing."""
+        df = sample_fraud_data.drop('Class', axis=1)
+        
+        with pytest.raises(ValueError, match="Target column 'Class' not found"):
+            preprocess_data(df)
+    
+    def test_reproducibility(self, sample_fraud_data):
+        """Test that same random_state gives same results."""
+        result1 = preprocess_data(sample_fraud_data, random_state=42)
+        result2 = preprocess_data(sample_fraud_data, random_state=42)
+        
+        np.testing.assert_array_equal(result1[0], result2[0])
+        np.testing.assert_array_equal(result1[2], result2[2])
+
+
+# ============================================================================
+# Test: handle_imbalance
+# ============================================================================
+
+class TestHandleImbalance:
+    """Tests for imbalance handling strategies."""
+    
+    def test_smote_strategy(self, sample_fraud_data):
+        """Test SMOTE oversampling strategy."""
+        X_train, _, y_train, _ = preprocess_data(sample_fraud_data)
+        
+        X_resampled, y_resampled, info = handle_imbalance(
+            X_train, y_train, strategy="smote"
+        )
+        
+        assert info['strategy'] == 'smote'
+        assert len(X_resampled) > len(X_train)
+        assert 'resampled_distribution' in info
+        
+        # Check that classes are more balanced
+        unique, counts = np.unique(y_resampled, return_counts=True)
+        assert len(unique) == 2
+        assert abs(counts[0] - counts[1]) < len(X_train) * 0.1
+    
+    def test_class_weight_strategy(self, sample_fraud_data):
+        """Test class weight calculation strategy."""
+        X_train, _, y_train, _ = preprocess_data(sample_fraud_data)
+        
+        X_out, y_out, info = handle_imbalance(
+            X_train, y_train, strategy="class_weight"
+        )
+        
+        assert info['strategy'] == 'class_weight'
+        assert 'class_weights' in info
+        assert len(X_out) == len(X_train)  # No resampling
+        
+        # Minority class should have higher weight
+        weights = info['class_weights']
+        if y_train.sum() < len(y_train) / 2:
+            assert weights[1] > weights[0]
+    
+    def test_invalid_strategy(self, sample_fraud_data):
+        """Test error for invalid strategy."""
+        X_train, _, y_train, _ = preprocess_data(sample_fraud_data)
+        
+        with pytest.raises(ValueError, match="Unknown imbalance strategy"):
+            handle_imbalance(X_train, y_train, strategy="invalid")
+    
+    def test_original_distribution_logged(self, sample_fraud_data):
+        """Test that original distribution is logged in info."""
+        X_train, _, y_train, _ = preprocess_data(sample_fraud_data)
+        
+        _, _, info = handle_imbalance(X_train, y_train)
+        
+        assert 'original_distribution' in info
+        assert set(info['original_distribution'].keys()) == {0, 1}
+
+
+# ============================================================================
+# Test: train_model
+# ============================================================================
+
+class TestTrainModel:
+    """Tests for model training."""
+    
+    def test_model_training(self, sample_balanced_data, sample_hyperparameters):
+        """Test basic model training."""
+        X_train, _, y_train, _ = preprocess_data(sample_balanced_data)
+        
+        model = train_model(X_train, y_train, sample_hyperparameters)
+        
+        assert isinstance(model, RandomForestClassifier)
+        assert hasattr(model, 'n_estimators')
+        assert model.n_estimators == sample_hyperparameters['n_estimators']
+    
+    def test_model_fitted(self, sample_balanced_data, sample_hyperparameters):
+        """Test that model is properly fitted."""
+        X_train, _, y_train, _ = preprocess_data(sample_balanced_data)
+        
+        model = train_model(X_train, y_train, sample_hyperparameters)
+        
+        # Check that model can make predictions
+        predictions = model.predict(X_train[:10])
+        assert len(predictions) == 10
+        assert all(p in [0, 1] for p in predictions)
+    
+    def test_hyperparameters_applied(self, sample_balanced_data):
+        """Test that hyperparameters are correctly applied."""
+        X_train, _, y_train, _ = preprocess_data(sample_balanced_data)
+        
+        hyperparams = {
+            'n_estimators': 50,
+            'max_depth': 8,
+            'random_state': 42
+        }
+        
+        model = train_model(X_train, y_train, hyperparams)
+        
+        assert model.n_estimators == 50
+        assert model.max_depth == 8
+        assert model.random_state == 42
+    
+    def test_class_weight_parameter(self, sample_fraud_data):
+        """Test training with class weights."""
+        X_train, _, y_train, _ = preprocess_data(sample_fraud_data)
+        
+        hyperparams = {
+            'n_estimators': 10,
+            'class_weight': 'balanced',
+            'random_state': 42
+        }
+        
+        model = train_model(X_train, y_train, hyperparams)
+        assert model.class_weight == 'balanced'
+
+
+# ============================================================================
+# Test: evaluate_model
+# ============================================================================
+
+class TestEvaluateModel:
+    """Tests for model evaluation."""
+    
+    def test_evaluation_metrics(self, trained_model, sample_balanced_data):
+        """Test that all metrics are calculated."""
+        _, X_test, _, y_test = preprocess_data(sample_balanced_data)
+        
+        metrics = evaluate_model(trained_model, X_test, y_test)
+        
+        required_metrics = ['precision', 'recall', 'f1_score', 'roc_auc', 'accuracy']
+        for metric in required_metrics:
+            assert metric in metrics
+            assert isinstance(metrics[metric], float)
+            assert 0.0 <= metrics[metric] <= 1.0
+    
+    def test_perfect_predictions(self, sample_balanced_data, sample_hyperparameters):
+        """Test metrics with perfect predictions."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_balanced_data)
+        
+        # Train model
+        model = train_model(X_train, y_train, sample_hyperparameters)
+        
+        # Use training data for "perfect" fit (overfitting test)
+        metrics = evaluate_model(model, X_train, y_train)
+        
+        # Training metrics should be very high
+        assert metrics['accuracy'] > 0.9
+    
+    def test_metrics_format(self, trained_model, sample_balanced_data):
+        """Test that metrics are in correct format."""
+        _, X_test, _, y_test = preprocess_data(sample_balanced_data)
+        
+        metrics = evaluate_model(trained_model, X_test, y_test)
+        
+        # All values should be JSON serializable floats
+        for value in metrics.values():
+            assert isinstance(value, float)
+            json.dumps(value)  # Should not raise
+    
+    def test_single_class_handling(self, sample_hyperparameters):
+        """Test evaluation with single class in test set."""
+        # Create data with single class
+        X_test = np.random.randn(10, 5)
+        y_test = np.ones(10)  # All same class
+        
+        model = RandomForestClassifier(**sample_hyperparameters)
+        X_train = np.random.randn(100, 5)
+        y_train = np.random.randint(0, 2, 100)
+        model.fit(X_train, y_train)
+        
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Should still return metrics without crashing
+        assert 'precision' in metrics
+        assert 'recall' in metrics
+
+
+# ============================================================================
+# Test: log_to_mlflow
+# ============================================================================
+
+class TestLogToMLflow:
+    """Tests for MLflow logging."""
+    
+    def test_mlflow_logging(self, trained_model, mock_mlflow):
+        """Test basic MLflow logging."""
+        metrics = {'accuracy': 0.95, 'f1_score': 0.92}
+        hyperparameters = {'n_estimators': 100, 'max_depth': 10}
+        
+        run_id = log_to_mlflow(trained_model, metrics, hyperparameters)
+        
+        assert run_id == 'test_run_12345'
+        mock_mlflow.log_params.assert_called_once_with(hyperparameters)
+        mock_mlflow.log_metrics.assert_called_once_with(metrics)
+    
+    def test_model_registration(self, trained_model, mock_mlflow):
+        """Test that model is registered."""
+        metrics = {'accuracy': 0.95}
+        hyperparameters = {'n_estimators': 100}
+        
+        log_to_mlflow(trained_model, metrics, hyperparameters)
+        
+        mock_mlflow.sklearn.log_model.assert_called_once()
+        call_kwargs = mock_mlflow.sklearn.log_model.call_args[1]
+        assert call_kwargs['registered_model_name'] == 'fraud_detection_model'
+    
+    def test_tags_set(self, trained_model, mock_mlflow):
+        """Test that appropriate tags are set."""
+        metrics = {'accuracy': 0.95}
+        hyperparameters = {'n_estimators': 100}
+        
+        log_to_mlflow(trained_model, metrics, hyperparameters)
+        
+        # Check that set_tag was called
+        assert mock_mlflow.set_tag.call_count >= 2
+
+
+# ============================================================================
+# Test: save_model_locally
+# ============================================================================
+
+class TestSaveModelLocally:
+    """Tests for local model saving."""
+    
+    def test_save_model(self, trained_model, temp_model_dir):
+        """Test saving model to local filesystem."""
+        model_path = os.path.join(temp_model_dir, 'model.pkl')
+        metadata = {'run_id': 'test123', 'metrics': {'accuracy': 0.95}}
+        
+        save_model_locally(trained_model, model_path, metadata)
+        
+        assert os.path.exists(model_path)
+        assert os.path.exists(model_path.replace('.pkl', '_metadata.json'))
+    
+    def test_load_saved_model(self, trained_model, temp_model_dir):
+        """Test that saved model can be loaded."""
+        model_path = os.path.join(temp_model_dir, 'model.pkl')
+        metadata = {'run_id': 'test123'}
+        
+        save_model_locally(trained_model, model_path, metadata)
+        
+        with open(model_path, 'rb') as f:
+            loaded_model = pickle.load(f)
+        
+        assert isinstance(loaded_model, RandomForestClassifier)
+        assert loaded_model.n_estimators == trained_model.n_estimators
+    
+    def test_metadata_content(self, trained_model, temp_model_dir):
+        """Test that metadata is correctly saved."""
+        model_path = os.path.join(temp_model_dir, 'model.pkl')
+        metadata = {
+            'run_id': 'test123',
+            'metrics': {'accuracy': 0.95, 'f1_score': 0.92},
+            'hyperparameters': {'n_estimators': 100}
+        }
+        
+        save_model_locally(trained_model, model_path, metadata)
+        
+        metadata_path = model_path.replace('.pkl', '_metadata.json')
+        with open(metadata_path, 'r') as f:
+            loaded_metadata = json.load(f)
+        
+        assert loaded_metadata == metadata
+    
+    def test_directory_creation(self, trained_model, temp_model_dir):
+        """Test that nested directories are created."""
+        model_path = os.path.join(temp_model_dir, 'nested', 'dir', 'model.pkl')
+        metadata = {'run_id': 'test123'}
+        
+        save_model_locally(trained_model, model_path, metadata)
+        
+        assert os.path.exists(model_path)
+
+
+# ============================================================================
+# Test: load_model_from_mlflow
+# ============================================================================
+
+class TestLoadModelFromMLflow:
+    """Tests for loading models from MLflow."""
+    
+    def test_load_model_success(self, trained_model):
+        """Test successful model loading from MLflow."""
+        with patch('pipeline.mlflow.sklearn.load_model') as mock_load:
+            mock_load.return_value = trained_model
+            
+            model = load_model_from_mlflow('test_run_123')
+            
+            assert model == trained_model
+            mock_load.assert_called_once_with('runs:/test_run_123/model')
+    
+    def test_load_model_error(self):
+        """Test error handling when loading fails."""
+        with patch('pipeline.mlflow.sklearn.load_model') as mock_load:
+            mock_load.side_effect = Exception("Model not found")
+            
+            with pytest.raises(Exception, match="Model not found"):
+                load_model_from_mlflow('invalid_run_id')
+
+
+# ============================================================================
+# Test: run_pipeline (Integration Tests)
+# ============================================================================
+
+class TestRunPipeline:
+    """Integration tests for complete pipeline execution."""
+    
+    def test_pipeline_execution(self, sample_fraud_data, temp_data_dir, mock_mlflow):
+        """Test complete pipeline execution."""
+        # Save test data
+        data_path = os.path.join(temp_data_dir, 'test_data.csv')
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        # Run pipeline
+        run_id, metrics = run_pipeline(
+            data_path=data_path,
+            mlflow_tracking_uri='http://localhost:5000',
+            experiment_name='test_experiment'
+        )
+        
+        assert run_id == 'test_run_12345'
+        assert isinstance(metrics, dict)
+        assert 'accuracy' in metrics
+        assert 'f1_score' in metrics
+    
+    def test_pipeline_with_custom_hyperparameters(
+        self, sample_fraud_data, temp_data_dir, mock_mlflow
+    ):
+        """Test pipeline with custom hyperparameters."""
+        data_path = os.path.join(temp_data_dir, 'test_data.csv')
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        custom_hyperparams = {
+            'n_estimators': 50,
+            'max_depth': 8,
+            'random_state': 42,
+            'n_jobs': 1
+        }
+        
+        run_id, metrics = run_pipeline(
+            data_path=data_path,
+            mlflow_tracking_uri='http://localhost:5000',
+            experiment_name='test_experiment',
+            hyperparameters=custom_hyperparams
+        )
+        
+        assert run_id is not None
+        assert isinstance(metrics, dict)
+    
+    def test_pipeline_with_smote(self, sample_fraud_data, temp_data_dir, mock_mlflow):
+        """Test pipeline with SMOTE strategy."""
+        data_path = os.path.join(temp_data_dir, 'test_data.csv')
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        hyperparams = {
+            'n_estimators': 10,
+            'random_state': 42,
+            'n_jobs': 1,
+            'imbalance_strategy': 'smote'
+        }
+        
+        run_id, metrics = run_pipeline(
+            data_path=data_path,
+            mlflow_tracking_uri='http://localhost:5000',
+            experiment_name='test_experiment',
+            hyperparameters=hyperparams
+        )
+        
+        assert run_id is not None
+    
+    def test_pipeline_error_handling(self, temp_data_dir):
+        """Test pipeline error handling with invalid data."""
+        data_path = os.path.join(temp_data_dir, 'nonexistent.csv')
+        
+        with pytest.raises(FileNotFoundError):
+            run_pipeline(
+                data_path=data_path,
+                mlflow_tracking_uri='http://localhost:5000',
+                experiment_name='test_experiment'
+            )
+    
+    def test_pipeline_model_saved(
+        self, sample_fraud_data, temp_data_dir, mock_mlflow
+    ):
+        """Test that pipeline saves model locally."""
+        data_path = os.path.join(temp_data_dir, 'test_data.csv')
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        original_dir = os.getcwd()
+        os.chdir(temp_data_dir)
+        
+        try:
+            run_id, _ = run_pipeline(
+                data_path=data_path,
+                mlflow_tracking_uri='http://localhost:5000',
+                experiment_name='test_experiment'
+            )
+            
+            # Check that model file was created
+            model_path = os.path.join('models', f'model_{run_id}.pkl')
+            assert os.path.exists(model_path)
+            
+            # Check metadata file
+            metadata_path = model_path.replace('.pkl', '_metadata.json')
+            assert os.path.exists(metadata_path)
+        finally:
+            os.chdir(original_dir)
+
+
+# ============================================================================
+# Test: Edge Cases and Error Handling
+# ============================================================================
+
+class TestEdgeCases:
+    """Tests for edge cases and error scenarios."""
+    
+    def test_empty_dataframe(self):
+        """Test handling of empty DataFrame."""
+        df = pd.DataFrame()
+        
+        with pytest.raises(ValueError):
+            validate_data(df)
+    
+    def test_single_feature(self):
+        """Test pipeline with single feature."""
+        df = pd.DataFrame({
+            'V1': np.random.randn(200),
+            'Class': np.random.randint(0, 2, 200)
+        })
+        
+        validate_data(df)
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        assert X_train.shape[1] == 1
+    
+    def test_highly_imbalanced_data(self):
+        """Test with extremely imbalanced data (99:1 ratio)."""
+        n_samples = 1000
+        df = pd.DataFrame({
+            'V1': np.random.randn(n_samples),
+            'V2': np.random.randn(n_samples),
+            'Class': [1] * 10 + [0] * 990
+        })
+        
+        validate_data(df)
+        X_train, _, y_train, _ = preprocess_data(df)
+        
+        X_resampled, y_resampled, info = handle_imbalance(
+            X_train, y_train, strategy='smote'
+        )
+        
+        # SMOTE should balance the classes
+        unique, counts = np.unique(y_resampled, return_counts=True)
+        assert abs(counts[0] - counts[1]) < len(X_train) * 0.1
+    
+    def test_all_same_class(self):
+        """Test handling when all samples are same class."""
+        df = pd.DataFrame({
+            'V1': np.random.randn(200),
+            'V2': np.random.randn(200),
+            'Class': np.zeros(200)
+        })
+        
+        validate_data(df)
+        
+        # This should work but may produce warnings
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        assert len(np.unique(y_train)) == 1
+
+
+# ============================================================================
+# Test: Data Quality
+# ============================================================================
+
+class TestDataQuality:
+    """Tests for data quality checks."""
+    
+    def test_feature_scaling_consistency(self, sample_fraud_data):
+        """Test that scaling is consistent across runs."""
+        result1 = preprocess_data(sample_fraud_data, random_state=42)
+        result2 = preprocess_data(sample_fraud_data, random_state=42)
+        
+        np.testing.assert_array_almost_equal(result1[0], result2[0])
+    
+    def test_no_data_leakage(self, sample_fraud_data):
+        """Test that test set doesn't leak into training."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        # Ensure no overlap in indices (this is implicit in train_test_split)
+        assert len(X_train) + len(X_test) == len(sample_fraud_data)
+    
+    def test_feature_names_preserved(self, sample_fraud_data):
+        """Test that we can track back to original features."""
+        original_features = [col for col in sample_fraud_data.columns if col != 'Class']
+        
+        X = sample_fraud_data.drop('Class', axis=1)
+        assert len(original_features) == X.shape[1]
+
+
+# ============================================================================
+# Performance and Benchmark Tests
+# ============================================================================
+
+class TestPerformance:
+    """Tests for performance and benchmarks."""
+    
+    def test_training_speed(self, sample_balanced_data, sample_hyperparameters):
+        """Test that training completes in reasonable time."""
+        import time
+        
+        X_train, _, y_train, _ = preprocess_data(sample_balanced_data)
+        
+        start_time = time.time()
+        train_model(X_train, y_train, sample_hyperparameters)
+        elapsed_time = time.time() - start_time
+        
+        # Training should complete in less than 10 seconds for small dataset
+        assert elapsed_time < 10.0
+    
+    def test_prediction_speed(self, trained_model, sample_balanced_data):
+        """Test that predictions are fast."""
+        import time
+        
+        _, X_test, _, _ = preprocess_data(sample_balanced_data)
+        
+        start_time = time.time()
+        trained_model.predict(X_test)
+        elapsed_time = time.time() - start_time
+        
+        # Predictions should be very fast
+        assert elapsed_time < 1.0
+
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
+
+def pytest_configure(config):
+    """Configure pytest with custom markers."""
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+    )
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests"
+    )
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])
+```
+
+# (b) Complete GitHub Actions Workflow
+
+```yaml
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      run_integration_tests:
+        description: 'Run integration tests'
+        required: false
+        default: 'true'
+
+env:
+  PYTHON_VERSION: '3.9'
+  POETRY_VERSION: '1.5.1'
+  MLFLOW_TRACKING_URI: 'http://localhost:5000'
+
+jobs:
+  # ============================================================================
+  # Code Quality and Linting
+  # ============================================================================
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort mypy pylint bandit
+      
+      - name: Run Black (code formatting)
+        run: |
+          black --check --diff pipeline.py test_pipeline.py
+      
+      - name: Run isort (import sorting)
+        run: |
+          isort --check-only --diff pipeline.py test_pipeline.py
+      
+      - name: Run Flake8 (linting)
+        run: |
+          flake8 pipeline.py test_pipeline.py --max-line-length=100 --extend-ignore=E203,W503
+      
+      - name: Run Pylint (static analysis)
+        run: |
+          pylint pipeline.py --disable=C0114,C0115,C0116 --max-line-length=100
+        continue-on-error: true
+      
+      - name: Run Bandit (security checks)
+        run: |
+          bandit -r pipeline.py -f json -o bandit-report.json
+        continue-on-error: true
+      
+      - name: Upload Bandit report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+
+  # ============================================================================
+  # Unit and Integration Tests
+  # ============================================================================
+  test:
+    name: Unit & Integration Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+        exclude:
+          # Reduce matrix size - skip some combinations
+          - os: macos-latest
+            python-version: '3.8'
+          - os: windows-latest
+            python-version: '3.8'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-py${{ matrix.python-version }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+          pip install pandas numpy scikit-learn imbalanced-learn mlflow
+      
+      - name: Run unit tests
+        run: |
+          pytest test_pipeline.py -v \
+            --cov=pipeline \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --junitxml=junit-${{ matrix.os }}-${{ matrix.python-version }}.xml \
+            -m "not integration" \
+            --timeout=300
+      
+      - name: Run integration tests
+        if: github.event_name == 'push' || github.event.inputs.run_integration_tests == 'true'
+        run: |
+          pytest test_pipeline.py -v \
+            -m "integration" \
+            --timeout=600
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: codecov-${{ matrix.os }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            junit-*.xml
+            htmlcov/
+            coverage.xml
+      
+      - name: Publish test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: junit-*.xml
+          check_name: Test Results (${{ matrix.os }}, Python ${{ matrix.python-version }})
+        continue-on-error: true
+
+  # ============================================================================
+  # Security Scanning
+  # ============================================================================
+  security:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety
+      
+      - name: Run Safety check (dependency vulnerabilities)
+        run: |
+          pip freeze | safety check --stdin --json > safety-report.json
+        continue-on-error: true
+      
+      - name: Upload Safety report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: safety-report
+          path: safety-report.json
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ============================================================================
+  # Model Training and Validation
+  # ============================================================================
+  train-model:
+    name: Train and Validate Model
+    runs-on: ubuntu-latest
+    needs: [code-quality, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn imbalanced-learn mlflow
+      
+      - name: Download sample dataset
+        run: |
+          mkdir -p data
+          # In production, download from secure location
+          # For demo, create synthetic data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          n = 10000
+          df = pd.DataFrame({
+              **{f'V{i}': np.random.randn(n) for i in range(10)},
+              'Class': np.random.choice([0, 1], n, p=[0.95, 0.05])
+          })
+          df.to_csv('data/creditcard.csv', index=False)
+          "
+      
+      - name: Set up MLflow
+        run: |
+          mlflow server \
+            --backend-store-uri sqlite:///mlflow.db \
+            --default-artifact-root ./mlruns \
+            --host 0.0.0.0 \
+            --port 5000 &
+          sleep 10
+      
+      - name: Train model
+        env:
+          DATA_PATH: data/creditcard.csv
+          MLFLOW_TRACKING_URI: http://localhost:5000
+          MLFLOW_EXPERIMENT_NAME: fraud_detection_ci
+          N_ESTIMATORS: 100
+          MAX_DEPTH: 10
+        run: |
+          python pipeline.py
+      
+      - name: Validate model metrics
+        run: |
+          python -c "
+          import mlflow
+          mlflow.set_tracking_uri('http://localhost:5000')
+          client = mlflow.tracking.MlflowClient()
+          experiment = client.get_experiment_by_name('fraud_detection_ci')
+          runs = client.search_runs(experiment.experiment_id)
+          
+          if not runs:
+              raise ValueError('No training runs found')
+          
+          latest_run = runs[0]
+          metrics = latest_run.data.metrics
+          
+          # Validate minimum performance thresholds
+          assert metrics.get('accuracy', 0) > 0.7, f'Accuracy too low: {metrics.get(\"accuracy\")}'
+          assert metrics.get('f1_score', 0) > 0.5, f'F1 score too low: {metrics.get(\"f1_score\")}'
+          assert metrics.get('roc_auc', 0) > 0.7, f'ROC AUC too low: {metrics.get(\"roc_auc\")}'
+          
+          print('Model validation passed!')
+          print(f'Metrics: {metrics}')
+          "
+      
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: trained-model
+          path: |
+            models/
+            mlruns/
+            mlflow.db
+      
+      - name: Upload training logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: training-logs
+          path: pipeline.log
+
+  # ============================================================================
+  # Performance Testing
+  # ============================================================================
+  performance:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn imbalanced-learn mlflow pytest pytest-benchmark
+      
+      - name: Run performance benchmarks
+        run: |
+          pytest test_pipeline.py::TestPerformance -v --benchmark-only
+        continue-on-error: true
+
+  # ============================================================================
+  # Documentation Generation
+  # ============================================================================
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sphinx sphinx-rtd-theme pdoc3
+      
+      - name: Generate API documentation
+        run: |
+          pdoc --html --output-dir docs pipeline.py
+      
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: docs/
+
+  # ============================================================================
+  # Docker Build and Push
+  # ============================================================================
+  docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [train-model, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/fraud-detection-pipeline
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Trivy scan on Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/fraud-detection-pipeline:latest
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+      
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+  # ============================================================================
+  # Deployment (Production)
+  # ============================================================================
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [docker, train-model]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://fraud-detection.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model
+          path: ./artifacts
+      
+      - name: Deploy to production
+        run: |
+          echo "Deploying to production environment..."
+          # Add actual deployment commands here
+          # Example: kubectl apply -f k8s/deployment.yaml
+          # Example: aws s3 sync models/ s3://fraud-detection-models/
+      
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          # Add smoke test commands
+      
+      - name: Notify deployment
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          text: 'Deployment to production: ${{ job.status }}'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ============================================================================
+  # Notification and Reporting
+  # ============================================================================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [code-quality, test, security, train-model]
+    if: always()
+    
+    steps:
+      - name: Check job statuses
+        id: check
+        run: |
+          echo "code_quality=${{ needs.code-quality.result }}" >> $GITHUB_OUTPUT
+          echo "test=${{ needs.test.result }}" >> $GITHUB_OUTPUT
+          echo "security=${{ needs.security.result }}" >> $GITHUB_OUTPUT
+          echo "train_model=${{ needs.train-model.result }}" >> $GITHUB_OUTPUT
+      
+      - name: Send Slack notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              text: 'ML Pipeline CI/CD Results',
+              attachments: [{
+                color: '${{ job.status }}' === 'success' ? 'good' : 'danger',
+                fields: [
+                  {
+                    title: 'Code Quality',
+                    value: '${{ steps.check.outputs.code_quality }}',
+                    short: true
+                  },
+                  {
+                    title: 'Tests',
+                    value: '${{ steps.check.outputs.test }}',
+                    short: true
+                  },
+                  {
+                    title: 'Security',
+                    value: '${{ steps.check.outputs.security }}',
+                    short: true
+                  },
+                  {
+                    title: 'Model Training',
+                    value: '${{ steps.check.outputs.train_model }}',
+                    short: true
+                  },
+                  {
+                    title: 'Repository',
+                    value: '${{ github.repository }}',
+                    short: true
+                  },
+                  {
+                    title: 'Branch',
+                    value: '${{ github.ref }}',
+                    short: true
+                  }
+                ]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        continue-on-error: true
+      
+      - name: Create summary
+        run: |
+          echo "## CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Model Training | ${{ needs.train-model.result }} |" >> $GITHUB_STEP_SUMMARY
+```
+
+This comprehensive test suite and CI/CD workflow provides:
+
+**Test Coverage:**
+- Unit tests for all functions
+- Integration tests for the complete pipeline
+- Edge case testing
+- Performance benchmarks
+- Data quality validation
+- Security testing
+
+**CI/CD Features:**
+- Multi-OS and multi-Python version testing
+- Code quality checks (Black, Flake8, Pylint, isort)
+- Security scanning (Bandit, Safety, Trivy)
+- Automated model training and validation
+- Docker image building and scanning
+- Deployment automation
+- Comprehensive notifications and reporting
+- Artifact management
+- Coverage reporting

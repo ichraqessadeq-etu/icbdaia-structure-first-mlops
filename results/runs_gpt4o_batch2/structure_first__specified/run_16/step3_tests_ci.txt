@@ -1,0 +1,109 @@
+Certainly! Below is the complete pytest test file implementing the planned tests, followed by the GitHub Actions workflow YAML file.
+
+### (a) Complete Pytest Test File
+
+```python
+# tests/test_data_loader.py
+import pytest
+import pandas as pd
+from src.data_loader import load_data
+
+def test_load_data():
+    """Test loading of data from file."""
+    X, y = load_data('tests/test_data.csv')
+    assert isinstance(X, pd.DataFrame)
+    assert isinstance(y, pd.Series)
+    assert 'target' not in X.columns
+
+def test_load_data_file_not_found():
+    """Test data loading with a non-existent file."""
+    with pytest.raises(FileNotFoundError):
+        load_data('non_existent_file.csv')
+
+def test_load_data_format():
+    """Test the format of loaded data."""
+    X, y = load_data('tests/test_data.csv')
+    assert X.shape[0] == y.shape[0]
+
+# tests/test_model_trainer.py
+import numpy as np
+from sklearn.datasets import make_classification
+from src.model_trainer import train_model, detect_concept_drift
+
+def test_train_model():
+    """Test training of the model."""
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    model = train_model(pd.DataFrame(X), pd.Series(y))
+    assert hasattr(model, "predict")
+
+def test_detect_concept_drift():
+    """Test detection of concept drift."""
+    X_train, y_train = make_classification(n_samples=100, n_features=20, random_state=42)
+    X_test, y_test = make_classification(n_samples=100, n_features=20, random_state=43)
+    drift_detected = detect_concept_drift(pd.DataFrame(X_train), pd.Series(y_train), pd.DataFrame(X_test), pd.Series(y_test))
+    assert isinstance(drift_detected, bool)
+
+# tests/test_model_evaluator.py
+from sklearn.ensemble import RandomForestClassifier
+from src.model_evaluator import evaluate_model
+
+def test_evaluate_model():
+    """Test evaluation of the model."""
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    model = RandomForestClassifier(n_estimators=10, random_state=42).fit(X, y)
+    metrics = evaluate_model(model, X, y)
+    assert set(metrics.keys()) == {'accuracy', 'precision', 'recall', 'f1_score'}
+
+def test_evaluate_model_metrics():
+    """Test evaluation metrics are in expected range."""
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    model = RandomForestClassifier(n_estimators=10, random_state=42).fit(X, y)
+    metrics = evaluate_model(model, X, y)
+    for metric in metrics.values():
+        assert 0 <= metric <= 1
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: |
+          pytest --junitxml=results.xml
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v2
+        with:
+          name: test-results
+          path: results.xml
+```
+
+Make sure that the `tests/test_data.csv` file is present in your repository for the tests to run successfully. The GitHub Actions workflow is set up to run on any push or pull request to the `main` branch, installing dependencies, running the tests, and uploading the results.

@@ -1,0 +1,1630 @@
+```python
+# src/pipeline.py
+
+"""
+Fraud detection model training and deployment pipeline.
+"""
+
+from typing import Tuple, Dict, Any, Optional
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import pickle
+import json
+import logging
+from datetime import datetime
+from sklearn.model_selection import train_test_split, cross_validate, GridSearchCV, StratifiedKFold
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_auc_score, confusion_matrix, classification_report,
+    precision_recall_curve, roc_curve
+)
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.combine import SMOTETomek
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+
+warnings.filterwarnings('ignore')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# DATA LOADING & VALIDATION
+# ============================================================================
+
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load fraud detection dataset from specified path."""
+    logger.info(f"Loading data from {data_path}")
+    
+    try:
+        data_path = Path(data_path)
+        
+        if not data_path.exists():
+            raise FileNotFoundError(f"Data file not found: {data_path}")
+        
+        # Support multiple file formats
+        if data_path.suffix == '.csv':
+            df = pd.read_csv(data_path)
+        elif data_path.suffix == '.parquet':
+            df = pd.read_parquet(data_path)
+        elif data_path.suffix in ['.xlsx', '.xls']:
+            df = pd.read_excel(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {data_path.suffix}")
+        
+        logger.info(f"Successfully loaded {len(df)} records with {len(df.columns)} columns")
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error loading data: {str(e)}")
+        raise
+
+
+def validate_data_schema(df: pd.DataFrame, schema: Dict[str, Any]) -> bool:
+    """Validate that dataframe matches expected schema."""
+    logger.info("Validating data schema")
+    
+    try:
+        # Check required columns
+        required_columns = schema.get('required_columns', [])
+        missing_columns = set(required_columns) - set(df.columns)
+        
+        if missing_columns:
+            logger.error(f"Missing required columns: {missing_columns}")
+            return False
+        
+        # Check column types
+        column_types = schema.get('column_types', {})
+        for col, expected_type in column_types.items():
+            if col in df.columns:
+                actual_type = df[col].dtype
+                if expected_type == 'numeric':
+                    if not pd.api.types.is_numeric_dtype(actual_type):
+                        logger.error(f"Column {col} should be numeric, got {actual_type}")
+                        return False
+                elif expected_type == 'categorical':
+                    if not pd.api.types.is_object_dtype(actual_type) and not pd.api.types.is_categorical_dtype(actual_type):
+                        logger.error(f"Column {col} should be categorical, got {actual_type}")
+                        return False
+        
+        # Check value ranges
+        value_ranges = schema.get('value_ranges', {})
+        for col, (min_val, max_val) in value_ranges.items():
+            if col in df.columns:
+                if df[col].min() < min_val or df[col].max() > max_val:
+                    logger.error(f"Column {col} values outside expected range [{min_val}, {max_val}]")
+                    return False
+        
+        logger.info("Schema validation passed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating schema: {str(e)}")
+        return False
+
+
+def check_data_quality(df: pd.DataFrame) -> Dict[str, Any]:
+    """Check data quality metrics including missing values, duplicates, and distributions."""
+    logger.info("Checking data quality")
+    
+    quality_report = {
+        'total_records': len(df),
+        'total_features': len(df.columns),
+        'missing_values': {},
+        'duplicate_records': 0,
+        'duplicate_percentage': 0.0,
+        'column_statistics': {},
+        'data_quality_score': 0.0,
+        'issues': []
+    }
+    
+    try:
+        # Check missing values
+        missing_counts = df.isnull().sum()
+        missing_percentages = (missing_counts / len(df) * 100).round(2)
+        quality_report['missing_values'] = {
+            col: {'count': int(count), 'percentage': float(missing_percentages[col])}
+            for col, count in missing_counts.items() if count > 0
+        }
+        
+        if quality_report['missing_values']:
+            quality_report['issues'].append(f"Found missing values in {len(quality_report['missing_values'])} columns")
+        
+        # Check duplicates
+        duplicates = df.duplicated().sum()
+        quality_report['duplicate_records'] = int(duplicates)
+        quality_report['duplicate_percentage'] = float(round(duplicates / len(df) * 100, 2))
+        
+        if duplicates > 0:
+            quality_report['issues'].append(f"Found {duplicates} duplicate records ({quality_report['duplicate_percentage']}%)")
+        
+        # Column statistics
+        for col in df.columns:
+            stats = {
+                'dtype': str(df[col].dtype),
+                'unique_values': int(df[col].nunique()),
+                'null_count': int(df[col].isnull().sum())
+            }
+            
+            if pd.api.types.is_numeric_dtype(df[col]):
+                stats.update({
+                    'mean': float(df[col].mean()) if not df[col].isnull().all() else None,
+                    'std': float(df[col].std()) if not df[col].isnull().all() else None,
+                    'min': float(df[col].min()) if not df[col].isnull().all() else None,
+                    'max': float(df[col].max()) if not df[col].isnull().all() else None,
+                    'median': float(df[col].median()) if not df[col].isnull().all() else None
+                })
+            
+            quality_report['column_statistics'][col] = stats
+        
+        # Calculate overall data quality score
+        missing_score = 1.0 - (sum([v['count'] for v in quality_report['missing_values'].values()]) / (len(df) * len(df.columns)))
+        duplicate_score = 1.0 - (duplicates / len(df))
+        quality_report['data_quality_score'] = float(round((missing_score + duplicate_score) / 2, 3))
+        
+        logger.info(f"Data quality check complete. Quality score: {quality_report['data_quality_score']}")
+        return quality_report
+        
+    except Exception as e:
+        logger.error(f"Error checking data quality: {str(e)}")
+        raise
+
+
+# ============================================================================
+# DATA PREPROCESSING
+# ============================================================================
+
+def preprocess_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply feature engineering and preprocessing transformations."""
+    logger.info("Preprocessing features")
+    
+    try:
+        df_processed = df.copy()
+        
+        # Handle missing values
+        numeric_columns = df_processed.select_dtypes(include=[np.number]).columns
+        categorical_columns = df_processed.select_dtypes(include=['object', 'category']).columns
+        
+        # Fill numeric missing values with median
+        for col in numeric_columns:
+            if df_processed[col].isnull().any():
+                df_processed[col].fillna(df_processed[col].median(), inplace=True)
+        
+        # Fill categorical missing values with mode
+        for col in categorical_columns:
+            if df_processed[col].isnull().any():
+                df_processed[col].fillna(df_processed[col].mode()[0] if not df_processed[col].mode().empty else 'Unknown', inplace=True)
+        
+        # Encode categorical variables
+        label_encoders = {}
+        for col in categorical_columns:
+            if col != 'is_fraud' and col != 'isFraud':  # Don't encode target variable
+                le = LabelEncoder()
+                df_processed[col] = le.fit_transform(df_processed[col].astype(str))
+                label_encoders[col] = le
+        
+        # Remove duplicates
+        initial_rows = len(df_processed)
+        df_processed = df_processed.drop_duplicates()
+        removed_rows = initial_rows - len(df_processed)
+        
+        if removed_rows > 0:
+            logger.info(f"Removed {removed_rows} duplicate rows")
+        
+        # Feature engineering - create interaction features if we have enough columns
+        if len(numeric_columns) >= 2:
+            # Example: create ratio features for amount-related columns
+            amount_cols = [col for col in numeric_columns if 'amount' in col.lower() or 'value' in col.lower()]
+            if len(amount_cols) >= 2:
+                df_processed[f'{amount_cols[0]}_to_{amount_cols[1]}_ratio'] = (
+                    df_processed[amount_cols[0]] / (df_processed[amount_cols[1]] + 1e-6)
+                )
+        
+        logger.info(f"Preprocessing complete. Final shape: {df_processed.shape}")
+        return df_processed
+        
+    except Exception as e:
+        logger.error(f"Error preprocessing features: {str(e)}")
+        raise
+
+
+def split_data(
+    df: pd.DataFrame, 
+    test_size: float = 0.2, 
+    validation_size: float = 0.1,
+    random_state: int = 42
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split data into train, validation, and test sets with stratification."""
+    logger.info(f"Splitting data: train={1-test_size-validation_size:.1%}, val={validation_size:.1%}, test={test_size:.1%}")
+    
+    try:
+        # Identify target column
+        target_col = None
+        for col in ['is_fraud', 'isFraud', 'fraud', 'target', 'label']:
+            if col in df.columns:
+                target_col = col
+                break
+        
+        if target_col is None:
+            raise ValueError("Could not identify target column. Expected one of: is_fraud, isFraud, fraud, target, label")
+        
+        # First split: separate test set
+        train_val, test = train_test_split(
+            df,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=df[target_col] if df[target_col].nunique() > 1 else None
+        )
+        
+        # Second split: separate validation from training
+        val_size_adjusted = validation_size / (1 - test_size)
+        train, val = train_test_split(
+            train_val,
+            test_size=val_size_adjusted,
+            random_state=random_state,
+            stratify=train_val[target_col] if train_val[target_col].nunique() > 1 else None
+        )
+        
+        logger.info(f"Split complete: train={len(train)}, val={len(val)}, test={len(test)}")
+        
+        # Log class distribution
+        for name, dataset in [('Train', train), ('Validation', val), ('Test', test)]:
+            class_dist = dataset[target_col].value_counts(normalize=True)
+            logger.info(f"{name} class distribution: {class_dist.to_dict()}")
+        
+        return train, val, test
+        
+    except Exception as e:
+        logger.error(f"Error splitting data: {str(e)}")
+        raise
+
+
+def handle_class_imbalance(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series,
+    method: str = "smote"
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """Handle class imbalance using specified resampling method."""
+    logger.info(f"Handling class imbalance using method: {method}")
+    
+    try:
+        initial_distribution = y_train.value_counts()
+        logger.info(f"Initial class distribution: {initial_distribution.to_dict()}")
+        
+        if method.lower() == "smote":
+            # Determine k_neighbors based on minority class size
+            minority_class_size = min(y_train.value_counts())
+            k_neighbors = min(5, minority_class_size - 1) if minority_class_size > 1 else 1
+            
+            if k_neighbors < 1:
+                logger.warning("Not enough samples for SMOTE, returning original data")
+                return X_train, y_train
+            
+            sampler = SMOTE(random_state=42, k_neighbors=k_neighbors)
+            
+        elif method.lower() == "undersample":
+            sampler = RandomUnderSampler(random_state=42)
+            
+        elif method.lower() == "smote_tomek":
+            minority_class_size = min(y_train.value_counts())
+            k_neighbors = min(5, minority_class_size - 1) if minority_class_size > 1 else 1
+            
+            if k_neighbors < 1:
+                logger.warning("Not enough samples for SMOTETomek, returning original data")
+                return X_train, y_train
+            
+            sampler = SMOTETomek(random_state=42, smote=SMOTE(k_neighbors=k_neighbors))
+            
+        else:
+            raise ValueError(f"Invalid resampling method: {method}. Choose from: smote, undersample, smote_tomek")
+        
+        X_resampled, y_resampled = sampler.fit_resample(X_train, y_train)
+        
+        final_distribution = pd.Series(y_resampled).value_counts()
+        logger.info(f"Final class distribution: {final_distribution.to_dict()}")
+        logger.info(f"Resampled from {len(y_train)} to {len(y_resampled)} samples")
+        
+        return pd.DataFrame(X_resampled, columns=X_train.columns), pd.Series(y_resampled, name=y_train.name)
+        
+    except Exception as e:
+        logger.error(f"Error handling class imbalance: {str(e)}")
+        raise
+
+
+# ============================================================================
+# MODEL TRAINING
+# ============================================================================
+
+def train_model(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model_params: Optional[Dict[str, Any]] = None
+) -> Any:
+    """Train fraud detection model with specified parameters."""
+    logger.info("Training fraud detection model")
+    
+    try:
+        # Default parameters optimized for fraud detection
+        default_params = {
+            'n_estimators': 100,
+            'max_depth': 10,
+            'min_samples_split': 5,
+            'min_samples_leaf': 2,
+            'max_features': 'sqrt',
+            'random_state': 42,
+            'n_jobs': -1,
+            'class_weight': 'balanced'
+        }
+        
+        # Update with custom parameters if provided
+        if model_params:
+            default_params.update(model_params)
+        
+        logger.info(f"Training with parameters: {default_params}")
+        
+        # Initialize and train model
+        model = RandomForestClassifier(**default_params)
+        model.fit(X_train, y_train)
+        
+        # Log feature importances
+        feature_importance = pd.DataFrame({
+            'feature': X_train.columns,
+            'importance': model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        logger.info(f"Top 5 important features:\n{feature_importance.head()}")
+        
+        logger.info("Model training complete")
+        return model
+        
+    except Exception as e:
+        logger.error(f"Error training model: {str(e)}")
+        raise
+
+
+def cross_validate_model(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model: Any,
+    cv_folds: int = 5
+) -> Dict[str, float]:
+    """Perform cross-validation and return performance metrics."""
+    logger.info(f"Performing {cv_folds}-fold cross-validation")
+    
+    try:
+        # Define scoring metrics
+        scoring = {
+            'accuracy': 'accuracy',
+            'precision': 'precision',
+            'recall': 'recall',
+            'f1': 'f1',
+            'roc_auc': 'roc_auc'
+        }
+        
+        # Perform cross-validation
+        cv_results = cross_validate(
+            model,
+            X_train,
+            y_train,
+            cv=StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42),
+            scoring=scoring,
+            n_jobs=-1,
+            return_train_score=True
+        )
+        
+        # Calculate mean and std for each metric
+        metrics = {}
+        for metric in scoring.keys():
+            test_scores = cv_results[f'test_{metric}']
+            train_scores = cv_results[f'train_{metric}']
+            
+            metrics[f'{metric}_mean'] = float(np.mean(test_scores))
+            metrics[f'{metric}_std'] = float(np.std(test_scores))
+            metrics[f'{metric}_train_mean'] = float(np.mean(train_scores))
+            
+            logger.info(f"{metric}: {metrics[f'{metric}_mean']:.4f} (+/- {metrics[f'{metric}_std']:.4f})")
+        
+        # Calculate overfitting score
+        metrics['overfitting_score'] = float(
+            np.mean([metrics[f'{m}_train_mean'] - metrics[f'{m}_mean'] for m in scoring.keys()])
+        )
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error in cross-validation: {str(e)}")
+        raise
+
+
+def tune_hyperparameters(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    param_grid: Dict[str, list],
+    cv_folds: int = 5
+) -> Tuple[Any, Dict[str, Any]]:
+    """Perform hyperparameter tuning and return best model and parameters."""
+    logger.info("Starting hyperparameter tuning")
+    
+    try:
+        # Default parameter grid if none provided
+        if not param_grid:
+            param_grid = {
+                'n_estimators': [50, 100, 200],
+                'max_depth': [5, 10, 15],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'max_features': ['sqrt', 'log2']
+            }
+        
+        logger.info(f"Parameter grid: {param_grid}")
+        
+        # Initialize base model
+        base_model = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
+        
+        # Perform grid search
+        grid_search = GridSearchCV(
+            base_model,
+            param_grid,
+            cv=StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42),
+            scoring='f1',
+            n_jobs=-1,
+            verbose=1,
+            return_train_score=True
+        )
+        
+        grid_search.fit(X_train, y_train)
+        
+        best_params = grid_search.best_params_
+        best_score = grid_search.best_score_
+        
+        logger.info(f"Best parameters: {best_params}")
+        logger.info(f"Best cross-validation F1 score: {best_score:.4f}")
+        
+        # Return best model and parameters
+        return grid_search.best_estimator_, best_params
+        
+    except Exception as e:
+        logger.error(f"Error tuning hyperparameters: {str(e)}")
+        raise
+
+
+# ============================================================================
+# MODEL EVALUATION
+# ============================================================================
+
+def evaluate_model(
+    model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series
+) -> Dict[str, float]:
+    """Evaluate model on test set and return comprehensive metrics."""
+    logger.info("Evaluating model on test set")
+    
+    try:
+        # Make predictions
+        y_pred = model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        
+        # Calculate metrics
+        metrics = {
+            'accuracy': float(accuracy_score(y_test, y_pred)),
+            'precision': float(precision_score(y_test, y_pred, zero_division=0)),
+            'recall': float(recall_score(y_test, y_pred, zero_division=0)),
+            'f1_score': float(f1_score(y_test, y_pred, zero_division=0)),
+            'roc_auc': float(roc_auc_score(y_test, y_pred_proba)),
+        }
+        
+        # Confusion matrix
+        cm = confusion_matrix(y_test, y_pred)
+        tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+        
+        metrics.update({
+            'true_negatives': int(tn),
+            'false_positives': int(fp),
+            'false_negatives': int(fn),
+            'true_positives': int(tp),
+            'specificity': float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0,
+            'false_positive_rate': float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0,
+            'false_negative_rate': float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0,
+        })
+        
+        # Log metrics
+        logger.info("Model Evaluation Metrics:")
+        for metric, value in metrics.items():
+            if isinstance(value, float):
+                logger.info(f"  {metric}: {value:.4f}")
+            else:
+                logger.info(f"  {metric}: {value}")
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error evaluating model: {str(e)}")
+        raise
+
+
+def calculate_business_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    y_pred_proba: pd.Series,
+    avg_transaction_value: float = 100.0
+) -> Dict[str, float]:
+    """Calculate business-relevant metrics like cost savings and ROI."""
+    logger.info("Calculating business metrics")
+    
+    try:
+        # Confusion matrix components
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+        
+        # Business assumptions
+        cost_per_investigation = 25.0  # Cost to investigate a flagged transaction
+        cost_per_fraud = avg_transaction_value  # Cost of missing a fraud
+        savings_per_caught_fraud = avg_transaction_value * 0.95  # 95% recovery rate
+        
+        # Calculate business metrics
+        total_fraud_prevented = tp * savings_per_caught_fraud
+        investigation_costs = (tp + fp) * cost_per_investigation
+        missed_fraud_costs = fn * cost_per_fraud
+        
+        net_savings = total_fraud_prevented - investigation_costs - missed_fraud_costs
+        
+        # Calculate ROI
+        total_investment = investigation_costs
+        roi = (net_savings / total_investment * 100) if total_investment > 0 else 0.0
+        
+        # Precision at different thresholds
+        precision_at_90_recall = 0.0
+        if len(y_pred_proba) > 0:
+            from sklearn.metrics import precision_recall_curve
+            precisions, recalls, thresholds = precision_recall_curve(y_true, y_pred_proba)
+            idx = np.where(recalls >= 0.9)[0]
+            if len(idx) > 0:
+                precision_at_90_recall = float(precisions[idx[0]])
+        
+        business_metrics = {
+            'total_fraud_prevented_value': float(total_fraud_prevented),
+            'investigation_costs': float(investigation_costs),
+            'missed_fraud_costs': float(missed_fraud_costs),
+            'net_savings': float(net_savings),
+            'roi_percentage': float(roi),
+            'cost_per_true_positive': float(investigation_costs / tp) if tp > 0 else 0.0,
+            'cost_per_false_positive': float(cost_per_investigation),
+            'precision_at_90_recall': float(precision_at_90_recall),
+            'fraud_detection_rate': float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0,
+            'false_alarm_rate': float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0,
+        }
+        
+        logger.info("Business Metrics:")
+        logger.info(f"  Net Savings: ${business_metrics['net_savings']:,.2f}")
+        logger.info(f"  ROI: {business_metrics['roi_percentage']:.2f}%")
+        logger.info(f"  Fraud Detection Rate: {business_metrics['fraud_detection_rate']:.2%}")
+        
+        return business_metrics
+        
+    except Exception as e:
+        logger.error(f"Error calculating business metrics: {str(e)}")
+        raise
+
+
+def generate_evaluation_report(
+    metrics: Dict[str, float],
+    output_path: Path
+) -> None:
+    """Generate comprehensive evaluation report with visualizations."""
+    logger.info(f"Generating evaluation report at {output_path}")
+    
+    try:
+        output_path = Path(output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Save metrics as JSON
+        metrics_path = output_path / 'metrics.json'
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        
+        # Generate visualizations
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # 1. Confusion Matrix (if we have the components)
+        if all(k in metrics for k in ['true_positives', 'false_positives', 'true_negatives', 'false_negatives']):
+            cm = np.array([
+                [metrics['true_negatives'], metrics['false_positives']],
+                [metrics['false_negatives'], metrics['true_positives']]
+            ])
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0, 0],
+                       xticklabels=['Predicted 0', 'Predicted 1'],
+                       yticklabels=['Actual 0', 'Actual 1'])
+            axes[0, 0].set_title('Confusion Matrix')
+        
+        # 2. Performance Metrics Bar Chart
+        performance_metrics = {k: v for k, v in metrics.items() 
+                              if k in ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']}
+        if performance_metrics:
+            axes[0, 1].bar(performance_metrics.keys(), performance_metrics.values())
+            axes[0, 1].set_title('Performance Metrics')
+            axes[0, 1].set_ylim([0, 1])
+            axes[0, 1].tick_params(axis='x', rotation=45)
+        
+        # 3. Business Metrics
+        business_metrics = {k: v for k, v in metrics.items() 
+                           if k in ['roi_percentage', 'fraud_detection_rate', 'false_alarm_rate']}
+        if business_metrics:
+            axes[1, 0].bar(business_metrics.keys(), business_metrics.values())
+            axes[1, 0].set_title('Business Metrics')
+            axes[1, 0].tick_params(axis='x', rotation=45)
+        
+        # 4. Cost Analysis
+        cost_metrics = {k: v for k, v in metrics.items() 
+                       if 'cost' in k.lower() or 'savings' in k.lower()}
+        if cost_metrics:
+            axes[1, 1].bar(range(len(cost_metrics)), list(cost_metrics.values()))
+            axes[1, 1].set_xticks(range(len(cost_metrics)))
+            axes[1, 1].set_xticklabels(cost_metrics.keys(), rotation=45, ha='right')
+            axes[1, 1].set_title('Cost Analysis')
+        
+        plt.tight_layout()
+        plt.savefig(output_path / 'evaluation_report.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Generate text report
+        report_path = output_path / 'evaluation_report.txt'
+        with open(report_path, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("FRAUD DETECTION MODEL EVALUATION REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write("PERFORMANCE METRICS\n")
+            f.write("-" * 80 + "\n")
+            for key, value in metrics.items():
+                if isinstance(value, float):
+                    f.write(f"{key:.<50} {value:.4f}\n")
+                else:
+                    f.write(f"{key:.<50} {value}\n")
+        
+        logger.info(f"Evaluation report saved to {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Error generating evaluation report: {str(e)}")
+        raise
+
+
+# ============================================================================
+# MODEL VALIDATION & TESTING
+# ============================================================================
+
+def check_model_performance_thresholds(
+    metrics: Dict[str, float],
+    thresholds: Dict[str, float]
+) -> Tuple[bool, Dict[str, bool]]:
+    """Check if model meets minimum performance thresholds."""
+    logger.info("Checking model performance against thresholds")
+    
+    try:
+        results = {}
+        all_passed = True
+        
+        for metric, threshold in thresholds.items():
+            if metric in metrics:
+                passed = metrics[metric] >= threshold
+                results[metric] = passed
+                
+                status = "✓ PASS" if passed else "✗ FAIL"
+                logger.info(f"  {metric}: {metrics[metric]:.4f} >= {threshold:.4f} [{status}]")
+                
+                if not passed:
+                    all_passed = False
+            else:
+                logger.warning(f"  {metric}: Not found in metrics")
+                results[metric] = False
+                all_passed = False
+        
+        logger.info(f"Overall threshold check: {'PASSED' if all_passed else 'FAILED'}")
+        return all_passed, results
+        
+    except Exception as e:
+        logger.error(f"Error checking performance thresholds: {str(e)}")
+        raise
+
+
+def test_model_bias(
+    model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    sensitive_features: list
+) -> Dict[str, Any]:
+    """Test model for bias across sensitive feature groups."""
+    logger.info("Testing model for bias")
+    
+    try:
+        bias_report = {
+            'overall_fairness_score': 1.0,
+            'feature_analysis': {},
+            'bias_detected': False
+        }
+        
+        if not sensitive_features:
+            logger.warning("No sensitive features provided for bias testing")
+            return bias_report
+        
+        # Get predictions
+        y_pred = model.predict(X_test)
+        
+        # Analyze each sensitive feature
+        for feature in sensitive_features:
+            if feature not in X_test.columns:
+                logger.warning(f"Sensitive feature '{feature}' not found in test data")
+                continue
+            
+            feature_analysis = {}
+            
+            # Get unique groups in this feature
+            unique_groups = X_test[feature].unique()
+            
+            group_metrics = {}
+            for group in unique_groups:
+                mask = X_test[feature] == group
+                if mask.sum() == 0:
+                    continue
+                
+                group_y_test = y_test[mask]
+                group_y_pred = y_pred[mask]
+                
+                if len(group_y_test) > 0:
+                    group_metrics[str(group)] = {
+                        'accuracy': float(accuracy_score(group_y_test, group_y_pred)),
+                        'precision': float(precision_score(group_y_test, group_y_pred, zero_division=0)),
+                        'recall': float(recall_score(group_y_test, group_y_pred, zero_division=0)),
+                        'f1_score': float(f1_score(group_y_test, group_y_pred, zero_division=0)),
+                        'sample_size': int(mask.sum())
+                    }
+            
+            # Calculate disparity metrics
+            if len(group_metrics) > 1:
+                accuracies = [m['accuracy'] for m in group_metrics.values()]
+                max_disparity = max(accuracies) - min(accuracies)
+                
+                feature_analysis['group_metrics'] = group_metrics
+                feature_analysis['max_accuracy_disparity'] = float(max_disparity)
+                feature_analysis['bias_detected'] = max_disparity > 0.1  # 10% threshold
+                
+                if feature_analysis['bias_detected']:
+                    bias_report['bias_detected'] = True
+                    logger.warning(f"Bias detected in feature '{feature}': {max_disparity:.4f} disparity")
+            
+            bias_report['feature_analysis'][feature] = feature_analysis
+        
+        # Calculate overall fairness score
+        if bias_report['feature_analysis']:
+            disparities = [
+                fa.get('max_accuracy_disparity', 0) 
+                for fa in bias_report['feature_analysis'].values()
+            ]
+            bias_report['overall_fairness_score'] = float(1.0 - np.mean(disparities))
+        
+        logger.info(f"Bias testing complete. Fairness score: {bias_report['overall_fairness_score']:.4f}")
+        return bias_report
+        
+    except Exception as e:
+        logger.error(f"Error testing model bias: {str(e)}")
+        raise
+
+
+def validate_model_stability(
+    model: Any,
+    X_test: pd.DataFrame,
+    n_iterations: int = 100
+) -> Dict[str, float]:
+    """Validate model prediction stability with perturbations."""
+    logger.info(f"Validating model stability with {n_iterations} iterations")
+    
+    try:
+        predictions = []
+        
+        # Generate predictions with small perturbations
+        for i in range(n_iterations):
+            # Add small random noise to numeric features
+            X_perturbed = X_test.copy()
+            numeric_cols = X_perturbed.select_dtypes(include=[np.number]).columns
+            
+            for col in numeric_cols:
+                noise = np.random.normal(0, 0.01 * X_perturbed[col].std(), size=len(X_perturbed))
+                X_perturbed[col] = X_perturbed[col] + noise
+            
+            # Get predictions
+            y_pred_proba = model.predict_proba(X_perturbed)[:, 1]
+            predictions.append(y_pred_proba)
+        
+        # Calculate stability metrics
+        predictions = np.array(predictions)
+        
+        stability_metrics = {
+            'mean_prediction_std': float(np.mean(np.std(predictions, axis=0))),
+            'max_prediction_std': float(np.max(np.std(predictions, axis=0))),
+            'mean_prediction_variance': float(np.mean(np.var(predictions, axis=0))),
+            'stability_score': 0.0,
+            'is_stable': False
+        }
+        
+        # Calculate stability score (1 - normalized variance)
+        max_variance = 0.25  # Maximum variance for a probability
+        normalized_variance = stability_metrics['mean_prediction_variance'] / max_variance
+        stability_metrics['stability_score'] = float(1.0 - min(normalized_variance, 1.0))
+        
+        # Model is considered stable if stability score > 0.95
+        stability_metrics['is_stable'] = stability_metrics['stability_score'] > 0.95
+        
+        logger.info(f"Stability validation complete. Stability score: {stability_metrics['stability_score']:.4f}")
+        return stability_metrics
+        
+    except Exception as e:
+        logger.error(f"Error validating model stability: {str(e)}")
+        raise
+
+
+# ============================================================================
+# MODEL VERSIONING & REGISTRY
+# ============================================================================
+
+def save_model(
+    model: Any,
+    model_path: Path,
+    metadata: Dict[str, Any]
+) -> None:
+    """Save model with metadata to specified path."""
+    logger.info(f"Saving model to {model_path}")
+    
+    try:
+        model_path = Path(model_path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save model
+        with open(model_path, 'wb') as f:
+            pickle.dump(model, f)
+        
+        # Save metadata
+        metadata_path = model_path.parent / f"{model_path.stem}_metadata.json"
+        metadata['saved_at'] = datetime.now().isoformat()
+        metadata['model_path'] = str(model_path)
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        logger.info(f"Model saved successfully to {model_path}")
+        logger.info(f"Metadata saved to {metadata_path}")
+        
+    except Exception as e:
+        logger.error(f"Error saving model: {str(e)}")
+        raise
+
+
+def register_model(
+    model: Any,
+    model_name: str,
+    version: str,
+    metrics: Dict[str, float],
+    registry_uri: Optional[str] = None
+) -> str:
+    """Register model in model registry and return model URI."""
+    logger.info(f"Registering model: {model_name} version {version}")
+    
+    try:
+        # Create registry directory if using local registry
+        if registry_uri is None or registry_uri.startswith('file://'):
+            registry_path = Path(registry_uri.replace('file://', '') if registry_uri else 'models/registry')
+            registry_path.mkdir(parents=True, exist_ok=True)
+            
+            # Create model version directory
+            model_version_path = registry_path / model_name / version
+            model_version_path.mkdir(parents=True, exist_ok=True)
+            
+            # Save model
+            model_file = model_version_path / 'model.pkl'
+            with open(model_file, 'wb') as f:
+                pickle.dump(model, f)
+            
+            # Save model card
+            model_card = {
+                'model_name': model_name,
+                'version': version,
+                'registered_at': datetime.now().isoformat(),
+                'metrics': metrics,
+                'model_type': type(model).__name__,
+                'model_uri': f"file://{model_file.absolute()}"
+            }
+            
+            card_file = model_version_path / 'model_card.json'
+            with open(card_file, 'w') as f:
+                json.dump(model_card, f, indent=2)
+            
+            model_uri = f"file://{model_file.absolute()}"
+            
+        else:
+            # For remote registries (S3, Azure, etc.), this would integrate with MLflow or similar
+            logger.warning(f"Remote registry {registry_uri} not fully implemented, using local fallback")
+            model_uri = f"{registry_uri}/{model_name}/{version}/model.pkl"
+        
+        logger.info(f"Model registered successfully. URI: {model_uri}")
+        return model_uri
+        
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise
+
+
+def load_model(model_path: Path) -> Any:
+    """Load model from specified path."""
+    logger.info(f"Loading model from {model_path}")
+    
+    try:
+        model_path = Path(model_path)
+        
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
+        
+        logger.info(f"Model loaded successfully from {model_path}")
+        return model
+        
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        raise
+
+
+def compare_models(
+    current_model: Any,
+    new_model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series
+) -> Dict[str, Any]:
+    """Compare performance of current production model vs new model."""
+    logger.info("Comparing current model with new model")
+    
+    try:
+        # Evaluate current model
+        current_metrics = evaluate_model(current_model, X_test, y_test)
+        
+        # Evaluate new model
+        new_metrics = evaluate_model(new_model, X_test, y_test)
+        
+        # Calculate improvements
+        comparison = {
+            'current_model_metrics': current_metrics,
+            'new_model_metrics': new_metrics,
+            'improvements': {},
+            'recommendation': 'keep_current'
+        }
+        
+        key_metrics = ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']
+        total_improvement = 0
+        
+        for metric in key_metrics:
+            if metric in current_metrics and metric in new_metrics:
+                improvement = new_metrics[metric] - current_metrics[metric]
+                improvement_pct = (improvement / current_metrics[metric] * 100) if current_metrics[metric] > 0 else 0
+                
+                comparison['improvements'][metric] = {
+                    'absolute': float(improvement),
+                    'percentage': float(improvement_pct)
+                }
+                
+                total_improvement += improvement
+                logger.info(f"{metric}: {improvement:+.4f} ({improvement_pct:+.2f}%)")
+        
+        # Make recommendation
+        avg_improvement = total_improvement / len(key_metrics)
+        if avg_improvement > 0.01:  # At least 1% average improvement
+            comparison['recommendation'] = 'deploy_new'
+            logger.info("Recommendation: DEPLOY NEW MODEL")
+        else:
+            comparison['recommendation'] = 'keep_current'
+            logger.info("Recommendation: KEEP CURRENT MODEL")
+        
+        comparison['average_improvement'] = float(avg_improvement)
+        
+        return comparison
+        
+    except Exception as e:
+        logger.error(f"Error comparing models: {str(e)}")
+        raise
+
+
+# ============================================================================
+# DEPLOYMENT & MONITORING
+# ============================================================================
+
+def create_model_artifact(
+    model: Any,
+    preprocessor: Any,
+    metadata: Dict[str, Any],
+    output_path: Path
+) -> None:
+    """Create deployment-ready model artifact with all dependencies."""
+    logger.info(f"Creating model artifact at {output_path}")
+    
+    try:
+        output_path = Path(output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create artifact structure
+        artifact = {
+            'model': model,
+            'preprocessor': preprocessor,
+            'metadata': metadata,
+            'created_at': datetime.now().isoformat(),
+            'version': metadata.get('version', '1.0.0')
+        }
+        
+        # Save artifact
+        artifact_file = output_path / 'model_artifact.pkl'
+        with open(artifact_file, 'wb') as f:
+            pickle.dump(artifact, f)
+        
+        # Save metadata separately for easy access
+        metadata_file = output_path / 'artifact_metadata.json'
+        with open(metadata_file, 'w') as f:
+            json.dump({
+                'created_at': artifact['created_at'],
+                'version': artifact['version'],
+                'model_type': type(model).__name__,
+                'metadata': metadata
+            }, f, indent=2)
+        
+        # Create deployment instructions
+        instructions_file = output_path / 'DEPLOYMENT_INSTRUCTIONS.md'
+        with open(instructions_file, 'w') as f:
+            f.write(f"# Model Deployment Instructions\n\n")
+            f.write(f"**Version:** {artifact['version']}\n")
+            f.write(f"**Created:** {artifact['created_at']}\n\n")
+            f.write(f"## Artifact Contents\n\n")
+            f.write(f"- `model_artifact.pkl`: Complete model artifact with preprocessor\n")
+            f.write(f"- `artifact_metadata.json`: Metadata and configuration\n\n")
+            f.write(f"## Deployment Steps\n\n")
+            f.write(f"1. Load the artifact using pickle\n")
+            f.write(f"2. Extract model and preprocessor\n")
+            f.write(f"3. Deploy to serving infrastructure\n")
+            f.write(f"4. Configure monitoring and alerts\n")
+        
+        logger.info(f"Model artifact created successfully at {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Error creating model artifact: {str(e)}")
+        raise
+
+
+def validate_deployment_readiness(
+    model_path: Path,
+    test_data_path: Path
+) -> Tuple[bool, Dict[str, Any]]:
+    """Validate model is ready for deployment."""
+    logger.info("Validating deployment readiness")
+    
+    try:
+        validation_results = {
+            'model_loadable': False,
+            'test_data_loadable': False,
+            'predictions_successful': False,
+            'performance_acceptable': False,
+            'ready_for_deployment': False,
+            'issues': []
+        }
+        
+        # Check if model can be loaded
+        try:
+            model = load_model(model_path)
+            validation_results['model_loadable'] = True
+            logger.info("✓ Model successfully loaded")
+        except Exception as e:
+            validation_results['issues'].append(f"Failed to load model: {str(e)}")
+            logger.error(f"✗ Failed to load model: {str(e)}")
+            return False, validation_results
+        
+        # Check if test data can be loaded
+        try:
+            test_data = load_data(test_data_path)
+            validation_results['test_data_loadable'] = True
+            logger.info("✓ Test data successfully loaded")
+        except Exception as e:
+            validation_results['issues'].append(f"Failed to load test data: {str(e)}")
+            logger.error(f"✗ Failed to load test data: {str(e)}")
+            return False, validation_results
+        
+        # Check if predictions can be made
+        try:
+            # Assume last column is target
+            X_test = test_data.iloc[:, :-1]
+            y_test = test_data.iloc[:, -1]
+            
+            predictions = model.predict(X_test)
+            validation_results['predictions_successful'] = True
+            logger.info("✓ Predictions successful")
+            
+            # Evaluate performance
+            metrics = evaluate_model(model, X_test, y_test)
+            
+            # Check minimum thresholds
+            min_thresholds = {
+                'accuracy': 0.7,
+                'precision': 0.6,
+                'recall': 0.6,
+                'f1_score': 0.6
+            }
+            
+            performance_acceptable = all(
+                metrics.get(metric, 0) >= threshold 
+                for metric, threshold in min_thresholds.items()
+            )
+            
+            validation_results['performance_acceptable'] = performance_acceptable
+            validation_results['metrics'] = metrics
+            
+            if performance_acceptable:
+                logger.info("✓ Performance meets minimum thresholds")
+            else:
+                validation_results['issues'].append("Performance below minimum thresholds")
+                logger.warning("✗ Performance below minimum thresholds")
+            
+        except Exception as e:
+            validation_results['issues'].append(f"Failed to make predictions: {str(e)}")
+            logger.error(f"✗ Failed to make predictions: {str(e)}")
+            return False, validation_results
+        
+        # Overall readiness
+        validation_results['ready_for_deployment'] = (
+            validation_results['model_loadable'] and
+            validation_results['test_data_loadable'] and
+            validation_results['predictions_successful'] and
+            validation_results['performance_acceptable']
+        )
+        
+        if validation_results['ready_for_deployment']:
+            logger.info("✓ Model is READY for deployment")
+        else:
+            logger.warning("✗ Model is NOT READY for deployment")
+        
+        return validation_results['ready_for_deployment'], validation_results
+        
+    except Exception as e:
+        logger.error(f"Error validating deployment readiness: {str(e)}")
+        raise
+
+
+def generate_model_card(
+    model: Any,
+    metrics: Dict[str, float],
+    metadata: Dict[str, Any],
+    output_path: Path
+) -> None:
+    """Generate model card documentation for governance."""
+    logger.info(f"Generating model card at {output_path}")
+    
+    try:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create model card content
+        model_card = f"""# Model Card: Fraud Detection Model
+
+## Model Details
+
+**Model Type:** {type(model).__name__}
+**Version:** {metadata.get('version', 'N/A')}
+**Date:** {datetime.now().strftime('%Y-%m-%d')}
+**Author:** {metadata.get('author', 'MLOps Team')}
+
+## Intended Use
+
+**Primary Use Case:** Real-time fraud detection in financial transactions
+
+**Intended Users:** Fraud analysts, automated fraud prevention systems
+
+**Out-of-Scope Uses:** 
+- Should not be used as the sole decision-maker for fraud determination
+- Not intended for use in jurisdictions where automated decision-making is prohibited
+
+## Training Data
+
+**Dataset:** {metadata.get('dataset_name', 'Fraud Detection Dataset')}
+**Training Samples:** {metadata.get('training_samples', 'N/A')}
+**Features:** {metadata.get('num_features', 'N/A')}
+**Class Distribution:** {metadata.get('class_distribution', 'N/A')}
+
+## Performance Metrics
+
+### Overall Performance
+"""
+        
+        # Add metrics
+        key_metrics = ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']
+        for metric in key_metrics:
+            if metric in metrics:
+                model_card += f"- **{metric.replace('_', ' ').title()}:** {metrics[metric]:.4f}\n"
+        
+        model_card += f"""
+### Confusion Matrix
+- **True Positives:** {metrics.get('true_positives', 'N/A')}
+- **False Positives:** {metrics.get('false_positives', 'N/A')}
+- **True Negatives:** {metrics.get('true_negatives', 'N/A')}
+- **False Negatives:** {metrics.get('false_negatives', 'N/A')}
+
+## Ethical Considerations
+
+**Bias Testing:** {metadata.get('bias_testing_performed', 'Yes')}
+**Fairness Metrics:** {metadata.get('fairness_score', 'N/A')}
+
+**Potential Biases:**
+- Model may perform differently across different transaction types
+- Performance may vary by geographic region
+- Temporal drift may affect model performance over time
+
+## Limitations
+
+- Model performance may degrade with novel fraud patterns
+- Requires regular retraining to maintain accuracy
+- May produce false positives that require manual review
+
+## Monitoring and Maintenance
+
+**Recommended Monitoring:**
+- Track prediction distribution drift
+- Monitor false positive/negative rates
+- Review model performance weekly
+
+**Retraining Schedule:** {metadata.get('retraining_schedule', 'Weekly or when performance degrades')}
+
+## Model Architecture
+
+**Algorithm:** {type(model).__name__}
+**Hyperparameters:** {metadata.get('hyperparameters', 'See metadata file')}
+
+## References
+
+- Model training pipeline: {metadata.get('pipeline_version', 'N/A')}
+- Training date: {metadata.get('training_date', 'N/A')}
+
+---
+*This model card was automatically generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+        
+        # Save model card
+        with open(output_path, 'w') as f:
+            f.write(model_card)
+        
+        logger.info(f"Model card generated successfully at {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Error generating model card: {str(e)}")
+        raise
+
+
+# ============================================================================
+# PIPELINE ORCHESTRATION
+# ============================================================================
+
+def run_training_pipeline(
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute complete training pipeline and return results."""
+    logger.info("=" * 80)
+    logger.info("STARTING TRAINING PIPELINE")
+    logger.info("=" * 80)
+    
+    try:
+        results = {
+            'status': 'failed',
+            'pipeline_start_time': datetime.now().isoformat(),
+            'steps_completed': [],
+            'errors': []
+        }
+        
+        # Step 1: Load data
+        logger.info("\n[Step 1/8] Loading data...")
+        data = load_data(config['data_path'])
+        results['steps_completed'].append('data_loading')
+        
+        # Step 2: Validate schema
+        logger.info("\n[Step 2/8] Validating data schema...")
+        schema_valid = validate_data_schema(data, config.get('schema', {}))
+        if not schema_valid:
+            raise ValueError("Data schema validation failed")
+        results['steps_completed'].append('schema_validation')
+        
+        # Step 3: Check data quality
+        logger.info("\n[Step 3/8] Checking data quality...")
+        quality_report = check_data_quality(data)
+        results['data_quality_report'] = quality_report
+        results['steps_completed'].append('data_quality_check')
+        
+        # Step 4: Preprocess features
+        logger.info("\n[Step 4/8] Preprocessing features...")
+        data_processed = preprocess_features(data)
+        results['steps_completed'].append('preprocessing')
+        
+        # Step 5: Split data
+        logger.info("\n[Step 5/8] Splitting data...")
+        train, val, test = split_data(
+            data_processed,
+            test_size=config.get('test_size', 0.2),
+            validation_size=config.get('validation_size', 0.1)
+        )
+        
+        # Identify target column
+        target_col = None
+        for col in ['is_fraud', 'isFraud', 'fraud', 'target', 'label']:
+            if col in train.columns:
+                target_col = col
+                break
+        
+        X_train = train.drop(columns=[target_col])
+        y_train = train[target_col]
+        X_val = val.drop(columns=[target_col])
+        y_val = val[target_col]
+        X_test = test.drop(columns=[target_col])
+        y_test = test[target_col]
+        
+        results['steps_completed'].append('data_splitting')
+        
+        # Step 6: Handle class imbalance
+        if config.get('handle_imbalance', True):
+            logger.info("\n[Step 6/8] Handling class imbalance...")
+            X_train, y_train = handle_class_imbalance(
+                X_train, y_train,
+                method=config.get('imbalance_method', 'smote')
+            )
+            results['steps_completed'].append('class_balancing')
+        
+        # Step 7: Train model
+        logger.info("\n[Step 7/8] Training model...")
+        if config.get('tune_hyperparameters', False):
+            model, best_params = tune_hyperparameters(
+                X_train, y_train,
+                param_grid=config.get('param_grid', {}),
+                cv_folds=config.get('cv_folds', 5)
+            )
+            results['best_hyperparameters'] = best_params
+        else:
+            model = train_model(X_train, y_train, config.get('model_params'))
+        
+        results['steps_completed'].append('model_training')
+        
+        # Step 8: Evaluate model
+        logger.info("\n[Step 8/8] Evaluating model...")
+        
+        # Evaluate on validation set
+        val_metrics = evaluate_model(model, X_val, y_val)
+        results['validation_metrics'] = val_metrics
+        
+        # Evaluate on test set
+        test_metrics = evaluate_model(model, X_test, y_test)
+        results['test_metrics'] = test_metrics
+        
+        # Calculate business metrics
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = model.predict(X_test)
+        business_metrics = calculate_business_metrics(
+            y_test, y_pred, y_pred_proba,
+            avg_transaction_value=config.get('avg_transaction_value', 100.0)
+        )
+        results['business_metrics'] = business_metrics
+        
+        results['steps_completed'].append('model_evaluation')
+        
+        # Save model
+        if config.get('save_model', True):
+            model_path = Path(config.get('model_output_path', 'models/trained_model.pkl'))
+            metadata = {
+                'version': config.get('version', '1.0.0'),
+                'training_date': datetime.now().isoformat(),
+                'metrics': test_metrics,
+                'config': config
+            }
+            save_model(model, model_path, metadata)
+            results['model_path'] = str(model_path)
+            results['steps_completed'].append('model_saving')
+        
+        # Generate reports
+        if config.get('generate_reports', True):
+            report_path = Path(config.get('report_output_path', 'reports/evaluation'))
+            all_metrics = {**test_metrics, **business_metrics}
+            generate_evaluation_report(all_metrics, report_path)
+            results['report_path'] = str(report_path)
+            results['steps_completed'].append('report_generation')
+        
+        results['status'] = 'success'
+        results['pipeline_end_time'] = datetime.now().isoformat()
+        results['model'] = model
+        
+        logger.info("\n" + "=" * 80)
+        logger.info("TRAINING PIPELINE COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"\n{'=' * 80}")
+        logger.error(f"TRAINING PIPELINE FAILED: {str(e)}")
+        logger.error(f"{'=' * 80}")
+        results['errors'].append(str(e))
+        results['pipeline_end_time'] = datetime.now().isoformat()
+        raise
+
+
+def run_evaluation_pipeline(
+    model_path: Path,
+    test_data_path: Path,
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute model evaluation pipeline."""
+    logger.info("=" * 80)
+    logger.info("STARTING EVALUATION PIPELINE")
+    logger.info("=" * 80)
+    
+    try:
+        results = {
+            'status': 'failed',
+            'pipeline_start_time': datetime.now().isoformat(),
+            'steps_completed': []
+        }
+        
+        # Load model
+        logger.info("\n[Step 1/6] Loading model...")
+        model = load_model(model_path)
+        results['steps_completed'].append('model_loading')
+        
+        # Load test data
+        logger.info("\n[Step 2/6] Loading test data...")
+        test_data = load_data(test_data_path)
+        test_data = preprocess_features(test_data)
+        results['steps_completed'].append('data_loading')
+        
+        # Identify target column
+        target_col = None
+        for col in ['is_fraud', 'isFraud', 'fraud', 'target', 'label']:
+            if col in test_data.columns:
+                target_col = col
+                break
+        
+        X_test = test_data.drop(columns=[target_col])
+        y_test = test_data[target_col]
+        
+        # Evaluate model
+        logger.info("\n[Step 3/6] Evaluating model performance...")
+        metrics = evaluate_model(model, X_test, y_test)
+        results['metrics'] = metrics
+        results['steps_completed'].append('performance_evaluation')
+        
+        # Business metrics
+        logger.info("\n[Step 4/6] Calculating business metrics...")
+        y_pred = model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        business_metrics = calculate_business_metrics(y_test, y_pred, y_pred_proba)
+        results['business_metrics'] = business_metrics
+        results['steps_completed'].append('business_metrics')
+        
+        # Check thresholds
+        logger.info("\n[Step 5/6] Checking performance thresholds...")
+        thresholds = config.get('performance_thresholds', {
+            'accuracy': 0.7,
+            'precision': 0.6,
+            'recall': 0.6,
+            'f1_score': 0.6
+        })
+        passed, threshold_results = check_model_performance_thresholds(metrics, thresholds)
+        results['threshold_check'] = {
+            'passed': passed,
+            'results': threshold_results
+        }
+        results['steps_completed'].append('threshold_checking')
+        
+        # Generate report
+        logger.info("\n[Step 6/6] Generating evaluation report...")
+        report_path = Path(config.get('report_output_path', 'reports/evaluation'))
+        all_metrics = {**metrics, **business_metrics}
+        generate_evaluation_report(all_metrics, report_path)
+        results['report_path'] = str(report_path)
+        results['steps_completed'].append('report_generation')
+        
+        results['status'] = 'success'
+        results['pipeline_end_time'] = datetime.now().isoformat()
+        
+        logger.info("\n" + "=" * 80)
+        logger.info("EVALUATION PIPELINE COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"\n{'=' * 80}")
+        logger.error(f"EVALUATION PIPELINE FAILED: {str(e)}")
+        logger.error(f"{'=' * 80}")
+        raise
+
+
+def run_deployment_pipeline(
+    model_path: Path,
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute deployment pipeline."""
+    logger.info("=" * 80)
+    logger.info("STARTING DEPLOYMENT PIPELINE")
+    logger.info("=" * 80)
+    
+    try:
+        results = {
+            'status': 'failed',
+            'pipeline_start_time': datetime.now().isoformat(),
+            'steps_completed': []
+        }
+        
+        # Load model
+        logger.info("\n[Step 1/5] Loading model...")
+        model = load_model(model_path)
+        results['steps_completed'].append('model_loading')
+        
+        # Validate deployment readiness
+        logger.info("\n[Step 2/5] Validating deployment readiness...")
+        test_data_path = config.get('test_data_path')
+        if test_data_path:
+            ready, validation_results = validate_deployment_readiness(model_path, test_data_path)
+            results['deployment_validation'] = validation_results
+            
+            if not ready:
+                raise ValueError("Model is not ready for deployment")
+        results['steps_completed'].append('deployment_validation')
+        
+        # Create deployment artifact
+        logger.info("\n[Step 3/5] Creating deployment artifact...")
+        artifact_path = Path(config.get('artifact_output_path', 'artifacts/deployment'))
+        metadata = config.get('metadata', {})
+        create_model_artifact(model, None, metadata, artifact_path)
+        results['artifact_path'] = str(artifact_path)
+        results['steps_completed'].append('artifact_creation')
+        
+        # Generate model card
+        logger.info("\n[Step 4/5] Generating model card...")
+        model_card_path = artifact_path / 'MODEL_CARD.md'
+        metrics = config.get('metrics', {})
+        generate_model_card(model, metrics, metadata, model_card_path)
+        results['model_card_path'] = str(model_card_path)
+        results['steps_completed'].append('model_card_generation')
+        
+        # Register model
+        logger.info("\n[Step 5/5] Registering model...")
+        model_uri = register_model(
+            model,
+            model_name=config.get('model_name', 'fraud_detection_model'),
+            version=config.get('version', '1.0.0'),
+            metrics=metrics,
+            registry_uri=config.get('registry_uri')
+        )
+        results['model_uri'] = model_uri
+        results['steps_completed'].append('model_registration')
+        
+        results['status'] = 'success'
+        results['pipeline_end_time'] = datetime.now().isoformat()
+        
+        logger.info("\n" + "=" * 80)
+        logger.info("DEPLOYMENT PIPELINE COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"\n{'=' * 80}")
+        logger.error(f"DEPLOYMENT PIPELINE FAILED: {str(e)}")
+        logger.error(f"{'=' * 80}")
+        raise
+```

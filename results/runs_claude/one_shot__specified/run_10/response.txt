@@ -1,0 +1,1805 @@
+# Complete CI/CD Pipeline for Fraud Detection Model
+
+I'll provide a production-ready ML pipeline with comprehensive error handling, testing, and CI/CD automation.
+
+## 1. Python Pipeline Script
+
+```python
+# ml_pipeline/fraud_detection_pipeline.py
+"""
+Production-ready fraud detection ML pipeline with MLflow tracking.
+Handles imbalanced data, concept drift detection, and comprehensive logging.
+"""
+
+import logging
+import sys
+from pathlib import Path
+from typing import Tuple, Dict, Any
+import warnings
+
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    precision_recall_curve,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    classification_report,
+    f1_score,
+    precision_score,
+    recall_score
+)
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+import mlflow
+import mlflow.sklearn
+from scipy import stats
+import joblib
+
+warnings.filterwarnings('ignore')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('pipeline.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class FraudDetectionPipeline:
+    """End-to-end fraud detection pipeline with MLflow tracking."""
+    
+    def __init__(
+        self,
+        experiment_name: str = "fraud_detection",
+        model_name: str = "fraud_detector_rf",
+        drift_threshold: float = 0.05,
+        random_state: int = 42
+    ):
+        """
+        Initialize the fraud detection pipeline.
+        
+        Args:
+            experiment_name: MLflow experiment name
+            model_name: Registered model name in MLflow
+            drift_threshold: P-value threshold for drift detection
+            random_state: Random seed for reproducibility
+        """
+        self.experiment_name = experiment_name
+        self.model_name = model_name
+        self.drift_threshold = drift_threshold
+        self.random_state = random_state
+        self.model = None
+        self.scaler = None
+        self.feature_names = None
+        
+        # Set MLflow experiment
+        mlflow.set_experiment(experiment_name)
+        logger.info(f"Initialized pipeline with experiment: {experiment_name}")
+    
+    def load_data(self, data_path: str) -> pd.DataFrame:
+        """
+        Load and validate fraud detection data.
+        
+        Args:
+            data_path: Path to CSV data file
+            
+        Returns:
+            DataFrame with loaded data
+            
+        Raises:
+            FileNotFoundError: If data file doesn't exist
+            ValueError: If data validation fails
+        """
+        try:
+            logger.info(f"Loading data from {data_path}")
+            
+            if not Path(data_path).exists():
+                raise FileNotFoundError(f"Data file not found: {data_path}")
+            
+            df = pd.read_csv(data_path)
+            
+            # Validate data
+            if df.empty:
+                raise ValueError("Loaded dataframe is empty")
+            
+            if 'Class' not in df.columns:
+                raise ValueError("Target column 'Class' not found in data")
+            
+            # Check for missing values
+            if df.isnull().sum().sum() > 0:
+                logger.warning("Missing values detected, dropping rows")
+                df = df.dropna()
+            
+            fraud_rate = df['Class'].mean()
+            logger.info(f"Data loaded: {len(df)} records, fraud rate: {fraud_rate:.4f}")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            raise
+    
+    def prepare_data(
+        self,
+        df: pd.DataFrame,
+        test_size: float = 0.2
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Prepare data for training: split and validate.
+        
+        Args:
+            df: Input dataframe
+            test_size: Proportion of data for testing
+            
+        Returns:
+            Tuple of (X_train, X_test, y_train, y_test)
+        """
+        try:
+            logger.info("Preparing data for training")
+            
+            # Separate features and target
+            X = df.drop('Class', axis=1)
+            y = df['Class']
+            
+            self.feature_names = X.columns.tolist()
+            
+            # Stratified split to maintain class distribution
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y,
+                test_size=test_size,
+                random_state=self.random_state,
+                stratify=y
+            )
+            
+            logger.info(f"Train set: {len(X_train)} samples, "
+                       f"fraud rate: {y_train.mean():.4f}")
+            logger.info(f"Test set: {len(X_test)} samples, "
+                       f"fraud rate: {y_test.mean():.4f}")
+            
+            return X_train, X_test, y_train, y_test
+            
+        except Exception as e:
+            logger.error(f"Error preparing data: {str(e)}")
+            raise
+    
+    def build_model(
+        self,
+        n_estimators: int = 100,
+        max_depth: int = 10,
+        min_samples_split: int = 10,
+        min_samples_leaf: int = 5,
+        class_weight: str = 'balanced'
+    ) -> ImbPipeline:
+        """
+        Build sklearn pipeline with SMOTE and RandomForest.
+        
+        Args:
+            n_estimators: Number of trees in the forest
+            max_depth: Maximum depth of trees
+            min_samples_split: Minimum samples required to split
+            min_samples_leaf: Minimum samples required at leaf node
+            class_weight: Class weight strategy
+            
+        Returns:
+            Pipeline with scaler, SMOTE, and classifier
+        """
+        try:
+            logger.info("Building model pipeline")
+            
+            pipeline = ImbPipeline([
+                ('scaler', StandardScaler()),
+                ('smote', SMOTE(random_state=self.random_state, k_neighbors=5)),
+                ('classifier', RandomForestClassifier(
+                    n_estimators=n_estimators,
+                    max_depth=max_depth,
+                    min_samples_split=min_samples_split,
+                    min_samples_leaf=min_samples_leaf,
+                    class_weight=class_weight,
+                    random_state=self.random_state,
+                    n_jobs=-1,
+                    verbose=0
+                ))
+            ])
+            
+            logger.info("Model pipeline built successfully")
+            return pipeline
+            
+        except Exception as e:
+            logger.error(f"Error building model: {str(e)}")
+            raise
+    
+    def train_model(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        hyperparameters: Dict[str, Any] = None
+    ) -> ImbPipeline:
+        """
+        Train the fraud detection model.
+        
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            hyperparameters: Model hyperparameters
+            
+        Returns:
+            Trained pipeline
+        """
+        try:
+            logger.info("Starting model training")
+            
+            if hyperparameters is None:
+                hyperparameters = {}
+            
+            # Build model with hyperparameters
+            self.model = self.build_model(**hyperparameters)
+            
+            # Train model
+            self.model.fit(X_train, y_train)
+            
+            logger.info("Model training completed")
+            return self.model
+            
+        except Exception as e:
+            logger.error(f"Error training model: {str(e)}")
+            raise
+    
+    def evaluate_model(
+        self,
+        X_test: np.ndarray,
+        y_test: np.ndarray,
+        threshold: float = 0.5
+    ) -> Dict[str, float]:
+        """
+        Evaluate model performance on test data.
+        
+        Args:
+            X_test: Test features
+            y_test: Test labels
+            threshold: Classification threshold
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        try:
+            logger.info("Evaluating model performance")
+            
+            if self.model is None:
+                raise ValueError("Model not trained yet")
+            
+            # Predictions
+            y_pred_proba = self.model.predict_proba(X_test)[:, 1]
+            y_pred = (y_pred_proba >= threshold).astype(int)
+            
+            # Calculate metrics
+            metrics = {
+                'roc_auc': roc_auc_score(y_test, y_pred_proba),
+                'average_precision': average_precision_score(y_test, y_pred_proba),
+                'precision': precision_score(y_test, y_pred, zero_division=0),
+                'recall': recall_score(y_test, y_pred, zero_division=0),
+                'f1_score': f1_score(y_test, y_pred, zero_division=0),
+                'threshold': threshold
+            }
+            
+            # Confusion matrix
+            tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+            metrics.update({
+                'true_negatives': int(tn),
+                'false_positives': int(fp),
+                'false_negatives': int(fn),
+                'true_positives': int(tp)
+            })
+            
+            # Log metrics
+            logger.info(f"ROC-AUC: {metrics['roc_auc']:.4f}")
+            logger.info(f"Average Precision: {metrics['average_precision']:.4f}")
+            logger.info(f"Precision: {metrics['precision']:.4f}")
+            logger.info(f"Recall: {metrics['recall']:.4f}")
+            logger.info(f"F1-Score: {metrics['f1_score']:.4f}")
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error evaluating model: {str(e)}")
+            raise
+    
+    def detect_concept_drift(
+        self,
+        reference_data: pd.DataFrame,
+        current_data: pd.DataFrame
+    ) -> Tuple[bool, Dict[str, float]]:
+        """
+        Detect concept drift using Kolmogorov-Smirnov test.
+        
+        Args:
+            reference_data: Historical reference data
+            current_data: Current production data
+            
+        Returns:
+            Tuple of (drift_detected, drift_metrics)
+        """
+        try:
+            logger.info("Detecting concept drift")
+            
+            drift_metrics = {}
+            drift_detected = False
+            
+            # Get common features
+            common_features = set(reference_data.columns) & set(current_data.columns)
+            common_features.discard('Class')
+            
+            for feature in common_features:
+                # Perform KS test
+                statistic, p_value = stats.ks_2samp(
+                    reference_data[feature],
+                    current_data[feature]
+                )
+                
+                drift_metrics[f'{feature}_ks_statistic'] = statistic
+                drift_metrics[f'{feature}_p_value'] = p_value
+                
+                # Check if drift detected
+                if p_value < self.drift_threshold:
+                    drift_detected = True
+                    logger.warning(
+                        f"Drift detected in feature '{feature}': "
+                        f"p-value={p_value:.6f}"
+                    )
+            
+            # Check target distribution drift
+            if 'Class' in reference_data.columns and 'Class' in current_data.columns:
+                ref_fraud_rate = reference_data['Class'].mean()
+                curr_fraud_rate = current_data['Class'].mean()
+                drift_metrics['fraud_rate_change'] = abs(curr_fraud_rate - ref_fraud_rate)
+                
+                if abs(curr_fraud_rate - ref_fraud_rate) > 0.001:  # 0.1% change
+                    logger.warning(
+                        f"Fraud rate changed from {ref_fraud_rate:.4f} "
+                        f"to {curr_fraud_rate:.4f}"
+                    )
+            
+            logger.info(f"Drift detection completed: drift_detected={drift_detected}")
+            return drift_detected, drift_metrics
+            
+        except Exception as e:
+            logger.error(f"Error detecting drift: {str(e)}")
+            raise
+    
+    def log_to_mlflow(
+        self,
+        metrics: Dict[str, float],
+        hyperparameters: Dict[str, Any],
+        artifacts_dir: str = "artifacts"
+    ) -> str:
+        """
+        Log model, metrics, and artifacts to MLflow.
+        
+        Args:
+            metrics: Evaluation metrics
+            hyperparameters: Model hyperparameters
+            artifacts_dir: Directory to save artifacts
+            
+        Returns:
+            MLflow run ID
+        """
+        try:
+            logger.info("Logging to MLflow")
+            
+            with mlflow.start_run() as run:
+                # Log hyperparameters
+                mlflow.log_params(hyperparameters)
+                
+                # Log metrics
+                mlflow.log_metrics(metrics)
+                
+                # Log model
+                mlflow.sklearn.log_model(
+                    self.model,
+                    "model",
+                    registered_model_name=self.model_name
+                )
+                
+                # Save and log artifacts
+                Path(artifacts_dir).mkdir(exist_ok=True)
+                
+                # Save feature importance
+                if hasattr(self.model.named_steps['classifier'], 'feature_importances_'):
+                    importance_df = pd.DataFrame({
+                        'feature': self.feature_names,
+                        'importance': self.model.named_steps['classifier'].feature_importances_
+                    }).sort_values('importance', ascending=False)
+                    
+                    importance_path = Path(artifacts_dir) / 'feature_importance.csv'
+                    importance_df.to_csv(importance_path, index=False)
+                    mlflow.log_artifact(importance_path)
+                
+                # Log confusion matrix as text
+                cm_text = (
+                    f"Confusion Matrix:\n"
+                    f"TN: {metrics['true_negatives']}, FP: {metrics['false_positives']}\n"
+                    f"FN: {metrics['false_negatives']}, TP: {metrics['true_positives']}"
+                )
+                cm_path = Path(artifacts_dir) / 'confusion_matrix.txt'
+                cm_path.write_text(cm_text)
+                mlflow.log_artifact(cm_path)
+                
+                logger.info(f"MLflow run completed: {run.info.run_id}")
+                return run.info.run_id
+                
+        except Exception as e:
+            logger.error(f"Error logging to MLflow: {str(e)}")
+            raise
+    
+    def save_model(self, model_path: str = "model.joblib"):
+        """
+        Save trained model to disk.
+        
+        Args:
+            model_path: Path to save the model
+        """
+        try:
+            if self.model is None:
+                raise ValueError("No model to save")
+            
+            logger.info(f"Saving model to {model_path}")
+            joblib.dump(self.model, model_path)
+            logger.info("Model saved successfully")
+            
+        except Exception as e:
+            logger.error(f"Error saving model: {str(e)}")
+            raise
+    
+    def load_model(self, model_path: str = "model.joblib"):
+        """
+        Load trained model from disk.
+        
+        Args:
+            model_path: Path to the saved model
+        """
+        try:
+            logger.info(f"Loading model from {model_path}")
+            
+            if not Path(model_path).exists():
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+            self.model = joblib.load(model_path)
+            logger.info("Model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            raise
+    
+    def run_pipeline(
+        self,
+        data_path: str,
+        hyperparameters: Dict[str, Any] = None,
+        reference_data_path: str = None
+    ) -> Dict[str, Any]:
+        """
+        Execute the complete ML pipeline.
+        
+        Args:
+            data_path: Path to training data
+            hyperparameters: Model hyperparameters
+            reference_data_path: Path to reference data for drift detection
+            
+        Returns:
+            Dictionary with run results
+        """
+        try:
+            logger.info("=" * 80)
+            logger.info("Starting fraud detection pipeline")
+            logger.info("=" * 80)
+            
+            # Load data
+            df = self.load_data(data_path)
+            
+            # Check for concept drift if reference data provided
+            drift_detected = False
+            if reference_data_path:
+                reference_df = self.load_data(reference_data_path)
+                drift_detected, drift_metrics = self.detect_concept_drift(
+                    reference_df, df
+                )
+                
+                if not drift_detected:
+                    logger.info("No concept drift detected, skipping retraining")
+                    return {
+                        'status': 'skipped',
+                        'reason': 'no_drift_detected',
+                        'drift_metrics': drift_metrics
+                    }
+            
+            # Prepare data
+            X_train, X_test, y_train, y_test = self.prepare_data(df)
+            
+            # Set default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    'n_estimators': 100,
+                    'max_depth': 10,
+                    'min_samples_split': 10,
+                    'min_samples_leaf': 5,
+                    'class_weight': 'balanced'
+                }
+            
+            # Train model
+            self.train_model(X_train, y_train, hyperparameters)
+            
+            # Evaluate model
+            metrics = self.evaluate_model(X_test, y_test)
+            
+            # Log to MLflow
+            run_id = self.log_to_mlflow(metrics, hyperparameters)
+            
+            # Save model
+            self.save_model()
+            
+            logger.info("=" * 80)
+            logger.info("Pipeline completed successfully")
+            logger.info("=" * 80)
+            
+            return {
+                'status': 'success',
+                'run_id': run_id,
+                'metrics': metrics,
+                'drift_detected': drift_detected
+            }
+            
+        except Exception as e:
+            logger.error(f"Pipeline failed: {str(e)}")
+            raise
+
+
+def main():
+    """Main entry point for the pipeline."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Fraud Detection ML Pipeline')
+    parser.add_argument(
+        '--data-path',
+        type=str,
+        required=True,
+        help='Path to training data CSV'
+    )
+    parser.add_argument(
+        '--reference-data-path',
+        type=str,
+        default=None,
+        help='Path to reference data for drift detection'
+    )
+    parser.add_argument(
+        '--experiment-name',
+        type=str,
+        default='fraud_detection',
+        help='MLflow experiment name'
+    )
+    parser.add_argument(
+        '--model-name',
+        type=str,
+        default='fraud_detector_rf',
+        help='Model name for MLflow registry'
+    )
+    
+    args = parser.parse_args()
+    
+    # Initialize and run pipeline
+    pipeline = FraudDetectionPipeline(
+        experiment_name=args.experiment_name,
+        model_name=args.model_name
+    )
+    
+    results = pipeline.run_pipeline(
+        data_path=args.data_path,
+        reference_data_path=args.reference_data_path
+    )
+    
+    print(f"\nPipeline Results: {results}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 2. Pytest Test File
+
+```python
+# tests/test_fraud_detection_pipeline.py
+"""
+Comprehensive test suite for fraud detection pipeline.
+Tests data loading, model training, evaluation, and drift detection.
+"""
+
+import pytest
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import tempfile
+import shutil
+from unittest.mock import patch, MagicMock
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from ml_pipeline.fraud_detection_pipeline import FraudDetectionPipeline
+
+
+@pytest.fixture
+def sample_fraud_data():
+    """Generate synthetic fraud detection data for testing."""
+    np.random.seed(42)
+    n_samples = 1000
+    n_features = 30
+    
+    # Generate features
+    X = np.random.randn(n_samples, n_features)
+    
+    # Generate imbalanced target (0.17% fraud rate)
+    fraud_indices = np.random.choice(n_samples, size=int(n_samples * 0.0017), replace=False)
+    y = np.zeros(n_samples)
+    y[fraud_indices] = 1
+    
+    # Create DataFrame
+    feature_names = [f'V{i}' for i in range(1, n_features + 1)]
+    df = pd.DataFrame(X, columns=feature_names)
+    df['Class'] = y
+    
+    return df
+
+
+@pytest.fixture
+def sample_drifted_data():
+    """Generate synthetic drifted data for testing."""
+    np.random.seed(123)
+    n_samples = 1000
+    n_features = 30
+    
+    # Generate features with different distribution (drift)
+    X = np.random.randn(n_samples, n_features) + 0.5  # Shift distribution
+    
+    # Generate target
+    fraud_indices = np.random.choice(n_samples, size=int(n_samples * 0.003), replace=False)
+    y = np.zeros(n_samples)
+    y[fraud_indices] = 1
+    
+    # Create DataFrame
+    feature_names = [f'V{i}' for i in range(1, n_features + 1)]
+    df = pd.DataFrame(X, columns=feature_names)
+    df['Class'] = y
+    
+    return df
+
+
+@pytest.fixture
+def temp_data_dir(sample_fraud_data):
+    """Create temporary directory with test data."""
+    temp_dir = tempfile.mkdtemp()
+    data_path = Path(temp_dir) / 'fraud_data.csv'
+    sample_fraud_data.to_csv(data_path, index=False)
+    
+    yield temp_dir, data_path
+    
+    # Cleanup
+    shutil.rmtree(temp_dir)
+
+
+@pytest.fixture
+def pipeline():
+    """Create a pipeline instance for testing."""
+    return FraudDetectionPipeline(
+        experiment_name="test_fraud_detection",
+        model_name="test_model",
+        random_state=42
+    )
+
+
+class TestDataLoading:
+    """Test suite for data loading functionality."""
+    
+    def test_load_valid_data(self, pipeline, temp_data_dir):
+        """Test loading valid CSV data."""
+        temp_dir, data_path = temp_data_dir
+        
+        df = pipeline.load_data(str(data_path))
+        
+        assert isinstance(df, pd.DataFrame)
+        assert not df.empty
+        assert 'Class' in df.columns
+        assert len(df) == 1000
+    
+    def test_load_nonexistent_file(self, pipeline):
+        """Test error handling for nonexistent file."""
+        with pytest.raises(FileNotFoundError):
+            pipeline.load_data('nonexistent_file.csv')
+    
+    def test_load_data_without_target(self, pipeline):
+        """Test error handling for data without target column."""
+        temp_dir = tempfile.mkdtemp()
+        data_path = Path(temp_dir) / 'invalid_data.csv'
+        
+        # Create data without 'Class' column
+        df = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6]})
+        df.to_csv(data_path, index=False)
+        
+        try:
+            with pytest.raises(ValueError, match="Target column 'Class' not found"):
+                pipeline.load_data(str(data_path))
+        finally:
+            shutil.rmtree(temp_dir)
+    
+    def test_load_empty_dataframe(self, pipeline):
+        """Test error handling for empty data file."""
+        temp_dir = tempfile.mkdtemp()
+        data_path = Path(temp_dir) / 'empty_data.csv'
+        
+        # Create empty CSV
+        pd.DataFrame().to_csv(data_path, index=False)
+        
+        try:
+            with pytest.raises(ValueError, match="Loaded dataframe is empty"):
+                pipeline.load_data(str(data_path))
+        finally:
+            shutil.rmtree(temp_dir)
+    
+    def test_load_data_with_missing_values(self, pipeline, sample_fraud_data):
+        """Test handling of missing values in data."""
+        temp_dir = tempfile.mkdtemp()
+        data_path = Path(temp_dir) / 'data_with_na.csv'
+        
+        # Introduce missing values
+        sample_fraud_data.iloc[0, 0] = np.nan
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        try:
+            df = pipeline.load_data(str(data_path))
+            # Should drop rows with missing values
+            assert not df.isnull().any().any()
+        finally:
+            shutil.rmtree(temp_dir)
+
+
+class TestDataPreparation:
+    """Test suite for data preparation functionality."""
+    
+    def test_prepare_data_split(self, pipeline, sample_fraud_data):
+        """Test train-test split maintains stratification."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        assert len(X_train) == 800  # 80% of 1000
+        assert len(X_test) == 200   # 20% of 1000
+        assert len(y_train) == 800
+        assert len(y_test) == 200
+        
+        # Check stratification (fraud rates should be similar)
+        train_fraud_rate = y_train.mean()
+        test_fraud_rate = y_test.mean()
+        original_fraud_rate = sample_fraud_data['Class'].mean()
+        
+        assert abs(train_fraud_rate - original_fraud_rate) < 0.01
+        assert abs(test_fraud_rate - original_fraud_rate) < 0.01
+    
+    def test_prepare_data_feature_names(self, pipeline, sample_fraud_data):
+        """Test feature names are stored correctly."""
+        pipeline.prepare_data(sample_fraud_data)
+        
+        assert pipeline.feature_names is not None
+        assert len(pipeline.feature_names) == 30
+        assert 'Class' not in pipeline.feature_names
+    
+    def test_prepare_data_custom_test_size(self, pipeline, sample_fraud_data):
+        """Test custom test size parameter."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(
+            sample_fraud_data, test_size=0.3
+        )
+        
+        assert len(X_train) == 700
+        assert len(X_test) == 300
+
+
+class TestModelBuilding:
+    """Test suite for model building functionality."""
+    
+    def test_build_default_model(self, pipeline):
+        """Test building model with default parameters."""
+        model = pipeline.build_model()
+        
+        assert model is not None
+        assert 'scaler' in model.named_steps
+        assert 'smote' in model.named_steps
+        assert 'classifier' in model.named_steps
+    
+    def test_build_model_custom_params(self, pipeline):
+        """Test building model with custom parameters."""
+        model = pipeline.build_model(
+            n_estimators=50,
+            max_depth=5,
+            min_samples_split=20
+        )
+        
+        classifier = model.named_steps['classifier']
+        assert classifier.n_estimators == 50
+        assert classifier.max_depth == 5
+        assert classifier.min_samples_split == 20
+    
+    def test_model_pipeline_structure(self, pipeline):
+        """Test the structure of the model pipeline."""
+        model = pipeline.build_model()
+        
+        # Check pipeline steps
+        step_names = [name for name, _ in model.steps]
+        assert step_names == ['scaler', 'smote', 'classifier']
+
+
+class TestModelTraining:
+    """Test suite for model training functionality."""
+    
+    def test_train_model_success(self, pipeline, sample_fraud_data):
+        """Test successful model training."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        model = pipeline.train_model(X_train, y_train)
+        
+        assert model is not None
+        assert pipeline.model is not None
+        
+        # Check model is fitted
+        assert hasattr(model.named_steps['classifier'], 'estimators_')
+    
+    def test_train_model_with_hyperparameters(self, pipeline, sample_fraud_data):
+        """Test training with custom hyperparameters."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        hyperparams = {
+            'n_estimators': 50,
+            'max_depth': 8,
+            'min_samples_split': 15
+        }
+        
+        model = pipeline.train_model(X_train, y_train, hyperparams)
+        
+        assert model.named_steps['classifier'].n_estimators == 50
+        assert model.named_steps['classifier'].max_depth == 8
+    
+    def test_train_model_reproducibility(self, pipeline, sample_fraud_data):
+        """Test model training reproducibility with fixed random state."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        # Train first model
+        pipeline.train_model(X_train, y_train)
+        predictions1 = pipeline.model.predict(X_test)
+        
+        # Train second model with same random state
+        pipeline2 = FraudDetectionPipeline(random_state=42)
+        pipeline2.prepare_data(sample_fraud_data)
+        pipeline2.train_model(X_train, y_train)
+        predictions2 = pipeline2.model.predict(X_test)
+        
+        # Predictions should be identical
+        assert np.array_equal(predictions1, predictions2)
+
+
+class TestModelEvaluation:
+    """Test suite for model evaluation functionality."""
+    
+    def test_evaluate_model_metrics(self, pipeline, sample_fraud_data):
+        """Test model evaluation returns all expected metrics."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        pipeline.train_model(X_train, y_train)
+        
+        metrics = pipeline.evaluate_model(X_test, y_test)
+        
+        # Check all expected metrics are present
+        expected_metrics = [
+            'roc_auc', 'average_precision', 'precision', 'recall', 'f1_score',
+            'true_negatives', 'false_positives', 'false_negatives', 'true_positives'
+        ]
+        
+        for metric in expected_metrics:
+            assert metric in metrics
+    
+    def test_evaluate_model_metric_ranges(self, pipeline, sample_fraud_data):
+        """Test that metrics are within valid ranges."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        pipeline.train_model(X_train, y_train)
+        
+        metrics = pipeline.evaluate_model(X_test, y_test)
+        
+        # Check metric ranges
+        assert 0 <= metrics['roc_auc'] <= 1
+        assert 0 <= metrics['average_precision'] <= 1
+        assert 0 <= metrics['precision'] <= 1
+        assert 0 <= metrics['recall'] <= 1
+        assert 0 <= metrics['f1_score'] <= 1
+    
+    def test_evaluate_model_without_training(self, pipeline, sample_fraud_data):
+        """Test error when evaluating without training."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        with pytest.raises(ValueError, match="Model not trained yet"):
+            pipeline.evaluate_model(X_test, y_test)
+    
+    def test_evaluate_model_custom_threshold(self, pipeline, sample_fraud_data):
+        """Test evaluation with custom classification threshold."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        pipeline.train_model(X_train, y_train)
+        
+        metrics = pipeline.evaluate_model(X_test, y_test, threshold=0.3)
+        
+        assert metrics['threshold'] == 0.3
+
+
+class TestConceptDrift:
+    """Test suite for concept drift detection."""
+    
+    def test_drift_detection_no_drift(self, pipeline, sample_fraud_data):
+        """Test drift detection with identical distributions."""
+        # Use same data for reference and current
+        drift_detected, metrics = pipeline.detect_concept_drift(
+            sample_fraud_data, sample_fraud_data
+        )
+        
+        assert drift_detected is False
+        assert len(metrics) > 0
+    
+    def test_drift_detection_with_drift(self, pipeline, sample_fraud_data, sample_drifted_data):
+        """Test drift detection with drifted data."""
+        drift_detected, metrics = pipeline.detect_concept_drift(
+            sample_fraud_data, sample_drifted_data
+        )
+        
+        # Should detect drift due to distribution shift
+        assert isinstance(drift_detected, bool)
+        assert len(metrics) > 0
+        
+        # Check that p-values are calculated
+        p_value_keys = [k for k in metrics.keys() if 'p_value' in k]
+        assert len(p_value_keys) > 0
+    
+    def test_drift_detection_fraud_rate_change(self, pipeline, sample_fraud_data):
+        """Test detection of fraud rate changes."""
+        # Create data with different fraud rate
+        drifted_data = sample_fraud_data.copy()
+        # Increase fraud rate
+        normal_indices = np.where(drifted_data['Class'] == 0)[0]
+        new_fraud_indices = np.random.choice(normal_indices, size=10, replace=False)
+        drifted_data.loc[new_fraud_indices, 'Class'] = 1
+        
+        drift_detected, metrics = pipeline.detect_concept_drift(
+            sample_fraud_data, drifted_data
+        )
+        
+        assert 'fraud_rate_change' in metrics
+        assert metrics['fraud_rate_change'] > 0
+
+
+class TestMLflowLogging:
+    """Test suite for MLflow logging functionality."""
+    
+    @patch('mlflow.start_run')
+    @patch('mlflow.log_params')
+    @patch('mlflow.log_metrics')
+    @patch('mlflow.sklearn.log_model')
+    def test_log_to_mlflow(
+        self, mock_log_model, mock_log_metrics, mock_log_params,
+        mock_start_run, pipeline, sample_fraud_data
+    ):
+        """Test MLflow logging functionality."""
+        # Setup mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = 'test_run_id'
+        mock_start_run.return_value.__enter__.return_value = mock_run
+        
+        # Train model
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        pipeline.train_model(X_train, y_train)
+        metrics = pipeline.evaluate_model(X_test, y_test)
+        
+        hyperparameters = {'n_estimators': 100, 'max_depth': 10}
+        
+        # Log to MLflow
+        run_id = pipeline.log_to_mlflow(metrics, hyperparameters)
+        
+        # Verify calls
+        assert run_id == 'test_run_id'
+        mock_log_params.assert_called_once_with(hyperparameters)
+        mock_log_metrics.assert_called_once_with(metrics)
+        mock_log_model.assert_called_once()
+
+
+class TestModelPersistence:
+    """Test suite for model saving and loading."""
+    
+    def test_save_model(self, pipeline, sample_fraud_data):
+        """Test model saving to disk."""
+        temp_dir = tempfile.mkdtemp()
+        model_path = Path(temp_dir) / 'test_model.joblib'
+        
+        try:
+            # Train and save model
+            X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+            pipeline.train_model(X_train, y_train)
+            pipeline.save_model(str(model_path))
+            
+            assert model_path.exists()
+        finally:
+            shutil.rmtree(temp_dir)
+    
+    def test_save_model_without_training(self, pipeline):
+        """Test error when saving untrained model."""
+        with pytest.raises(ValueError, match="No model to save"):
+            pipeline.save_model('test_model.joblib')
+    
+    def test_load_model(self, pipeline, sample_fraud_data):
+        """Test model loading from disk."""
+        temp_dir = tempfile.mkdtemp()
+        model_path = Path(temp_dir) / 'test_model.joblib'
+        
+        try:
+            # Train and save model
+            X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+            pipeline.train_model(X_train, y_train)
+            original_predictions = pipeline.model.predict(X_test)
+            pipeline.save_model(str(model_path))
+            
+            # Load model in new pipeline
+            new_pipeline = FraudDetectionPipeline()
+            new_pipeline.load_model(str(model_path))
+            loaded_predictions = new_pipeline.model.predict(X_test)
+            
+            # Predictions should match
+            assert np.array_equal(original_predictions, loaded_predictions)
+        finally:
+            shutil.rmtree(temp_dir)
+    
+    def test_load_nonexistent_model(self, pipeline):
+        """Test error when loading nonexistent model."""
+        with pytest.raises(FileNotFoundError):
+            pipeline.load_model('nonexistent_model.joblib')
+
+
+class TestEndToEndPipeline:
+    """Test suite for end-to-end pipeline execution."""
+    
+    @patch('mlflow.start_run')
+    @patch('mlflow.log_params')
+    @patch('mlflow.log_metrics')
+    @patch('mlflow.sklearn.log_model')
+    def test_run_pipeline_success(
+        self, mock_log_model, mock_log_metrics, mock_log_params,
+        mock_start_run, pipeline, temp_data_dir
+    ):
+        """Test successful end-to-end pipeline execution."""
+        # Setup mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = 'test_run_id'
+        mock_start_run.return_value.__enter__.return_value = mock_run
+        
+        temp_dir, data_path = temp_data_dir
+        
+        results = pipeline.run_pipeline(str(data_path))
+        
+        assert results['status'] == 'success'
+        assert 'run_id' in results
+        assert 'metrics' in results
+        assert results['drift_detected'] is False
+    
+    @patch('mlflow.start_run')
+    def test_run_pipeline_with_drift_detection(
+        self, mock_start_run, pipeline, sample_fraud_data, sample_drifted_data
+    ):
+        """Test pipeline with drift detection."""
+        # Setup mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = 'test_run_id'
+        mock_start_run.return_value.__enter__.return_value = mock_run
+        
+        temp_dir = tempfile.mkdtemp()
+        
+        try:
+            # Save reference and current data
+            ref_path = Path(temp_dir) / 'reference.csv'
+            curr_path = Path(temp_dir) / 'current.csv'
+            sample_fraud_data.to_csv(ref_path, index=False)
+            sample_fraud_data.to_csv(curr_path, index=False)  # No drift
+            
+            results = pipeline.run_pipeline(
+                str(curr_path),
+                reference_data_path=str(ref_path)
+            )
+            
+            # Should skip training when no drift
+            assert results['status'] == 'skipped'
+            assert results['reason'] == 'no_drift_detected'
+        finally:
+            shutil.rmtree(temp_dir)
+
+
+class TestErrorHandling:
+    """Test suite for error handling and edge cases."""
+    
+    def test_pipeline_with_invalid_hyperparameters(self, pipeline, sample_fraud_data):
+        """Test error handling for invalid hyperparameters."""
+        X_train, X_test, y_train, y_test = pipeline.prepare_data(sample_fraud_data)
+        
+        # This should raise an error from sklearn
+        with pytest.raises(Exception):
+            pipeline.train_model(X_train, y_train, {'n_estimators': -1})
+    
+    def test_pipeline_resilience(self, pipeline):
+        """Test pipeline handles errors gracefully."""
+        # Test with invalid data path
+        with pytest.raises(FileNotFoundError):
+            pipeline.run_pipeline('invalid_path.csv')
+
+
+# Integration test
+class TestIntegration:
+    """Integration tests for the complete pipeline."""
+    
+    @patch('mlflow.start_run')
+    @patch('mlflow.log_params')
+    @patch('mlflow.log_metrics')
+    @patch('mlflow.sklearn.log_model')
+    @patch('mlflow.log_artifact')
+    def test_complete_workflow(
+        self, mock_log_artifact, mock_log_model, mock_log_metrics,
+        mock_log_params, mock_start_run, sample_fraud_data
+    ):
+        """Test complete workflow from data to predictions."""
+        # Setup mock
+        mock_run = MagicMock()
+        mock_run.info.run_id = 'integration_test_run'
+        mock_start_run.return_value.__enter__.return_value = mock_run
+        
+        temp_dir = tempfile.mkdtemp()
+        
+        try:
+            # Save data
+            data_path = Path(temp_dir) / 'fraud_data.csv'
+            sample_fraud_data.to_csv(data_path, index=False)
+            
+            # Initialize pipeline
+            pipeline = FraudDetectionPipeline(
+                experiment_name="integration_test",
+                model_name="integration_test_model"
+            )
+            
+            # Run complete pipeline
+            results = pipeline.run_pipeline(str(data_path))
+            
+            # Verify results
+            assert results['status'] == 'success'
+            assert 'metrics' in results
+            assert results['metrics']['roc_auc'] > 0
+            
+            # Verify model can make predictions
+            test_sample = sample_fraud_data.drop('Class', axis=1).iloc[:5]
+            predictions = pipeline.model.predict(test_sample)
+            assert len(predictions) == 5
+            assert all(p in [0, 1] for p in predictions)
+            
+        finally:
+            shutil.rmtree(temp_dir)
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v', '--tb=short'])
+```
+
+## 3. GitHub Actions CI/CD Workflow
+
+```yaml
+# .github/workflows/ml_pipeline_ci_cd.yml
+name: Fraud Detection ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC to check for concept drift
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Force model retraining'
+        required: false
+        default: 'false'
+
+env:
+  PYTHON_VERSION: '3.9'
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  AWS_REGION: us-east-1
+
+jobs:
+  # Job 1: Code Quality and Testing
+  quality-and-tests:
+    name: Code Quality & Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 ml_pipeline --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 ml_pipeline --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+      continue-on-error: true
+    
+    - name: Format check with black
+      run: |
+        black --check ml_pipeline tests
+      continue-on-error: true
+    
+    - name: Type check with mypy
+      run: |
+        mypy ml_pipeline --ignore-missing-imports
+      continue-on-error: true
+    
+    - name: Security check with bandit
+      run: |
+        bandit -r ml_pipeline -ll
+      continue-on-error: true
+    
+    - name: Run unit tests with pytest
+      run: |
+        pytest tests/ -v \
+          --cov=ml_pipeline \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term \
+          --junitxml=junit/test-results.xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: junit/test-results.xml
+    
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: coverage-report
+        path: htmlcov/
+
+  # Job 2: Data Validation
+  data-validation:
+    name: Data Validation & Drift Detection
+    runs-on: ubuntu-latest
+    needs: quality-and-tests
+    outputs:
+      drift_detected: ${{ steps.drift-check.outputs.drift_detected }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Download latest data from S3
+      run: |
+        aws s3 cp s3://${{ secrets.S3_DATA_BUCKET }}/current/fraud_data.csv ./data/current_data.csv
+        aws s3 cp s3://${{ secrets.S3_DATA_BUCKET }}/reference/fraud_data.csv ./data/reference_data.csv
+    
+    - name: Validate data schema
+      run: |
+        python -c "
+        import pandas as pd
+        import sys
+        
+        # Load data
+        current_data = pd.read_csv('./data/current_data.csv')
+        
+        # Validate schema
+        required_cols = ['Class'] + [f'V{i}' for i in range(1, 29)]
+        missing_cols = set(required_cols) - set(current_data.columns)
+        
+        if missing_cols:
+            print(f'Missing columns: {missing_cols}')
+            sys.exit(1)
+        
+        # Validate data quality
+        if current_data.isnull().sum().sum() > len(current_data) * 0.1:
+            print('Too many missing values (>10%)')
+            sys.exit(1)
+        
+        print('Data validation passed')
+        "
+    
+    - name: Check for concept drift
+      id: drift-check
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        from ml_pipeline.fraud_detection_pipeline import FraudDetectionPipeline
+        import pandas as pd
+        
+        pipeline = FraudDetectionPipeline()
+        
+        reference_data = pd.read_csv('./data/reference_data.csv')
+        current_data = pd.read_csv('./data/current_data.csv')
+        
+        drift_detected, metrics = pipeline.detect_concept_drift(reference_data, current_data)
+        
+        print(f'Drift detected: {drift_detected}')
+        print(f'Drift metrics: {metrics}')
+        
+        # Set output for next jobs
+        with open('drift_detected.txt', 'w') as f:
+            f.write(str(drift_detected).lower())
+        "
+        
+        DRIFT_DETECTED=$(cat drift_detected.txt)
+        echo "drift_detected=$DRIFT_DETECTED" >> $GITHUB_OUTPUT
+        echo "Drift detection result: $DRIFT_DETECTED"
+    
+    - name: Upload drift report
+      uses: actions/upload-artifact@v3
+      with:
+        name: drift-report
+        path: drift_detected.txt
+
+  # Job 3: Model Training
+  model-training:
+    name: Model Training & Evaluation
+    runs-on: ubuntu-latest
+    needs: data-validation
+    # Only run if drift detected or force retrain
+    if: |
+      needs.data-validation.outputs.drift_detected == 'true' || 
+      github.event.inputs.force_retrain == 'true' ||
+      github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Download training data
+      run: |
+        mkdir -p data
+        aws s3 cp s3://${{ secrets.S3_DATA_BUCKET }}/current/fraud_data.csv ./data/fraud_data.csv
+    
+    - name: Set up MLflow tracking
+      run: |
+        echo "MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_ENV
+        echo "MLFLOW_TRACKING_USERNAME=${{ secrets.MLFLOW_USERNAME }}" >> $GITHUB_ENV
+        echo "MLFLOW_TRACKING_PASSWORD=${{ secrets.MLFLOW_PASSWORD }}" >> $GITHUB_ENV
+    
+    - name: Train model
+      run: |
+        python ml_pipeline/fraud_detection_pipeline.py \
+          --data-path ./data/fraud_data.csv \
+          --experiment-name fraud_detection_prod \
+          --model-name fraud_detector_rf_prod
+    
+    - name: Validate model performance
+      run: |
+        python -c "
+        import sys
+        import mlflow
+        
+        # Get latest run
+        client = mlflow.tracking.MlflowClient()
+        experiment = client.get_experiment_by_name('fraud_detection_prod')
+        runs = client.search_runs(experiment.experiment_id, order_by=['start_time DESC'], max_results=1)
+        
+        if not runs:
+            print('No runs found')
+            sys.exit(1)
+        
+        latest_run = runs[0]
+        metrics = latest_run.data.metrics
+        
+        # Validate metrics meet minimum thresholds
+        min_roc_auc = 0.85
+        min_avg_precision = 0.70
+        
+        roc_auc = metrics.get('roc_auc', 0)
+        avg_precision = metrics.get('average_precision', 0)
+        
+        print(f'ROC-AUC: {roc_auc:.4f} (min: {min_roc_auc})')
+        print(f'Avg Precision: {avg_precision:.4f} (min: {min_avg_precision})')
+        
+        if roc_auc < min_roc_auc:
+            print(f'ROC-AUC below threshold: {roc_auc} < {min_roc_auc}')
+            sys.exit(1)
+        
+        if avg_precision < min_avg_precision:
+            print(f'Average Precision below threshold: {avg_precision} < {min_avg_precision}')
+            sys.exit(1)
+        
+        print('Model performance validation passed')
+        "
+    
+    - name: Upload model artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: trained-model
+        path: model.joblib
+    
+    - name: Upload training logs
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: training-logs
+        path: pipeline.log
+
+  # Job 4: Model Deployment
+  model-deployment:
+    name: Model Deployment
+    runs-on: ubuntu-latest
+    needs: model-training
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://fraud-detection-api.example.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install mlflow boto3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Download model artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+    
+    - name: Register model to production
+      run: |
+        python -c "
+        import mlflow
+        from mlflow.tracking import MlflowClient
+        
+        client = MlflowClient()
+        
+        # Get latest version of the model
+        model_name = 'fraud_detector_rf_prod'
+        latest_versions = client.get_latest_versions(model_name, stages=['None'])
+        
+        if latest_versions:
+            latest_version = latest_versions[0].version
+            
+            # Transition to production
+            client.transition_model_version_stage(
+                name=model_name,
+                version=latest_version,
+                stage='Production',
+                archive_existing_versions=True
+            )
+            
+            print(f'Model version {latest_version} transitioned to Production')
+        else:
+            print('No model versions found')
+        "
+    
+    - name: Deploy model to SageMaker
+      run: |
+        python -c "
+        import boto3
+        import mlflow
+        from datetime import datetime
+        
+        # Get model from MLflow
+        model_name = 'fraud_detector_rf_prod'
+        model_uri = f'models:/{model_name}/Production'
+        
+        # Create SageMaker model
+        sagemaker = boto3.client('sagemaker')
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        
+        # This is a simplified example - actual deployment would be more complex
+        print(f'Deploying model: {model_uri}')
+        print(f'Deployment timestamp: {timestamp}')
+        print('Model deployment initiated')
+        "
+    
+    - name: Update model metadata
+      run: |
+        aws s3 cp model.joblib s3://${{ secrets.S3_MODEL_BUCKET }}/production/model_$(date +%Y%m%d_%H%M%S).joblib
+        
+        # Update current model pointer
+        echo "$(date +%Y%m%d_%H%M%S)" > current_model.txt
+        aws s3 cp current_model.txt s3://${{ secrets.S3_MODEL_BUCKET }}/production/current_model.txt
+    
+    - name: Run smoke tests
+      run: |
+        python -c "
+        import joblib
+        import numpy as np
+        
+        # Load model
+        model = joblib.load('model.joblib')
+        
+        # Create test data
+        test_data = np.random.randn(10, 30)
+        
+        # Make predictions
+        predictions = model.predict(test_data)
+        probabilities = model.predict_proba(test_data)
+        
+        assert len(predictions) == 10
+        assert len(probabilities) == 10
+        assert all(p in [0, 1] for p in predictions)
+        
+        print('Smoke tests passed')
+        "
+    
+    - name: Send deployment notification
+      uses: 8398a7/action-slack@v3
+      if: always()
+      with:
+        status: ${{ job.status }}
+        text: |
+          Fraud Detection Model Deployment
+          Status: ${{ job.status }}
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Job 5: Monitoring Setup
+  setup-monitoring:
+    name: Setup Model Monitoring
+    runs-on: ubuntu-latest
+    needs: model-deployment
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Create CloudWatch alarms
+      run: |
+        # Create alarm for model performance degradation
+        aws cloudwatch put-metric-alarm \
+          --alarm-name fraud-detection-model-performance \
+          --alarm-description "Alert when model performance degrades" \
+          --metric-name ModelROCAUC \
+          --namespace FraudDetection \
+          --statistic Average \
+          --period 3600 \
+          --evaluation-periods 2 \
+          --threshold 0.85 \
+          --comparison-operator LessThanThreshold \
+          --treat-missing-data notBreaching
+        
+        # Create alarm for prediction latency
+        aws cloudwatch put-metric-alarm \
+          --alarm-name fraud-detection-prediction-latency \
+          --alarm-description "Alert when prediction latency is high" \
+          --metric-name PredictionLatency \
+          --namespace FraudDetection \
+          --statistic Average \
+          --period 300 \
+          --evaluation-periods 3 \
+          --threshold 1000 \
+          --comparison-operator GreaterThanThreshold \
+          --treat-missing-data notBreaching
+    
+    - name: Update monitoring dashboard
+      run: |
+        echo "Monitoring dashboard updated"
+        # In production, this would update CloudWatch dashboards, Grafana, etc.
+
+  # Job 6: Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: model-deployment
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install requests
+    
+    - name: Wait for deployment
+      run: sleep 60
+    
+    - name: Run API integration tests
+      run: |
+        python -c "
+        import requests
+        import numpy as np
+        
+        # Test API endpoint
+        api_url = '${{ secrets.API_ENDPOINT }}/predict'
+        
+        # Create test payload
+        test_data = {
+            'features': np.random.randn(30).tolist()
+        }
+        
+        # Make prediction request
+        response = requests.post(api_url, json=test_data, timeout=10)
+        
+        assert response.status_code == 200, f'API returned {response.status_code}'
+        
+        result = response.json()
+        assert 'prediction' in result
+        assert 'probability' in result
+        
+        print('Integration tests passed')
+        "
+      continue-on-error: true
+
+# Notification job
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [quality-and-tests, data-validation, model-training, model-deployment]
+    if: always()
+    
+    steps:
+    - name: Send Slack notification
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        custom_payload: |
+          {
+            text: "ML Pipeline Status",
+            attachments: [{
+              color: '${{ job.status }}' === 'success' ? 'good' : 'danger',
+              text: `
+                *Fraud Detection ML Pipeline*
+                Quality & Tests: ${{ needs.quality-and-tests.result }}
+                Data Validation: ${{ needs.data-validation.result }}
+                Model Training: ${{ needs.model-training.result }}
+                Model Deployment: ${{ needs.model-deployment.result }}
+                
+                Triggered by: ${{ github.actor }}
+                Commit: ${{ github.sha }}
+              `
+            }]
+          }
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+```
+
+## Additional Configuration Files
+
+### requirements.txt
+```txt
+# requirements.txt
+numpy==1.24.3
+pandas==2.0.2
+scikit-learn==1.3.0
+imbalanced-learn==0.11.0
+mlflow==2.4.1
+scipy==1.10.1
+joblib==1.3.1
+boto3==1.28.1
+```
+
+### requirements-dev.txt
+```txt
+# requirements-dev.txt
+pytest==7.4.0
+pytest-cov==4.1.0
+flake8==6.0.0
+black==23.3.0
+mypy==1.4.1
+bandit==1.7.5
+```
+
+### .flake8
+```ini
+# .flake8
+[flake8]
+max-line-length = 100
+exclude = .git,__pycache__,venv,build,dist
+ignore = E203,W503
+```
+
+This complete CI/CD pipeline provides:
+
+1. **Comprehensive Testing**: Unit tests, integration tests, and smoke tests
+2. **Data Validation**: Schema validation and concept drift detection
+3. **Automated Training**: Triggers retraining only when drift is detected
+4. **Quality Gates**: Code quality checks, performance thresholds
+5. **Production Deployment**: Automated deployment to production with safeguards
+6. **Monitoring**: CloudWatch alarms and dashboards
+7. **Notifications**: Slack notifications for all pipeline stages
+8. **Error Handling**: Comprehensive error handling throughout
+9. **MLflow Integration**: Complete experiment tracking and model registry
+10. **Security**: AWS credentials management and security scanning

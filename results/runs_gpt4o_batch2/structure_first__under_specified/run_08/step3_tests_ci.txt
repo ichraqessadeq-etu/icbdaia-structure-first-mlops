@@ -1,0 +1,122 @@
+Certainly! Below is a complete example of a pytest test file for the given pipeline module, followed by a GitHub Actions workflow configuration. 
+
+### (a) Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.data_preprocessing import load_data, clean_data, split_data
+from fraud_detection.pipeline.model_training import train_model, save_model
+from fraud_detection.pipeline.model_evaluation import evaluate_model, generate_report
+from fraud_detection.pipeline.model_deployment import deploy_model
+import os
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    csv_file = tmp_path / "data.csv"
+    csv_file.write_text("feature1,feature2,target\n1,5,0\n2,4,1\n3,3,0\n4,2,1\n5,1,0\n")
+    
+    # Test loading data
+    data = load_data(str(csv_file))
+    assert not data.empty
+    assert len(data) == 5
+
+def test_clean_data(sample_data):
+    # Introduce a missing value
+    sample_data.loc[0, 'feature1'] = None
+    cleaned_data = clean_data(sample_data)
+    assert cleaned_data.isnull().sum().sum() == 0
+
+def test_split_data(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+
+def test_train_model(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model((X_train, X_test, y_train, y_test))
+    assert isinstance(model, RandomForestClassifier)
+
+def test_save_model(tmp_path, sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model((X_train, X_test, y_train, y_test))
+    model_path = tmp_path / "model.joblib"
+    save_model(model, str(model_path))
+    assert os.path.exists(model_path)
+
+def test_evaluate_model(sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model((X_train, X_test, y_train, y_test))
+    metrics = evaluate_model(model, (X_train, X_test, y_train, y_test))
+    assert 'accuracy' in metrics
+
+def test_generate_report(capsys, sample_data):
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    model = train_model((X_train, X_test, y_train, y_test))
+    metrics = evaluate_model(model, (X_train, X_test, y_train, y_test))
+    generate_report(metrics)
+    captured = capsys.readouterr()
+    assert "precision" in captured.out
+
+# Note: The deploy_model function requires a live endpoint and is typically not tested in unit tests.
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests/ --disable-warnings
+
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        flake8 fraud_detection --count --select=E9,F63,F7,F82 --show-source --statistics
+```
+
+This configuration sets up a CI workflow that runs whenever there is a push or pull request to the `main` branch. It includes steps for checking out the code, setting up Python, installing dependencies, running tests, and linting the code with `flake8`.

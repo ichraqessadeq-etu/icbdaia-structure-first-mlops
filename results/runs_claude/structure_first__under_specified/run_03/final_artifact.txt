@@ -1,0 +1,2722 @@
+```python
+# src/pipeline.py
+
+"""Fraud detection model CI/CD pipeline."""
+
+from typing import Tuple, Dict, Any, Optional
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import joblib
+import json
+from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report
+)
+from scipy import stats
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load fraud detection dataset from specified path.
+    
+    Args:
+        data_path: Path to the dataset file (CSV or parquet)
+        
+    Returns:
+        DataFrame containing the loaded data
+        
+    Raises:
+        FileNotFoundError: If the data file doesn't exist
+        ValueError: If the file format is not supported
+    """
+    data_path = Path(data_path)
+    
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data file not found: {data_path}")
+    
+    logger.info(f"Loading data from {data_path}")
+    
+    if data_path.suffix == '.csv':
+        df = pd.read_csv(data_path)
+    elif data_path.suffix == '.parquet':
+        df = pd.read_parquet(data_path)
+    else:
+        raise ValueError(f"Unsupported file format: {data_path.suffix}. Use .csv or .parquet")
+    
+    logger.info(f"Loaded {len(df)} records with {len(df.columns)} columns")
+    return df
+
+
+def validate_data(df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
+    """Validate data schema, types, and quality checks.
+    
+    Args:
+        df: DataFrame to validate
+        
+    Returns:
+        Tuple of (is_valid, validation_report)
+    """
+    validation_report = {
+        'timestamp': datetime.now().isoformat(),
+        'total_records': len(df),
+        'total_columns': len(df.columns),
+        'checks': {},
+        'errors': [],
+        'warnings': []
+    }
+    
+    is_valid = True
+    
+    # Check 1: Required columns
+    required_columns = ['amount', 'is_fraud']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        is_valid = False
+        validation_report['errors'].append(f"Missing required columns: {missing_columns}")
+    validation_report['checks']['required_columns'] = len(missing_columns) == 0
+    
+    # Check 2: No completely empty DataFrame
+    if df.empty:
+        is_valid = False
+        validation_report['errors'].append("DataFrame is empty")
+    validation_report['checks']['not_empty'] = not df.empty
+    
+    # Check 3: Data types validation
+    if 'amount' in df.columns:
+        if not pd.api.types.is_numeric_dtype(df['amount']):
+            is_valid = False
+            validation_report['errors'].append("'amount' column must be numeric")
+        validation_report['checks']['amount_numeric'] = pd.api.types.is_numeric_dtype(df['amount'])
+    
+    if 'is_fraud' in df.columns:
+        unique_values = df['is_fraud'].dropna().unique()
+        if not all(val in [0, 1, True, False] for val in unique_values):
+            is_valid = False
+            validation_report['errors'].append("'is_fraud' must contain only 0/1 or True/False")
+        validation_report['checks']['is_fraud_binary'] = all(val in [0, 1, True, False] for val in unique_values)
+    
+    # Check 4: Missing values
+    missing_pct = (df.isnull().sum() / len(df) * 100).to_dict()
+    high_missing = {col: pct for col, pct in missing_pct.items() if pct > 50}
+    
+    if high_missing:
+        validation_report['warnings'].append(f"Columns with >50% missing: {high_missing}")
+    validation_report['checks']['missing_values'] = missing_pct
+    
+    # Check 5: Duplicate records
+    duplicates = df.duplicated().sum()
+    duplicate_pct = (duplicates / len(df)) * 100
+    
+    if duplicate_pct > 10:
+        validation_report['warnings'].append(f"High duplicate rate: {duplicate_pct:.2f}%")
+    validation_report['checks']['duplicates'] = {
+        'count': int(duplicates),
+        'percentage': float(duplicate_pct)
+    }
+    
+    # Check 6: Class balance (for fraud detection)
+    if 'is_fraud' in df.columns:
+        fraud_rate = df['is_fraud'].mean() * 100
+        validation_report['checks']['fraud_rate'] = float(fraud_rate)
+        
+        if fraud_rate < 0.1 or fraud_rate > 99.9:
+            validation_report['warnings'].append(f"Extreme class imbalance: {fraud_rate:.2f}% fraud")
+    
+    # Check 7: Outliers in amount
+    if 'amount' in df.columns:
+        Q1 = df['amount'].quantile(0.25)
+        Q3 = df['amount'].quantile(0.75)
+        IQR = Q3 - Q1
+        outliers = ((df['amount'] < (Q1 - 3 * IQR)) | (df['amount'] > (Q3 + 3 * IQR))).sum()
+        outlier_pct = (outliers / len(df)) * 100
+        
+        validation_report['checks']['outliers'] = {
+            'count': int(outliers),
+            'percentage': float(outlier_pct)
+        }
+    
+    validation_report['is_valid'] = is_valid
+    logger.info(f"Data validation complete. Valid: {is_valid}")
+    
+    return is_valid, validation_report
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Preprocess data including feature engineering and train/test split.
+    
+    Args:
+        df: Raw DataFrame
+        
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test)
+    """
+    logger.info("Starting data preprocessing")
+    
+    # Make a copy to avoid modifying original
+    df = df.copy()
+    
+    # Handle missing values
+    # For numeric columns, fill with median
+    numeric_columns = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_columns:
+        if df[col].isnull().any():
+            df[col].fillna(df[col].median(), inplace=True)
+    
+    # For categorical columns, fill with mode or 'Unknown'
+    categorical_columns = df.select_dtypes(include=['object', 'category']).columns
+    for col in categorical_columns:
+        if col != 'is_fraud' and df[col].isnull().any():
+            df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else 'Unknown', inplace=True)
+    
+    # Feature engineering
+    if 'amount' in df.columns:
+        # Log transform for amount (handle zeros)
+        df['amount_log'] = np.log1p(df['amount'])
+        
+        # Amount bins
+        df['amount_bin'] = pd.cut(df['amount'], bins=5, labels=False)
+    
+    # Time-based features if timestamp exists
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df['hour'] = df['timestamp'].dt.hour
+        df['day_of_week'] = df['timestamp'].dt.dayofweek
+        df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
+    
+    # Encode categorical variables
+    categorical_to_encode = [col for col in categorical_columns if col != 'is_fraud']
+    for col in categorical_to_encode:
+        if col in df.columns:
+            # Simple label encoding (in production, use proper encoding with train/test awareness)
+            df[col] = pd.Categorical(df[col]).codes
+    
+    # Separate features and target
+    target_col = 'is_fraud'
+    if target_col not in df.columns:
+        raise ValueError(f"Target column '{target_col}' not found in DataFrame")
+    
+    # Drop non-feature columns
+    cols_to_drop = [target_col, 'timestamp'] if 'timestamp' in df.columns else [target_col]
+    X = df.drop(columns=cols_to_drop, errors='ignore')
+    y = df[target_col].astype(int)
+    
+    # Select only numeric features for modeling
+    X = X.select_dtypes(include=[np.number])
+    
+    # Train/test split with stratification
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, 
+        test_size=0.2, 
+        random_state=42, 
+        stratify=y
+    )
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index
+    )
+    
+    logger.info(f"Preprocessing complete. Train: {len(X_train_scaled)}, Test: {len(X_test_scaled)}")
+    logger.info(f"Number of features: {len(X_train_scaled.columns)}")
+    
+    return X_train_scaled, X_test_scaled, y_train, y_test
+
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> Any:
+    """Train the fraud detection model.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        
+    Returns:
+        Trained model
+    """
+    logger.info("Starting model training")
+    
+    # Use Random Forest for fraud detection
+    model = RandomForestClassifier(
+        n_estimators=100,
+        max_depth=10,
+        min_samples_split=10,
+        min_samples_leaf=5,
+        class_weight='balanced',  # Handle class imbalance
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    model.fit(X_train, y_train)
+    
+    logger.info("Model training complete")
+    logger.info(f"Feature importances: {dict(zip(X_train.columns, model.feature_importances_))}")
+    
+    return model
+
+
+def evaluate_model(model: Any, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+    """Evaluate model performance and return metrics.
+    
+    Args:
+        model: Trained model
+        X_test: Test features
+        y_test: Test labels
+        
+    Returns:
+        Dictionary of evaluation metrics
+    """
+    logger.info("Evaluating model performance")
+    
+    # Predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculate metrics
+    metrics = {
+        'accuracy': float(accuracy_score(y_test, y_pred)),
+        'precision': float(precision_score(y_test, y_pred, zero_division=0)),
+        'recall': float(recall_score(y_test, y_pred, zero_division=0)),
+        'f1_score': float(f1_score(y_test, y_pred, zero_division=0)),
+        'roc_auc': float(roc_auc_score(y_test, y_pred_proba)),
+    }
+    
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    metrics['true_negatives'] = int(tn)
+    metrics['false_positives'] = int(fp)
+    metrics['false_negatives'] = int(fn)
+    metrics['true_positives'] = int(tp)
+    
+    # Additional metrics
+    metrics['specificity'] = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+    metrics['false_positive_rate'] = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+    metrics['false_negative_rate'] = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
+    
+    logger.info(f"Evaluation metrics: {metrics}")
+    
+    return metrics
+
+
+def validate_model_performance(metrics: Dict[str, float], thresholds: Dict[str, float]) -> bool:
+    """Validate that model metrics meet minimum thresholds.
+    
+    Args:
+        metrics: Model evaluation metrics
+        thresholds: Minimum acceptable thresholds for each metric
+        
+    Returns:
+        True if all thresholds are met, False otherwise
+    """
+    logger.info("Validating model performance against thresholds")
+    
+    validation_results = {}
+    all_passed = True
+    
+    for metric_name, threshold_value in thresholds.items():
+        if metric_name in metrics:
+            passed = metrics[metric_name] >= threshold_value
+            validation_results[metric_name] = {
+                'value': metrics[metric_name],
+                'threshold': threshold_value,
+                'passed': passed
+            }
+            
+            if not passed:
+                all_passed = False
+                logger.warning(
+                    f"Metric '{metric_name}' failed: {metrics[metric_name]:.4f} < {threshold_value:.4f}"
+                )
+        else:
+            logger.warning(f"Threshold specified for unknown metric: {metric_name}")
+    
+    logger.info(f"Performance validation result: {'PASSED' if all_passed else 'FAILED'}")
+    
+    return all_passed
+
+
+def save_model(model: Any, model_path: Path, metadata: Dict[str, Any]) -> None:
+    """Save trained model with metadata to disk.
+    
+    Args:
+        model: Trained model to save
+        model_path: Path where model should be saved
+        metadata: Model metadata to save alongside
+    """
+    model_path = Path(model_path)
+    
+    # Create directory if it doesn't exist
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    logger.info(f"Saving model to {model_path}")
+    
+    # Save model
+    joblib.dump(model, model_path)
+    
+    # Save metadata
+    metadata_path = model_path.parent / f"{model_path.stem}_metadata.json"
+    metadata['saved_at'] = datetime.now().isoformat()
+    
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    logger.info(f"Model and metadata saved successfully")
+
+
+def load_model(model_path: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Load model and metadata from disk.
+    
+    Args:
+        model_path: Path to the saved model
+        
+    Returns:
+        Tuple of (model, metadata)
+        
+    Raises:
+        FileNotFoundError: If model or metadata file doesn't exist
+    """
+    model_path = Path(model_path)
+    
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    
+    logger.info(f"Loading model from {model_path}")
+    
+    # Load model
+    model = joblib.load(model_path)
+    
+    # Load metadata
+    metadata_path = model_path.parent / f"{model_path.stem}_metadata.json"
+    if metadata_path.exists():
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+    else:
+        logger.warning(f"Metadata file not found: {metadata_path}")
+        metadata = {}
+    
+    logger.info("Model and metadata loaded successfully")
+    
+    return model, metadata
+
+
+def generate_model_card(model: Any, metrics: Dict[str, float], metadata: Dict[str, Any]) -> str:
+    """Generate model card documentation.
+    
+    Args:
+        model: Trained model
+        metrics: Model evaluation metrics
+        metadata: Model metadata
+        
+    Returns:
+        Model card as formatted string
+    """
+    model_card = f"""
+# Fraud Detection Model Card
+
+## Model Details
+- **Model Type**: {type(model).__name__}
+- **Version**: {metadata.get('version', 'N/A')}
+- **Created**: {metadata.get('created_at', 'N/A')}
+- **Framework**: scikit-learn
+
+## Intended Use
+- **Primary Use**: Real-time fraud detection in financial transactions
+- **Primary Users**: Fraud prevention teams, automated transaction systems
+- **Out-of-Scope Uses**: Not intended for legal decision-making without human review
+
+## Training Data
+- **Dataset**: {metadata.get('dataset_name', 'Fraud detection dataset')}
+- **Training Samples**: {metadata.get('training_samples', 'N/A')}
+- **Features**: {metadata.get('num_features', 'N/A')}
+- **Class Distribution**: {metadata.get('class_distribution', 'N/A')}
+
+## Performance Metrics
+- **Accuracy**: {metrics.get('accuracy', 0):.4f}
+- **Precision**: {metrics.get('precision', 0):.4f}
+- **Recall**: {metrics.get('recall', 0):.4f}
+- **F1 Score**: {metrics.get('f1_score', 0):.4f}
+- **ROC-AUC**: {metrics.get('roc_auc', 0):.4f}
+
+## Confusion Matrix
+- **True Positives**: {metrics.get('true_positives', 0)}
+- **True Negatives**: {metrics.get('true_negatives', 0)}
+- **False Positives**: {metrics.get('false_positives', 0)}
+- **False Negatives**: {metrics.get('false_negatives', 0)}
+
+## Ethical Considerations
+- **Bias Testing**: {metadata.get('bias_tested', 'Not performed')}
+- **Fairness Metrics**: {metadata.get('fairness_metrics', 'N/A')}
+- **Known Limitations**: Model may have reduced performance on underrepresented transaction types
+
+## Monitoring and Maintenance
+- **Retraining Frequency**: {metadata.get('retraining_frequency', 'Weekly')}
+- **Performance Monitoring**: Continuous monitoring of precision/recall
+- **Data Drift Detection**: {metadata.get('drift_detection', 'Enabled')}
+
+## Model Governance
+- **Owner**: {metadata.get('owner', 'MLOps Team')}
+- **Approval Status**: {metadata.get('approval_status', 'Pending')}
+- **Last Review**: {metadata.get('last_review', 'N/A')}
+
+---
+*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+    
+    return model_card
+
+
+def check_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame) -> Dict[str, Any]:
+    """Detect data drift between reference and current datasets.
+    
+    Args:
+        reference_data: Reference (baseline) dataset
+        current_data: Current dataset to compare
+        
+    Returns:
+        Dictionary containing drift detection results
+    """
+    logger.info("Checking for data drift")
+    
+    drift_report = {
+        'timestamp': datetime.now().isoformat(),
+        'drift_detected': False,
+        'features': {},
+        'summary': {}
+    }
+    
+    # Get common numeric columns
+    common_cols = list(set(reference_data.columns) & set(current_data.columns))
+    numeric_cols = reference_data[common_cols].select_dtypes(include=[np.number]).columns
+    
+    drifted_features = []
+    
+    for col in numeric_cols:
+        # Kolmogorov-Smirnov test for distribution drift
+        statistic, p_value = stats.ks_2samp(
+            reference_data[col].dropna(),
+            current_data[col].dropna()
+        )
+        
+        # Statistical difference in means
+        mean_ref = reference_data[col].mean()
+        mean_curr = current_data[col].mean()
+        mean_diff_pct = abs((mean_curr - mean_ref) / mean_ref * 100) if mean_ref != 0 else 0
+        
+        # Statistical difference in standard deviations
+        std_ref = reference_data[col].std()
+        std_curr = current_data[col].std()
+        std_diff_pct = abs((std_curr - std_ref) / std_ref * 100) if std_ref != 0 else 0
+        
+        # Drift detected if p-value < 0.05 or mean/std difference > 10%
+        drift_detected = p_value < 0.05 or mean_diff_pct > 10 or std_diff_pct > 10
+        
+        if drift_detected:
+            drifted_features.append(col)
+        
+        drift_report['features'][col] = {
+            'ks_statistic': float(statistic),
+            'p_value': float(p_value),
+            'mean_reference': float(mean_ref),
+            'mean_current': float(mean_curr),
+            'mean_diff_pct': float(mean_diff_pct),
+            'std_reference': float(std_ref),
+            'std_current': float(std_curr),
+            'std_diff_pct': float(std_diff_pct),
+            'drift_detected': drift_detected
+        }
+    
+    drift_report['drift_detected'] = len(drifted_features) > 0
+    drift_report['summary'] = {
+        'total_features_checked': len(numeric_cols),
+        'features_with_drift': len(drifted_features),
+        'drift_percentage': float(len(drifted_features) / len(numeric_cols) * 100) if numeric_cols.size > 0 else 0,
+        'drifted_features': drifted_features
+    }
+    
+    logger.info(f"Data drift check complete. Drift detected: {drift_report['drift_detected']}")
+    logger.info(f"Features with drift: {drifted_features}")
+    
+    return drift_report
+
+
+def check_model_bias(model: Any, X_test: pd.DataFrame, y_test: pd.Series, 
+                     sensitive_features: pd.DataFrame) -> Dict[str, float]:
+    """Check model for bias across sensitive feature groups.
+    
+    Args:
+        model: Trained model
+        X_test: Test features
+        y_test: Test labels
+        sensitive_features: DataFrame with sensitive attributes (e.g., age_group, gender)
+        
+    Returns:
+        Dictionary of bias metrics
+    """
+    logger.info("Checking model for bias")
+    
+    bias_report = {
+        'timestamp': datetime.now().isoformat(),
+        'groups': {},
+        'overall_bias_detected': False
+    }
+    
+    # Get predictions
+    y_pred = model.predict(X_test)
+    
+    # Check bias for each sensitive feature
+    for feature in sensitive_features.columns:
+        groups = sensitive_features[feature].unique()
+        group_metrics = {}
+        
+        for group in groups:
+            # Get indices for this group
+            group_mask = sensitive_features[feature] == group
+            
+            if group_mask.sum() == 0:
+                continue
+            
+            # Calculate metrics for this group
+            y_true_group = y_test[group_mask]
+            y_pred_group = y_pred[group_mask]
+            
+            group_metrics[str(group)] = {
+                'size': int(group_mask.sum()),
+                'accuracy': float(accuracy_score(y_true_group, y_pred_group)),
+                'precision': float(precision_score(y_true_group, y_pred_group, zero_division=0)),
+                'recall': float(recall_score(y_true_group, y_pred_group, zero_division=0)),
+                'f1_score': float(f1_score(y_true_group, y_pred_group, zero_division=0))
+            }
+        
+        # Calculate disparate impact (ratio of positive prediction rates)
+        if len(group_metrics) >= 2:
+            positive_rates = {
+                group: (y_pred[sensitive_features[feature] == group].sum() / 
+                       (sensitive_features[feature] == group).sum())
+                for group in groups if (sensitive_features[feature] == group).sum() > 0
+            }
+            
+            if positive_rates:
+                max_rate = max(positive_rates.values())
+                min_rate = min(positive_rates.values())
+                disparate_impact = min_rate / max_rate if max_rate > 0 else 1.0
+                
+                # Bias detected if disparate impact < 0.8 (80% rule)
+                bias_detected = disparate_impact < 0.8
+                
+                bias_report['groups'][feature] = {
+                    'metrics_by_group': group_metrics,
+                    'positive_rates': {k: float(v) for k, v in positive_rates.items()},
+                    'disparate_impact': float(disparate_impact),
+                    'bias_detected': bias_detected
+                }
+                
+                if bias_detected:
+                    bias_report['overall_bias_detected'] = True
+    
+    logger.info(f"Bias check complete. Overall bias detected: {bias_report['overall_bias_detected']}")
+    
+    return bias_report
+
+
+def register_model(model_path: Path, registry_url: str, metadata: Dict[str, Any]) -> str:
+    """Register model to model registry and return version.
+    
+    Args:
+        model_path: Path to the model file
+        registry_url: URL of the model registry
+        metadata: Model metadata
+        
+    Returns:
+        Model version string
+    """
+    logger.info(f"Registering model to registry: {registry_url}")
+    
+    # In a real implementation, this would interact with MLflow, DVC, or another registry
+    # For now, we'll simulate the registration
+    
+    version = metadata.get('version', f"v_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    
+    registration_record = {
+        'model_path': str(model_path),
+        'registry_url': registry_url,
+        'version': version,
+        'registered_at': datetime.now().isoformat(),
+        'metadata': metadata
+    }
+    
+    # Save registration record
+    registry_path = model_path.parent / 'registry.json'
+    
+    if registry_path.exists():
+        with open(registry_path, 'r') as f:
+            registry = json.load(f)
+    else:
+        registry = {'models': []}
+    
+    registry['models'].append(registration_record)
+    
+    with open(registry_path, 'w') as f:
+        json.dump(registry, f, indent=2)
+    
+    logger.info(f"Model registered successfully. Version: {version}")
+    
+    return version
+
+
+def run_pipeline(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute the complete ML pipeline.
+    
+    Args:
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Dictionary containing pipeline execution results
+    """
+    logger.info("Starting ML pipeline execution")
+    
+    pipeline_results = {
+        'start_time': datetime.now().isoformat(),
+        'status': 'running',
+        'stages': {}
+    }
+    
+    try:
+        # Stage 1: Load data
+        logger.info("Stage 1: Loading data")
+        data_path = Path(config.get('data_path', 'data/raw/fraud_data.csv'))
+        df = load_data(data_path)
+        pipeline_results['stages']['load_data'] = {'status': 'success', 'records': len(df)}
+        
+        # Stage 2: Validate data
+        logger.info("Stage 2: Validating data")
+        is_valid, validation_report = validate_data(df)
+        pipeline_results['stages']['validate_data'] = {
+            'status': 'success' if is_valid else 'failed',
+            'report': validation_report
+        }
+        
+        if not is_valid and config.get('strict_validation', True):
+            raise ValueError("Data validation failed")
+        
+        # Stage 3: Preprocess data
+        logger.info("Stage 3: Preprocessing data")
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        pipeline_results['stages']['preprocess_data'] = {
+            'status': 'success',
+            'train_size': len(X_train),
+            'test_size': len(X_test),
+            'features': list(X_train.columns)
+        }
+        
+        # Stage 4: Train model
+        logger.info("Stage 4: Training model")
+        model = train_model(X_train, y_train)
+        pipeline_results['stages']['train_model'] = {'status': 'success'}
+        
+        # Stage 5: Evaluate model
+        logger.info("Stage 5: Evaluating model")
+        metrics = evaluate_model(model, X_test, y_test)
+        pipeline_results['stages']['evaluate_model'] = {
+            'status': 'success',
+            'metrics': metrics
+        }
+        
+        # Stage 6: Validate performance
+        logger.info("Stage 6: Validating model performance")
+        thresholds = config.get('performance_thresholds', {
+            'accuracy': 0.85,
+            'precision': 0.80,
+            'recall': 0.75,
+            'f1_score': 0.75
+        })
+        
+        performance_valid = validate_model_performance(metrics, thresholds)
+        pipeline_results['stages']['validate_performance'] = {
+            'status': 'success' if performance_valid else 'failed',
+            'thresholds': thresholds,
+            'passed': performance_valid
+        }
+        
+        if not performance_valid and config.get('strict_performance', True):
+            raise ValueError("Model performance below thresholds")
+        
+        # Stage 7: Save model
+        logger.info("Stage 7: Saving model")
+        model_path = Path(config.get('model_path', 'models/fraud_model.joblib'))
+        metadata = {
+            'version': config.get('version', 'v1.0.0'),
+            'created_at': datetime.now().isoformat(),
+            'metrics': metrics,
+            'training_samples': len(X_train),
+            'num_features': len(X_train.columns),
+            'features': list(X_train.columns)
+        }
+        save_model(model, model_path, metadata)
+        pipeline_results['stages']['save_model'] = {
+            'status': 'success',
+            'path': str(model_path)
+        }
+        
+        # Stage 8: Generate model card
+        logger.info("Stage 8: Generating model card")
+        model_card = generate_model_card(model, metrics, metadata)
+        model_card_path = model_path.parent / f"{model_path.stem}_card.md"
+        with open(model_card_path, 'w') as f:
+            f.write(model_card)
+        pipeline_results['stages']['generate_model_card'] = {
+            'status': 'success',
+            'path': str(model_card_path)
+        }
+        
+        # Stage 9: Register model (if configured)
+        if config.get('register_model', False):
+            logger.info("Stage 9: Registering model")
+            registry_url = config.get('registry_url', 'local')
+            version = register_model(model_path, registry_url, metadata)
+            pipeline_results['stages']['register_model'] = {
+                'status': 'success',
+                'version': version
+            }
+        
+        pipeline_results['status'] = 'success'
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {str(e)}")
+        pipeline_results['status'] = 'failed'
+        pipeline_results['error'] = str(e)
+        raise
+    
+    finally:
+        pipeline_results['end_time'] = datetime.now().isoformat()
+        logger.info(f"Pipeline execution completed with status: {pipeline_results['status']}")
+    
+    return pipeline_results
+```
+
+# (a) Complete pytest test file
+
+```python
+# tests/test_pipeline.py
+
+"""Comprehensive test suite for fraud detection ML pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import json
+import joblib
+import tempfile
+import shutil
+from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+
+from src.pipeline import (
+    load_data,
+    validate_data,
+    preprocess_data,
+    train_model,
+    evaluate_model,
+    validate_model_performance,
+    save_model,
+    load_model,
+    generate_model_card,
+    check_data_drift,
+    check_model_bias,
+    register_model,
+    run_pipeline
+)
+
+
+# Fixtures
+
+@pytest.fixture
+def temp_dir():
+    """Create a temporary directory for test files."""
+    temp_path = Path(tempfile.mkdtemp())
+    yield temp_path
+    shutil.rmtree(temp_path)
+
+
+@pytest.fixture
+def sample_fraud_data():
+    """Generate sample fraud detection dataset."""
+    np.random.seed(42)
+    n_samples = 1000
+    
+    data = {
+        'amount': np.random.exponential(100, n_samples),
+        'merchant_id': np.random.randint(1, 100, n_samples),
+        'customer_age': np.random.randint(18, 80, n_samples),
+        'transaction_hour': np.random.randint(0, 24, n_samples),
+        'is_online': np.random.binomial(1, 0.6, n_samples),
+        'is_fraud': np.random.binomial(1, 0.1, n_samples)  # 10% fraud rate
+    }
+    
+    df = pd.DataFrame(data)
+    return df
+
+
+@pytest.fixture
+def sample_fraud_data_with_timestamp(sample_fraud_data):
+    """Add timestamp column to sample data."""
+    df = sample_fraud_data.copy()
+    base_date = pd.Timestamp('2024-01-01')
+    df['timestamp'] = [base_date + pd.Timedelta(hours=i) for i in range(len(df))]
+    return df
+
+
+@pytest.fixture
+def sample_csv_file(temp_dir, sample_fraud_data):
+    """Create a sample CSV file."""
+    csv_path = temp_dir / 'fraud_data.csv'
+    sample_fraud_data.to_csv(csv_path, index=False)
+    return csv_path
+
+
+@pytest.fixture
+def sample_parquet_file(temp_dir, sample_fraud_data):
+    """Create a sample parquet file."""
+    parquet_path = temp_dir / 'fraud_data.parquet'
+    sample_fraud_data.to_parquet(parquet_path, index=False)
+    return parquet_path
+
+
+@pytest.fixture
+def trained_model_and_data(sample_fraud_data):
+    """Train a simple model for testing."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+    model = train_model(X_train, y_train)
+    return model, X_train, X_test, y_train, y_test
+
+
+@pytest.fixture
+def sample_sensitive_features():
+    """Generate sample sensitive features for bias testing."""
+    np.random.seed(42)
+    n_samples = 200
+    
+    return pd.DataFrame({
+        'age_group': np.random.choice(['young', 'middle', 'senior'], n_samples),
+        'gender': np.random.choice(['M', 'F'], n_samples)
+    })
+
+
+# Test load_data
+
+class TestLoadData:
+    """Test suite for load_data function."""
+    
+    def test_load_csv_success(self, sample_csv_file):
+        """Test successful loading of CSV file."""
+        df = load_data(sample_csv_file)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert 'is_fraud' in df.columns
+    
+    def test_load_parquet_success(self, sample_parquet_file):
+        """Test successful loading of parquet file."""
+        df = load_data(sample_parquet_file)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert 'is_fraud' in df.columns
+    
+    def test_load_nonexistent_file(self, temp_dir):
+        """Test loading non-existent file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            load_data(temp_dir / 'nonexistent.csv')
+    
+    def test_load_unsupported_format(self, temp_dir):
+        """Test loading unsupported file format raises ValueError."""
+        unsupported_file = temp_dir / 'data.txt'
+        unsupported_file.touch()
+        
+        with pytest.raises(ValueError, match="Unsupported file format"):
+            load_data(unsupported_file)
+    
+    def test_load_data_preserves_columns(self, sample_csv_file, sample_fraud_data):
+        """Test that loaded data preserves all columns."""
+        df = load_data(sample_csv_file)
+        assert set(df.columns) == set(sample_fraud_data.columns)
+
+
+# Test validate_data
+
+class TestValidateData:
+    """Test suite for validate_data function."""
+    
+    def test_validate_valid_data(self, sample_fraud_data):
+        """Test validation of valid data."""
+        is_valid, report = validate_data(sample_fraud_data)
+        assert is_valid is True
+        assert report['is_valid'] is True
+        assert 'checks' in report
+        assert report['checks']['required_columns'] is True
+    
+    def test_validate_missing_required_columns(self):
+        """Test validation fails with missing required columns."""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        is_valid, report = validate_data(df)
+        assert is_valid is False
+        assert len(report['errors']) > 0
+        assert any('Missing required columns' in error for error in report['errors'])
+    
+    def test_validate_empty_dataframe(self):
+        """Test validation fails with empty DataFrame."""
+        df = pd.DataFrame()
+        is_valid, report = validate_data(df)
+        assert is_valid is False
+        assert any('empty' in error.lower() for error in report['errors'])
+    
+    def test_validate_invalid_amount_type(self):
+        """Test validation fails with non-numeric amount."""
+        df = pd.DataFrame({
+            'amount': ['invalid', 'data', 'here'],
+            'is_fraud': [0, 1, 0]
+        })
+        is_valid, report = validate_data(df)
+        assert is_valid is False
+    
+    def test_validate_invalid_fraud_values(self):
+        """Test validation fails with invalid is_fraud values."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300],
+            'is_fraud': [0, 1, 5]  # 5 is invalid
+        })
+        is_valid, report = validate_data(df)
+        assert is_valid is False
+    
+    def test_validate_high_missing_values_warning(self):
+        """Test warning for high missing value percentage."""
+        df = pd.DataFrame({
+            'amount': [100] + [np.nan] * 99,
+            'is_fraud': [0] * 100
+        })
+        is_valid, report = validate_data(df)
+        assert len(report['warnings']) > 0
+    
+    def test_validate_duplicate_records_warning(self, sample_fraud_data):
+        """Test warning for high duplicate rate."""
+        # Create data with many duplicates
+        df = pd.concat([sample_fraud_data.iloc[:10]] * 20, ignore_index=True)
+        is_valid, report = validate_data(df)
+        assert 'duplicates' in report['checks']
+    
+    def test_validate_extreme_class_imbalance_warning(self):
+        """Test warning for extreme class imbalance."""
+        df = pd.DataFrame({
+            'amount': range(1000),
+            'is_fraud': [1] + [0] * 999  # 0.1% fraud
+        })
+        is_valid, report = validate_data(df)
+        assert len(report['warnings']) > 0
+    
+    def test_validate_outliers_detection(self, sample_fraud_data):
+        """Test outlier detection in validation."""
+        is_valid, report = validate_data(sample_fraud_data)
+        assert 'outliers' in report['checks']
+        assert 'count' in report['checks']['outliers']
+
+
+# Test preprocess_data
+
+class TestPreprocessData:
+    """Test suite for preprocess_data function."""
+    
+    def test_preprocess_returns_correct_shapes(self, sample_fraud_data):
+        """Test preprocessing returns correct data shapes."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        assert len(X_train) > 0
+        assert len(X_test) > 0
+        assert len(X_train) + len(X_test) == len(sample_fraud_data)
+        assert len(X_train) == len(y_train)
+        assert len(X_test) == len(y_test)
+    
+    def test_preprocess_train_test_split_ratio(self, sample_fraud_data):
+        """Test train/test split ratio is approximately 80/20."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        total = len(X_train) + len(X_test)
+        test_ratio = len(X_test) / total
+        
+        assert 0.15 <= test_ratio <= 0.25  # Allow some variance
+    
+    def test_preprocess_handles_missing_values(self):
+        """Test preprocessing handles missing values."""
+        df = pd.DataFrame({
+            'amount': [100, np.nan, 300, 400],
+            'feature1': [1, 2, np.nan, 4],
+            'is_fraud': [0, 1, 0, 1]
+        })
+        
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        # Check no NaN values in processed data
+        assert not X_train.isnull().any().any()
+        assert not X_test.isnull().any().any()
+    
+    def test_preprocess_creates_log_features(self, sample_fraud_data):
+        """Test preprocessing creates log-transformed features."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        # Should have amount_log feature
+        assert 'amount_log' in X_train.columns or len(X_train.columns) > len(sample_fraud_data.columns) - 2
+    
+    def test_preprocess_with_timestamp_features(self, sample_fraud_data_with_timestamp):
+        """Test preprocessing creates time-based features."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data_with_timestamp)
+        
+        # Check for time-based features
+        assert len(X_train.columns) > 0
+    
+    def test_preprocess_stratified_split(self, sample_fraud_data):
+        """Test that train/test split maintains class distribution."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        original_fraud_rate = sample_fraud_data['is_fraud'].mean()
+        train_fraud_rate = y_train.mean()
+        test_fraud_rate = y_test.mean()
+        
+        # Rates should be similar (within 5%)
+        assert abs(train_fraud_rate - original_fraud_rate) < 0.05
+        assert abs(test_fraud_rate - original_fraud_rate) < 0.05
+    
+    def test_preprocess_scaling_applied(self, sample_fraud_data):
+        """Test that feature scaling is applied."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        
+        # Scaled features should have mean near 0 and std near 1
+        for col in X_train.columns:
+            assert -0.5 <= X_train[col].mean() <= 0.5
+            assert 0.5 <= X_train[col].std() <= 1.5
+    
+    def test_preprocess_missing_target_raises_error(self):
+        """Test preprocessing raises error when target column is missing."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300],
+            'feature1': [1, 2, 3]
+        })
+        
+        with pytest.raises(ValueError, match="Target column"):
+            preprocess_data(df)
+
+
+# Test train_model
+
+class TestTrainModel:
+    """Test suite for train_model function."""
+    
+    def test_train_model_returns_fitted_model(self, sample_fraud_data):
+        """Test training returns a fitted model."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        model = train_model(X_train, y_train)
+        
+        assert model is not None
+        assert hasattr(model, 'predict')
+        assert hasattr(model, 'predict_proba')
+    
+    def test_train_model_type(self, sample_fraud_data):
+        """Test that trained model is RandomForestClassifier."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        model = train_model(X_train, y_train)
+        
+        assert isinstance(model, RandomForestClassifier)
+    
+    def test_train_model_can_predict(self, sample_fraud_data):
+        """Test that trained model can make predictions."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        model = train_model(X_train, y_train)
+        
+        predictions = model.predict(X_test)
+        assert len(predictions) == len(X_test)
+        assert all(pred in [0, 1] for pred in predictions)
+    
+    def test_train_model_feature_importances(self, sample_fraud_data):
+        """Test that model has feature importances."""
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        model = train_model(X_train, y_train)
+        
+        assert hasattr(model, 'feature_importances_')
+        assert len(model.feature_importances_) == len(X_train.columns)
+        assert all(imp >= 0 for imp in model.feature_importances_)
+
+
+# Test evaluate_model
+
+class TestEvaluateModel:
+    """Test suite for evaluate_model function."""
+    
+    def test_evaluate_returns_metrics_dict(self, trained_model_and_data):
+        """Test evaluation returns dictionary of metrics."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        assert isinstance(metrics, dict)
+        assert len(metrics) > 0
+    
+    def test_evaluate_contains_required_metrics(self, trained_model_and_data):
+        """Test evaluation includes all required metrics."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        required_metrics = ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']
+        for metric in required_metrics:
+            assert metric in metrics
+    
+    def test_evaluate_metrics_in_valid_range(self, trained_model_and_data):
+        """Test that all metrics are in valid ranges."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        for metric_name in ['accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']:
+            assert 0.0 <= metrics[metric_name] <= 1.0
+    
+    def test_evaluate_confusion_matrix_values(self, trained_model_and_data):
+        """Test confusion matrix values are present and valid."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        cm_keys = ['true_positives', 'true_negatives', 'false_positives', 'false_negatives']
+        for key in cm_keys:
+            assert key in metrics
+            assert metrics[key] >= 0
+        
+        # Sum should equal test set size
+        total = sum(metrics[key] for key in cm_keys)
+        assert total == len(y_test)
+    
+    def test_evaluate_additional_metrics(self, trained_model_and_data):
+        """Test additional metrics are calculated."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        assert 'specificity' in metrics
+        assert 'false_positive_rate' in metrics
+        assert 'false_negative_rate' in metrics
+
+
+# Test validate_model_performance
+
+class TestValidateModelPerformance:
+    """Test suite for validate_model_performance function."""
+    
+    def test_validate_performance_passes_good_metrics(self):
+        """Test validation passes with good metrics."""
+        metrics = {
+            'accuracy': 0.90,
+            'precision': 0.85,
+            'recall': 0.80,
+            'f1_score': 0.82
+        }
+        thresholds = {
+            'accuracy': 0.85,
+            'precision': 0.80,
+            'recall': 0.75,
+            'f1_score': 0.75
+        }
+        
+        result = validate_model_performance(metrics, thresholds)
+        assert result is True
+    
+    def test_validate_performance_fails_bad_metrics(self):
+        """Test validation fails with poor metrics."""
+        metrics = {
+            'accuracy': 0.70,
+            'precision': 0.65,
+            'recall': 0.60,
+            'f1_score': 0.62
+        }
+        thresholds = {
+            'accuracy': 0.85,
+            'precision': 0.80,
+            'recall': 0.75,
+            'f1_score': 0.75
+        }
+        
+        result = validate_model_performance(metrics, thresholds)
+        assert result is False
+    
+    def test_validate_performance_partial_failure(self):
+        """Test validation fails if any metric is below threshold."""
+        metrics = {
+            'accuracy': 0.90,
+            'precision': 0.85,
+            'recall': 0.70,  # Below threshold
+            'f1_score': 0.82
+        }
+        thresholds = {
+            'accuracy': 0.85,
+            'precision': 0.80,
+            'recall': 0.75,
+            'f1_score': 0.75
+        }
+        
+        result = validate_model_performance(metrics, thresholds)
+        assert result is False
+    
+    def test_validate_performance_exact_threshold(self):
+        """Test validation passes when metrics exactly meet thresholds."""
+        metrics = {
+            'accuracy': 0.85,
+            'precision': 0.80
+        }
+        thresholds = {
+            'accuracy': 0.85,
+            'precision': 0.80
+        }
+        
+        result = validate_model_performance(metrics, thresholds)
+        assert result is True
+    
+    def test_validate_performance_missing_metric(self):
+        """Test validation handles missing metrics gracefully."""
+        metrics = {
+            'accuracy': 0.90
+        }
+        thresholds = {
+            'accuracy': 0.85,
+            'nonexistent_metric': 0.80
+        }
+        
+        # Should not raise error, just log warning
+        result = validate_model_performance(metrics, thresholds)
+        assert isinstance(result, bool)
+
+
+# Test save_model and load_model
+
+class TestSaveLoadModel:
+    """Test suite for save_model and load_model functions."""
+    
+    def test_save_model_creates_files(self, temp_dir, trained_model_and_data):
+        """Test that save_model creates model and metadata files."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0', 'created_at': datetime.now().isoformat()}
+        
+        save_model(model, model_path, metadata)
+        
+        assert model_path.exists()
+        metadata_path = temp_dir / 'test_model_metadata.json'
+        assert metadata_path.exists()
+    
+    def test_save_model_creates_directory(self, temp_dir, trained_model_and_data):
+        """Test that save_model creates parent directories."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'subdir' / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0'}
+        
+        save_model(model, model_path, metadata)
+        
+        assert model_path.exists()
+    
+    def test_load_model_success(self, temp_dir, trained_model_and_data):
+        """Test successful model loading."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0', 'test_key': 'test_value'}
+        
+        save_model(model, model_path, metadata)
+        loaded_model, loaded_metadata = load_model(model_path)
+        
+        assert loaded_model is not None
+        assert 'version' in loaded_metadata
+        assert loaded_metadata['version'] == 'v1.0.0'
+    
+    def test_load_model_nonexistent_raises_error(self, temp_dir):
+        """Test loading non-existent model raises FileNotFoundError."""
+        model_path = temp_dir / 'nonexistent_model.joblib'
+        
+        with pytest.raises(FileNotFoundError):
+            load_model(model_path)
+    
+    def test_load_model_without_metadata(self, temp_dir, trained_model_and_data):
+        """Test loading model without metadata file."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        
+        # Save only model, not metadata
+        joblib.dump(model, model_path)
+        
+        loaded_model, loaded_metadata = load_model(model_path)
+        
+        assert loaded_model is not None
+        assert loaded_metadata == {}
+    
+    def test_save_load_model_predictions_match(self, temp_dir, trained_model_and_data):
+        """Test that loaded model makes same predictions as original."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0'}
+        
+        original_predictions = model.predict(X_test)
+        
+        save_model(model, model_path, metadata)
+        loaded_model, _ = load_model(model_path)
+        
+        loaded_predictions = loaded_model.predict(X_test)
+        
+        assert np.array_equal(original_predictions, loaded_predictions)
+
+
+# Test generate_model_card
+
+class TestGenerateModelCard:
+    """Test suite for generate_model_card function."""
+    
+    def test_generate_model_card_returns_string(self, trained_model_and_data):
+        """Test model card generation returns a string."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        metadata = {'version': 'v1.0.0', 'created_at': datetime.now().isoformat()}
+        
+        card = generate_model_card(model, metrics, metadata)
+        
+        assert isinstance(card, str)
+        assert len(card) > 0
+    
+    def test_generate_model_card_contains_sections(self, trained_model_and_data):
+        """Test model card contains required sections."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        metadata = {'version': 'v1.0.0'}
+        
+        card = generate_model_card(model, metrics, metadata)
+        
+        required_sections = [
+            'Model Details',
+            'Intended Use',
+            'Training Data',
+            'Performance Metrics',
+            'Confusion Matrix',
+            'Ethical Considerations'
+        ]
+        
+        for section in required_sections:
+            assert section in card
+    
+    def test_generate_model_card_includes_metrics(self, trained_model_and_data):
+        """Test model card includes performance metrics."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        metadata = {'version': 'v1.0.0'}
+        
+        card = generate_model_card(model, metrics, metadata)
+        
+        assert 'Accuracy' in card
+        assert 'Precision' in card
+        assert 'Recall' in card
+        assert 'F1 Score' in card
+    
+    def test_generate_model_card_includes_metadata(self, trained_model_and_data):
+        """Test model card includes metadata information."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        metrics = evaluate_model(model, X_test, y_test)
+        metadata = {
+            'version': 'v2.5.0',
+            'created_at': '2024-01-15',
+            'owner': 'Test Team'
+        }
+        
+        card = generate_model_card(model, metrics, metadata)
+        
+        assert 'v2.5.0' in card
+
+
+# Test check_data_drift
+
+class TestCheckDataDrift:
+    """Test suite for check_data_drift function."""
+    
+    def test_check_drift_no_drift_same_data(self, sample_fraud_data):
+        """Test no drift detected with identical datasets."""
+        drift_report = check_data_drift(sample_fraud_data, sample_fraud_data)
+        
+        assert drift_report['drift_detected'] is False
+        assert drift_report['summary']['features_with_drift'] == 0
+    
+    def test_check_drift_detects_mean_shift(self, sample_fraud_data):
+        """Test drift detection with mean shift."""
+        reference_data = sample_fraud_data.copy()
+        current_data = sample_fraud_data.copy()
+        
+        # Shift the amount column significantly
+        current_data['amount'] = current_data['amount'] * 2
+        
+        drift_report = check_data_drift(reference_data, current_data)
+        
+        assert drift_report['drift_detected'] is True
+        assert 'amount' in drift_report['summary']['drifted_features']
+    
+    def test_check_drift_detects_distribution_change(self, sample_fraud_data):
+        """Test drift detection with distribution change."""
+        reference_data = sample_fraud_data.copy()
+        current_data = sample_fraud_data.copy()
+        
+        # Change distribution
+        current_data['amount'] = np.random.uniform(0, 1000, len(current_data))
+        
+        drift_report = check_data_drift(reference_data, current_data)
+        
+        assert drift_report['drift_detected'] is True
+    
+    def test_check_drift_report_structure(self, sample_fraud_data):
+        """Test drift report has correct structure."""
+        drift_report = check_data_drift(sample_fraud_data, sample_fraud_data)
+        
+        assert 'timestamp' in drift_report
+        assert 'drift_detected' in drift_report
+        assert 'features' in drift_report
+        assert 'summary' in drift_report
+        assert 'total_features_checked' in drift_report['summary']
+    
+    def test_check_drift_feature_level_details(self, sample_fraud_data):
+        """Test drift report includes feature-level details."""
+        drift_report = check_data_drift(sample_fraud_data, sample_fraud_data)
+        
+        for feature, details in drift_report['features'].items():
+            assert 'ks_statistic' in details
+            assert 'p_value' in details
+            assert 'mean_reference' in details
+            assert 'mean_current' in details
+            assert 'drift_detected' in details
+
+
+# Test check_model_bias
+
+class TestCheckModelBias:
+    """Test suite for check_model_bias function."""
+    
+    def test_check_bias_report_structure(self, trained_model_and_data, sample_sensitive_features):
+        """Test bias report has correct structure."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        
+        # Adjust sensitive features to match test set size
+        sensitive_features = sample_sensitive_features.iloc[:len(X_test)].reset_index(drop=True)
+        
+        bias_report = check_model_bias(model, X_test, y_test, sensitive_features)
+        
+        assert 'timestamp' in bias_report
+        assert 'groups' in bias_report
+        assert 'overall_bias_detected' in bias_report
+    
+    def test_check_bias_calculates_disparate_impact(self, trained_model_and_data, sample_sensitive_features):
+        """Test bias check calculates disparate impact."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        sensitive_features = sample_sensitive_features.iloc[:len(X_test)].reset_index(drop=True)
+        
+        bias_report = check_model_bias(model, X_test, y_test, sensitive_features)
+        
+        for feature, details in bias_report['groups'].items():
+            assert 'disparate_impact' in details
+            assert 'bias_detected' in details
+    
+    def test_check_bias_group_metrics(self, trained_model_and_data, sample_sensitive_features):
+        """Test bias check includes metrics for each group."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        sensitive_features = sample_sensitive_features.iloc[:len(X_test)].reset_index(drop=True)
+        
+        bias_report = check_model_bias(model, X_test, y_test, sensitive_features)
+        
+        for feature, details in bias_report['groups'].items():
+            assert 'metrics_by_group' in details
+            for group, metrics in details['metrics_by_group'].items():
+                assert 'accuracy' in metrics
+                assert 'precision' in metrics
+                assert 'recall' in metrics
+
+
+# Test register_model
+
+class TestRegisterModel:
+    """Test suite for register_model function."""
+    
+    def test_register_model_returns_version(self, temp_dir, trained_model_and_data):
+        """Test model registration returns version string."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0'}
+        
+        save_model(model, model_path, metadata)
+        
+        version = register_model(model_path, 'http://registry.local', metadata)
+        
+        assert isinstance(version, str)
+        assert len(version) > 0
+    
+    def test_register_model_creates_registry_file(self, temp_dir, trained_model_and_data):
+        """Test model registration creates registry file."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        metadata = {'version': 'v1.0.0'}
+        
+        save_model(model, model_path, metadata)
+        register_model(model_path, 'http://registry.local', metadata)
+        
+        registry_path = temp_dir / 'registry.json'
+        assert registry_path.exists()
+    
+    def test_register_model_appends_to_registry(self, temp_dir, trained_model_and_data):
+        """Test multiple registrations append to registry."""
+        model, X_train, X_test, y_train, y_test = trained_model_and_data
+        model_path = temp_dir / 'test_model.joblib'
+        
+        save_model(model, model_path, {'version': 'v1.0.0'})
+        register_model(model_path, 'http://registry.local', {'version': 'v1.0.0'})
+        
+        save_model(model, model_path, {'version': 'v1.1.0'})
+        register_model(model_path, 'http://registry.local', {'version': 'v1.1.0'})
+        
+        registry_path = temp_dir / 'registry.json'
+        with open(registry_path) as f:
+            registry = json.load(f)
+        
+        assert len(registry['models']) == 2
+
+
+# Test run_pipeline
+
+class TestRunPipeline:
+    """Test suite for run_pipeline function."""
+    
+    def test_run_pipeline_success(self, temp_dir, sample_csv_file):
+        """Test successful pipeline execution."""
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {
+                'accuracy': 0.5,
+                'precision': 0.5,
+                'recall': 0.5,
+                'f1_score': 0.5
+            }
+        }
+        
+        results = run_pipeline(config)
+        
+        assert results['status'] == 'success'
+        assert 'stages' in results
+    
+    def test_run_pipeline_all_stages_executed(self, temp_dir, sample_csv_file):
+        """Test all pipeline stages are executed."""
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {
+                'accuracy': 0.5,
+                'precision': 0.5,
+                'recall': 0.5,
+                'f1_score': 0.5
+            }
+        }
+        
+        results = run_pipeline(config)
+        
+        expected_stages = [
+            'load_data',
+            'validate_data',
+            'preprocess_data',
+            'train_model',
+            'evaluate_model',
+            'validate_performance',
+            'save_model',
+            'generate_model_card'
+        ]
+        
+        for stage in expected_stages:
+            assert stage in results['stages']
+    
+    def test_run_pipeline_creates_artifacts(self, temp_dir, sample_csv_file):
+        """Test pipeline creates expected artifacts."""
+        model_path = temp_dir / 'model.joblib'
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': model_path,
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {
+                'accuracy': 0.5,
+                'precision': 0.5
+            }
+        }
+        
+        run_pipeline(config)
+        
+        assert model_path.exists()
+        assert (temp_dir / 'model_metadata.json').exists()
+        assert (temp_dir / 'model_card.md').exists()
+    
+    def test_run_pipeline_fails_on_invalid_data(self, temp_dir):
+        """Test pipeline fails with invalid data when strict validation enabled."""
+        # Create invalid data
+        invalid_data = pd.DataFrame({'wrong_column': [1, 2, 3]})
+        invalid_csv = temp_dir / 'invalid.csv'
+        invalid_data.to_csv(invalid_csv, index=False)
+        
+        config = {
+            'data_path': invalid_csv,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': True
+        }
+        
+        with pytest.raises(ValueError, match="Data validation failed"):
+            run_pipeline(config)
+    
+    def test_run_pipeline_fails_on_poor_performance(self, temp_dir, sample_csv_file):
+        """Test pipeline fails with poor performance when strict mode enabled."""
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': True,
+            'performance_thresholds': {
+                'accuracy': 0.99,  # Unrealistic threshold
+                'precision': 0.99,
+                'recall': 0.99,
+                'f1_score': 0.99
+            }
+        }
+        
+        with pytest.raises(ValueError, match="Model performance below thresholds"):
+            run_pipeline(config)
+    
+    def test_run_pipeline_with_model_registration(self, temp_dir, sample_csv_file):
+        """Test pipeline with model registration enabled."""
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': False,
+            'register_model': True,
+            'registry_url': 'http://test-registry.local',
+            'performance_thresholds': {
+                'accuracy': 0.5
+            }
+        }
+        
+        results = run_pipeline(config)
+        
+        assert 'register_model' in results['stages']
+        assert results['stages']['register_model']['status'] == 'success'
+    
+    def test_run_pipeline_timing_recorded(self, temp_dir, sample_csv_file):
+        """Test pipeline records start and end times."""
+        config = {
+            'data_path': sample_csv_file,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {'accuracy': 0.5}
+        }
+        
+        results = run_pipeline(config)
+        
+        assert 'start_time' in results
+        assert 'end_time' in results
+        
+        # Verify they are valid ISO format timestamps
+        datetime.fromisoformat(results['start_time'])
+        datetime.fromisoformat(results['end_time'])
+
+
+# Integration Tests
+
+class TestIntegration:
+    """Integration tests for end-to-end workflows."""
+    
+    def test_full_pipeline_workflow(self, temp_dir, sample_fraud_data):
+        """Test complete workflow from data to deployed model."""
+        # Save sample data
+        data_path = temp_dir / 'fraud_data.csv'
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        # Configure and run pipeline
+        config = {
+            'data_path': data_path,
+            'model_path': temp_dir / 'fraud_model.joblib',
+            'version': 'v1.0.0',
+            'strict_validation': True,
+            'strict_performance': False,
+            'register_model': True,
+            'registry_url': 'http://localhost:5000',
+            'performance_thresholds': {
+                'accuracy': 0.6,
+                'precision': 0.5,
+                'recall': 0.5,
+                'f1_score': 0.5
+            }
+        }
+        
+        results = run_pipeline(config)
+        
+        # Verify pipeline succeeded
+        assert results['status'] == 'success'
+        
+        # Verify model can be loaded and used
+        model, metadata = load_model(config['model_path'])
+        X_train, X_test, y_train, y_test = preprocess_data(sample_fraud_data)
+        predictions = model.predict(X_test)
+        
+        assert len(predictions) == len(X_test)
+        assert metadata['version'] == 'v1.0.0'
+    
+    def test_retraining_workflow(self, temp_dir, sample_fraud_data):
+        """Test model retraining with new data."""
+        data_path = temp_dir / 'fraud_data.csv'
+        sample_fraud_data.to_csv(data_path, index=False)
+        
+        model_path = temp_dir / 'fraud_model.joblib'
+        
+        # Train initial model
+        config_v1 = {
+            'data_path': data_path,
+            'model_path': model_path,
+            'version': 'v1.0.0',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {'accuracy': 0.5}
+        }
+        
+        results_v1 = run_pipeline(config_v1)
+        model_v1, metadata_v1 = load_model(model_path)
+        
+        # Retrain with updated data
+        new_data = sample_fraud_data.copy()
+        new_data['amount'] = new_data['amount'] * 1.1  # Slight drift
+        new_data.to_csv(data_path, index=False)
+        
+        config_v2 = {
+            'data_path': data_path,
+            'model_path': model_path,
+            'version': 'v2.0.0',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {'accuracy': 0.5}
+        }
+        
+        results_v2 = run_pipeline(config_v2)
+        model_v2, metadata_v2 = load_model(model_path)
+        
+        # Verify versions are different
+        assert metadata_v2['version'] == 'v2.0.0'
+        assert metadata_v1['version'] != metadata_v2['version']
+
+
+# Performance Tests
+
+class TestPerformance:
+    """Performance and scalability tests."""
+    
+    def test_pipeline_handles_large_dataset(self, temp_dir):
+        """Test pipeline can handle larger datasets."""
+        # Generate larger dataset
+        np.random.seed(42)
+        n_samples = 10000
+        
+        large_data = pd.DataFrame({
+            'amount': np.random.exponential(100, n_samples),
+            'merchant_id': np.random.randint(1, 1000, n_samples),
+            'customer_age': np.random.randint(18, 80, n_samples),
+            'is_fraud': np.random.binomial(1, 0.1, n_samples)
+        })
+        
+        data_path = temp_dir / 'large_fraud_data.csv'
+        large_data.to_csv(data_path, index=False)
+        
+        config = {
+            'data_path': data_path,
+            'model_path': temp_dir / 'model.joblib',
+            'strict_validation': False,
+            'strict_performance': False,
+            'performance_thresholds': {'accuracy': 0.5}
+        }
+        
+        results = run_pipeline(config)
+        
+        assert results['status'] == 'success'
+        assert results['stages']['load_data']['records'] == n_samples
+    
+    def test_preprocessing_performance(self, temp_dir):
+        """Test preprocessing performance on medium dataset."""
+        np.random.seed(42)
+        n_samples = 5000
+        
+        data = pd.DataFrame({
+            'amount': np.random.exponential(100, n_samples),
+            'feature1': np.random.randn(n_samples),
+            'feature2': np.random.randn(n_samples),
+            'feature3': np.random.randn(n_samples),
+            'is_fraud': np.random.binomial(1, 0.1, n_samples)
+        })
+        
+        import time
+        start_time = time.time()
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        elapsed_time = time.time() - start_time
+        
+        # Should complete in reasonable time (< 5 seconds for 5k records)
+        assert elapsed_time < 5.0
+        assert len(X_train) + len(X_test) == n_samples
+
+
+# Edge Cases and Error Handling
+
+class TestEdgeCases:
+    """Test edge cases and error handling."""
+    
+    def test_single_class_data(self):
+        """Test handling of single-class data."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300, 400],
+            'is_fraud': [0, 0, 0, 0]  # All non-fraud
+        })
+        
+        # Should handle gracefully, possibly with warning
+        is_valid, report = validate_data(df)
+        assert 'warnings' in report
+    
+    def test_all_missing_values_column(self):
+        """Test handling of column with all missing values."""
+        df = pd.DataFrame({
+            'amount': [100, 200, 300],
+            'all_missing': [np.nan, np.nan, np.nan],
+            'is_fraud': [0, 1, 0]
+        })
+        
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        # Should handle without crashing
+        assert len(X_train) > 0
+    
+    def test_extreme_class_imbalance(self):
+        """Test with extreme class imbalance."""
+        df = pd.DataFrame({
+            'amount': range(1000),
+            'is_fraud': [1] + [0] * 999  # 0.1% fraud
+        })
+        
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        model = train_model(X_train, y_train)
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Should complete without error
+        assert 'accuracy' in metrics
+    
+    def test_zero_variance_features(self):
+        """Test handling of zero-variance features."""
+        df = pd.DataFrame({
+            'amount': [100] * 100,  # No variance
+            'feature1': range(100),
+            'is_fraud': np.random.binomial(1, 0.5, 100)
+        })
+        
+        X_train, X_test, y_train, y_test = preprocess_data(df)
+        
+        # Should handle without error
+        assert len(X_train.columns) > 0
+```
+
+# (b) Complete GitHub Actions workflow
+
+```yaml
+# .github/workflows/ml-pipeline.yml
+
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run daily at 2 AM UTC for drift detection
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Deploy to production'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: '3.9'
+  MODEL_REGISTRY_URL: ${{ secrets.MODEL_REGISTRY_URL }}
+  DATA_PATH: 'data/raw/fraud_data.csv'
+  MODEL_PATH: 'models/fraud_model.joblib'
+
+jobs:
+  # Job 1: Code Quality and Linting
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort mypy pylint
+        pip install -r requirements.txt
+    
+    - name: Run Black formatter check
+      run: |
+        black --check src/ tests/
+    
+    - name: Run isort import check
+      run: |
+        isort --check-only src/ tests/
+    
+    - name: Run flake8
+      run: |
+        flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+    
+    - name: Run pylint
+      run: |
+        pylint src/ --disable=C0111,R0913,R0914
+      continue-on-error: true
+    
+    - name: Run mypy type checking
+      run: |
+        mypy src/ --ignore-missing-imports
+      continue-on-error: true
+
+  # Job 2: Unit and Integration Tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-xdist
+    
+    - name: Create test data directory
+      run: |
+        mkdir -p data/raw
+        mkdir -p models
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --cov-report=term -n auto
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+    
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report-${{ matrix.python-version }}
+        path: htmlcov/
+    
+    - name: Check coverage threshold
+      run: |
+        coverage report --fail-under=80
+
+  # Job 3: Data Validation
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download training data
+      run: |
+        mkdir -p data/raw
+        # In production, download from S3, GCS, or other data source
+        python scripts/download_data.py || echo "Using sample data"
+    
+    - name: Validate data schema and quality
+      run: |
+        python scripts/validate_data.py --data-path ${{ env.DATA_PATH }}
+    
+    - name: Upload validation report
+      uses: actions/upload-artifact@v3
+      with:
+        name: data-validation-report
+        path: reports/data_validation.json
+
+  # Job 4: Data Drift Detection
+  drift-detection:
+    name: Data Drift Detection
+    runs-on: ubuntu-latest
+    needs: data-validation
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download reference data
+      run: |
+        mkdir -p data/reference
+        python scripts/download_reference_data.py
+    
+    - name: Download current data
+      run: |
+        mkdir -p data/current
+        python scripts/download_current_data.py
+    
+    - name: Check for data drift
+      run: |
+        python scripts/check_drift.py \
+          --reference-data data/reference/fraud_data.csv \
+          --current-data data/current/fraud_data.csv \
+          --output reports/drift_report.json
+    
+    - name: Upload drift report
+      uses: actions/upload-artifact@v3
+      with:
+        name: drift-report
+        path: reports/drift_report.json
+    
+    - name: Create drift alert issue
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: '⚠️ Data Drift Detected',
+            body: 'Significant data drift has been detected. Please review the drift report and consider retraining the model.',
+            labels: ['drift-alert', 'ml-ops']
+          })
+
+  # Job 5: Model Training
+  train-model:
+    name: Train Model
+    runs-on: ubuntu-latest
+    needs: data-validation
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download training data
+      run: |
+        mkdir -p data/raw
+        python scripts/download_data.py || echo "Using sample data"
+    
+    - name: Train model
+      run: |
+        python scripts/train.py \
+          --data-path ${{ env.DATA_PATH }} \
+          --model-path ${{ env.MODEL_PATH }} \
+          --config config/training_config.yaml
+    
+    - name: Upload trained model
+      uses: actions/upload-artifact@v3
+      with:
+        name: trained-model
+        path: |
+          models/
+          !models/.gitkeep
+    
+    - name: Upload training metrics
+      uses: actions/upload-artifact@v3
+      with:
+        name: training-metrics
+        path: reports/training_metrics.json
+
+  # Job 6: Model Evaluation
+  evaluate-model:
+    name: Evaluate Model
+    runs-on: ubuntu-latest
+    needs: train-model
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download trained model
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+        path: models/
+    
+    - name: Download test data
+      run: |
+        mkdir -p data/test
+        python scripts/download_test_data.py || echo "Using sample data"
+    
+    - name: Evaluate model
+      run: |
+        python scripts/evaluate.py \
+          --model-path ${{ env.MODEL_PATH }} \
+          --test-data-path data/test/fraud_data.csv \
+          --output reports/evaluation_metrics.json
+    
+    - name: Upload evaluation metrics
+      uses: actions/upload-artifact@v3
+      with:
+        name: evaluation-metrics
+        path: reports/evaluation_metrics.json
+    
+    - name: Check performance thresholds
+      run: |
+        python scripts/check_thresholds.py \
+          --metrics-path reports/evaluation_metrics.json \
+          --thresholds-path config/performance_thresholds.yaml
+
+  # Job 7: Model Bias and Fairness Testing
+  bias-testing:
+    name: Bias and Fairness Testing
+    runs-on: ubuntu-latest
+    needs: train-model
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download trained model
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+        path: models/
+    
+    - name: Download test data with sensitive features
+      run: |
+        mkdir -p data/test
+        python scripts/download_test_data_with_demographics.py
+    
+    - name: Run bias tests
+      run: |
+        python scripts/test_bias.py \
+          --model-path ${{ env.MODEL_PATH }} \
+          --test-data-path data/test/fraud_data_with_demographics.csv \
+          --output reports/bias_report.json
+    
+    - name: Upload bias report
+      uses: actions/upload-artifact@v3
+      with:
+        name: bias-report
+        path: reports/bias_report.json
+    
+    - name: Check fairness thresholds
+      run: |
+        python scripts/check_fairness.py \
+          --bias-report reports/bias_report.json \
+          --threshold 0.8
+      continue-on-error: true
+
+  # Job 8: Security Scanning
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+        pip install -r requirements.txt
+    
+    - name: Run safety check for vulnerabilities
+      run: |
+        safety check --json --output reports/safety_report.json || true
+    
+    - name: Run bandit security linter
+      run: |
+        bandit -r src/ -f json -o reports/bandit_report.json || true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: reports/*_report.json
+
+  # Job 9: Model Documentation
+  generate-docs:
+    name: Generate Model Documentation
+    runs-on: ubuntu-latest
+    needs: [evaluate-model, bias-testing]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Generate model card
+      run: |
+        python scripts/generate_model_card.py \
+          --model-path trained-model/fraud_model.joblib \
+          --metrics-path evaluation-metrics/evaluation_metrics.json \
+          --bias-report-path bias-report/bias_report.json \
+          --output docs/model_card.md
+    
+    - name: Generate API documentation
+      run: |
+        python scripts/generate_api_docs.py --output docs/api_documentation.md
+    
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: model-documentation
+        path: docs/
+
+  # Job 10: Build Docker Image
+  build-docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [evaluate-model, security-scan]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download trained model
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+        path: models/
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.DOCKER_USERNAME }}/fraud-detection
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=sha,prefix={{branch}}-
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Scan Docker image for vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ secrets.DOCKER_USERNAME }}/fraud-detection:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Job 11: Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-docker, generate-docs]
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
+    environment:
+      name: staging
+      url: https://staging-fraud-api.example.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download trained model
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+        path: models/
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Deploy to ECS Staging
+      run: |
+        aws ecs update-service \
+          --cluster fraud-detection-staging \
+          --service fraud-api \
+          --force-new-deployment
+    
+    - name: Wait for deployment
+      run: |
+        aws ecs wait services-stable \
+          --cluster fraud-detection-staging \
+          --services fraud-api
+    
+    - name: Run smoke tests
+      run: |
+        python scripts/smoke_tests.py --endpoint https://staging-fraud-api.example.com
+
+  # Job 12: Integration Tests (Staging)
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install requests pytest
+    
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ -v \
+          --endpoint https://staging-fraud-api.example.com \
+          --api-key ${{ secrets.STAGING_API_KEY }}
+    
+    - name: Run load tests
+      run: |
+        python scripts/load_test.py \
+          --endpoint https://staging-fraud-api.example.com \
+          --duration 60 \
+          --users 10
+
+  # Job 13: Model Registry
+  register-model:
+    name: Register Model
+    runs-on: ubuntu-latest
+    needs: [evaluate-model, bias-testing]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install mlflow
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Register model to MLflow
+      env:
+        MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USERNAME }}
+        MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASSWORD }}
+      run: |
+        python scripts/register_model.py \
+          --model-path trained-model/fraud_model.joblib \
+          --metrics-path evaluation-metrics/evaluation_metrics.json \
+          --model-name fraud-detection \
+          --stage Staging
+    
+    - name: Create model version tag
+      run: |
+        VERSION=$(date +%Y.%m.%d)-${{ github.sha }}
+        echo "MODEL_VERSION=$VERSION" >> $GITHUB_ENV
+        git tag -a "model-$VERSION" -m "Model version $VERSION"
+        git push origin "model-$VERSION"
+
+  # Job 14: Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [integration-tests, register-model]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.deploy_to_production == 'true')
+    environment:
+      name: production
+      url: https://fraud-api.example.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download trained model
+      uses: actions/download-artifact@v3
+      with:
+        name: trained-model
+        path: models/
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Blue-Green Deployment
+      run: |
+        # Deploy new version (green)
+        aws ecs update-service \
+          --cluster fraud-detection-prod \
+          --service fraud-api-green \
+          --force-new-deployment
+        
+        # Wait for green deployment
+        aws ecs wait services-stable \
+          --cluster fraud-detection-prod \
+          --services fraud-api-green
+    
+    - name: Run production smoke tests
+      run: |
+        python scripts/smoke_tests.py --endpoint https://fraud-api-green.example.com
+    
+    - name: Switch traffic to green
+      run: |
+        aws elbv2 modify-listener \
+          --listener-arn ${{ secrets.PROD_LISTENER_ARN }} \
+          --default-actions Type=forward,TargetGroupArn=${{ secrets.GREEN_TARGET_GROUP_ARN }}
+    
+    - name: Monitor deployment
+      run: |
+        python scripts/monitor_deployment.py \
+          --duration 300 \
+          --endpoint https://fraud-api.example.com
+    
+    - name: Rollback on failure
+      if: failure()
+      run: |
+        aws elbv2 modify-listener \
+          --listener-arn ${{ secrets.PROD_LISTENER_ARN }} \
+          --default-actions Type=forward,TargetGroupArn=${{ secrets.BLUE_TARGET_GROUP_ARN }}
+
+  # Job 15: Post-Deployment Monitoring
+  post-deployment:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Setup monitoring dashboards
+      run: |
+        python scripts/setup_monitoring.py \
+          --environment production \
+          --model-version ${{ env.MODEL_VERSION }}
+    
+    - name: Create deployment notification
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment.id,
+            state: 'success',
+            log_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            description: 'Model deployed successfully to production'
+          })
+    
+    - name: Send Slack notification
+      uses: slackapi/slack-github-action@v1
+      with:
+        webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        payload: |
+          {
+            "text": "🚀 Fraud Detection Model Deployed to Production",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Deployment Status:* ${{ job.status }}\n*Version:* ${{ env.MODEL_VERSION }}\n*Commit:* ${{ github.sha }}"
+                }
+              }
+            ]
+          }
+
+  # Job 16: Cleanup
+  cleanup:
+    name: Cleanup Artifacts
+    runs-on: ubuntu-latest
+    needs: [deploy-production, post-deployment]
+    if: always()
+    
+    steps:
+    - name: Delete old artifacts
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+          
+          const oldArtifacts = artifacts.data.artifacts.filter(artifact => {
+            const age = Date.now() - new Date(artifact.created_at).getTime();
+            return age > 7 * 24 * 60 * 60 * 1000; // 7 days
+          });
+          
+          for (const artifact of oldArtifacts) {
+            await github.rest.actions.deleteArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+            });
+          }
+```

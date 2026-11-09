@@ -1,0 +1,87 @@
+Certainly! Below is the complete implementation of the pipeline module for the fraud detection model, following the specified structure and function signatures:
+
+```python
+# fraud_detection/pipeline/__init__.py
+# This file is intentionally left empty to indicate that this directory is a package.
+
+# fraud_detection/pipeline/data_loader.py
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data(file_path: str) -> tuple:
+    """Load and preprocess the dataset from the given file path."""
+    data = pd.read_csv(file_path)
+    X = data.drop('fraud_label', axis=1)
+    y = data['fraud_label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+# fraud_detection/pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train) -> RandomForestClassifier:
+    """Train a RandomForest model on the training data."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# fraud_detection/pipeline/evaluator.py
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model, X_test, y_test) -> dict:
+    """Evaluate the model on the test data and return performance metrics."""
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+
+# fraud_detection/pipeline/mlflow_logger.py
+import mlflow
+from sklearn.ensemble import RandomForestClassifier
+
+def log_to_mlflow(metrics: dict, model: RandomForestClassifier, params: dict) -> None:
+    """Log performance metrics and model parameters to MLflow."""
+    mlflow.start_run()
+    mlflow.log_params(params)
+    mlflow.log_metrics(metrics)
+    mlflow.sklearn.log_model(model, "random_forest_model")
+    mlflow.end_run()
+
+# fraud_detection/pipeline/main.py
+from .data_loader import load_data
+from .model_trainer import train_model
+from .evaluator import evaluate_model
+from .mlflow_logger import log_to_mlflow
+
+def main():
+    """Execute the complete pipeline: data loading, training, evaluation, and logging."""
+    # Load and preprocess data
+    X_train, X_test, y_train, y_test = load_data('data/fraud_data.csv')
+    
+    # Train the model
+    model = train_model(X_train, y_train)
+    
+    # Evaluate the model
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    # Log to MLflow
+    params = {'n_estimators': 100, 'random_state': 42}
+    log_to_mlflow(metrics, model, params)
+
+if __name__ == "__main__":
+    main()
+```
+
+This module includes:
+
+- `data_loader.py` for loading and splitting the dataset.
+- `model_trainer.py` for training a Random Forest model.
+- `evaluator.py` for evaluating the model using various metrics.
+- `mlflow_logger.py` for logging metrics and model details to MLflow.
+- `main.py` to execute the entire pipeline process.
+
+This structure provides a modular and organized approach for building, evaluating, and deploying a machine learning model with CI/CD integration.

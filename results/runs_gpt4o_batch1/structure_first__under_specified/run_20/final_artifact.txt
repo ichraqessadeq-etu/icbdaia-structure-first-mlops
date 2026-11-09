@@ -1,0 +1,190 @@
+Certainly! Below is the full implementation of the `pipeline/model_pipeline.py` module, following the specified structure and function signatures:
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load data from a file path."""
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise RuntimeError(f"Failed to load data from {file_path}: {e}")
+
+def preprocess_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Preprocess the input data."""
+    # Example preprocessing: drop missing values and encode categorical variables
+    data = data.dropna()
+    categorical_columns = data.select_dtypes(include=['object']).columns
+    data = pd.get_dummies(data, columns=categorical_columns)
+    return data
+
+def split_data(data: pd.DataFrame, test_size: float) -> tuple:
+    """Split the data into training and testing sets."""
+    X = data.drop('label', axis=1)  # Assume 'label' is the target column
+    y = data['label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+def train_model(train_data: tuple, model_params: dict) -> RandomForestClassifier:
+    """Train the fraud detection model."""
+    X_train, _, y_train, _ = train_data
+    model = RandomForestClassifier(**model_params)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model: RandomForestClassifier, test_data: tuple) -> float:
+    """Evaluate the trained model on test data."""
+    _, X_test, _, y_test = test_data
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    return accuracy
+
+def save_model(model: RandomForestClassifier, save_path: str) -> None:
+    """Save the trained model to a file."""
+    joblib.dump(model, save_path)
+
+def load_model(load_path: str) -> RandomForestClassifier:
+    """Load a model from a file."""
+    try:
+        model = joblib.load(load_path)
+        return model
+    except Exception as e:
+        raise RuntimeError(f"Failed to load the model from {load_path}: {e}")
+
+def predict(model: RandomForestClassifier, input_data: pd.DataFrame) -> pd.Series:
+    """Make predictions using the loaded model."""
+    predictions = model.predict(input_data)
+    return pd.Series(predictions)
+```
+
+### Explanation
+- **Loading Data:** The `load_data` function reads a CSV file into a DataFrame.
+- **Preprocessing Data:** The `preprocess_data` function handles missing values and encodes categorical features.
+- **Splitting Data:** The `split_data` function splits the dataset into training and testing sets, assuming a column named 'label' as the target.
+- **Training Model:** The `train_model` function trains a RandomForestClassifier using the provided parameters.
+- **Evaluating Model:** The `evaluate_model` function computes the accuracy of the model on the test dataset.
+- **Saving and Loading Model:** The `save_model` and `load_model` functions handle model persistence using `joblib`.
+- **Predicting:** The `predict` function generates predictions for the input data using the trained model.
+
+Certainly! Below is a complete `pytest` test file to test the pipeline module you provided, followed by a GitHub Actions workflow file to automate the testing process.
+
+### (a) Pytest Test File
+
+Create a file named `test_pipeline.py` to implement the tests:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, split_data, train_model, evaluate_model, save_model, load_model, predict
+
+# Sample data for testing
+SAMPLE_DATA = pd.DataFrame({
+    'feature1': [1, 2, 3, 4, 5],
+    'feature2': ['A', 'B', 'A', 'B', 'A'],
+    'label': [0, 1, 0, 1, 0]
+})
+
+MODEL_PARAMS = {'n_estimators': 10, 'max_depth': 3}
+
+def test_load_data(tmpdir):
+    # Create a temporary CSV file
+    file_path = tmpdir.join("sample.csv")
+    SAMPLE_DATA.to_csv(file_path, index=False)
+
+    # Test loading the data
+    data = load_data(file_path)
+    pd.testing.assert_frame_equal(data, SAMPLE_DATA)
+
+def test_preprocess_data():
+    preprocessed_data = preprocess_data(SAMPLE_DATA)
+
+    # Check if missing values are dropped (none in this case)
+    assert not preprocessed_data.isnull().values.any()
+
+    # Check if categorical variables are encoded
+    assert 'feature2_A' in preprocessed_data.columns
+    assert 'feature2_B' in preprocessed_data.columns
+
+def test_split_data():
+    X_train, X_test, y_train, y_test = split_data(SAMPLE_DATA, 0.2)
+
+    # Check dimensions
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+
+def test_train_model():
+    train_data = split_data(SAMPLE_DATA, 0.2)
+    model = train_model(train_data, MODEL_PARAMS)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    train_data = split_data(SAMPLE_DATA, 0.2)
+    model = train_model(train_data, MODEL_PARAMS)
+    accuracy = evaluate_model(model, train_data)
+    assert 0 <= accuracy <= 1
+
+def test_save_and_load_model(tmpdir):
+    model = RandomForestClassifier(**MODEL_PARAMS)
+    model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+
+    # Save model
+    model_path = tmpdir.join("model.joblib")
+    save_model(model, model_path)
+
+    # Load model
+    loaded_model = load_model(model_path)
+    assert isinstance(loaded_model, RandomForestClassifier)
+
+def test_predict():
+    model = RandomForestClassifier(**MODEL_PARAMS)
+    model.fit(SAMPLE_DATA.drop('label', axis=1), SAMPLE_DATA['label'])
+    predictions = predict(model, SAMPLE_DATA.drop('label', axis=1))
+    assert len(predictions) == len(SAMPLE_DATA)
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/test.yml` in your repository for the GitHub Actions workflow:
+
+```yaml
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+```
+
+This workflow will automatically run whenever there is a push or pull request to the `main` branch. It checks out the code, sets up Python, installs the necessary dependencies, and runs the `pytest` tests.

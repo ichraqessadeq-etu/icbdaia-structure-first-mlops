@@ -1,0 +1,824 @@
+# Fraud Detection Model CI/CD Pipeline - Structure
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   └── config.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py
+│   └── fixtures/
+│       ├── __init__.py
+│       └── sample_data.py
+├── models/
+│   └── .gitkeep
+├── data/
+│   ├── raw/
+│   └── processed/
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.py
+├── .dvcignore
+├── .gitignore
+└── README.md
+```
+
+## Pipeline Module Structure
+
+```python
+# src/pipeline.py
+
+"""
+Fraud detection model training and deployment pipeline.
+"""
+
+from typing import Tuple, Dict, Any, Optional
+import pandas as pd
+from pathlib import Path
+
+
+# ============================================================================
+# DATA LOADING & VALIDATION
+# ============================================================================
+
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load fraud detection dataset from specified path."""
+    ...
+
+
+def validate_data_schema(df: pd.DataFrame, schema: Dict[str, Any]) -> bool:
+    """Validate that dataframe matches expected schema."""
+    ...
+
+
+def check_data_quality(df: pd.DataFrame) -> Dict[str, Any]:
+    """Check data quality metrics including missing values, duplicates, and distributions."""
+    ...
+
+
+# ============================================================================
+# DATA PREPROCESSING
+# ============================================================================
+
+def preprocess_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply feature engineering and preprocessing transformations."""
+    ...
+
+
+def split_data(
+    df: pd.DataFrame, 
+    test_size: float = 0.2, 
+    validation_size: float = 0.1,
+    random_state: int = 42
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split data into train, validation, and test sets with stratification."""
+    ...
+
+
+def handle_class_imbalance(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series,
+    method: str = "smote"
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """Handle class imbalance using specified resampling method."""
+    ...
+
+
+# ============================================================================
+# MODEL TRAINING
+# ============================================================================
+
+def train_model(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model_params: Optional[Dict[str, Any]] = None
+) -> Any:
+    """Train fraud detection model with specified parameters."""
+    ...
+
+
+def cross_validate_model(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model: Any,
+    cv_folds: int = 5
+) -> Dict[str, float]:
+    """Perform cross-validation and return performance metrics."""
+    ...
+
+
+def tune_hyperparameters(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    param_grid: Dict[str, list],
+    cv_folds: int = 5
+) -> Tuple[Any, Dict[str, Any]]:
+    """Perform hyperparameter tuning and return best model and parameters."""
+    ...
+
+
+# ============================================================================
+# MODEL EVALUATION
+# ============================================================================
+
+def evaluate_model(
+    model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series
+) -> Dict[str, float]:
+    """Evaluate model on test set and return comprehensive metrics."""
+    ...
+
+
+def calculate_business_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    y_pred_proba: pd.Series,
+    avg_transaction_value: float = 100.0
+) -> Dict[str, float]:
+    """Calculate business-relevant metrics like cost savings and ROI."""
+    ...
+
+
+def generate_evaluation_report(
+    metrics: Dict[str, float],
+    output_path: Path
+) -> None:
+    """Generate comprehensive evaluation report with visualizations."""
+    ...
+
+
+# ============================================================================
+# MODEL VALIDATION & TESTING
+# ============================================================================
+
+def check_model_performance_thresholds(
+    metrics: Dict[str, float],
+    thresholds: Dict[str, float]
+) -> Tuple[bool, Dict[str, bool]]:
+    """Check if model meets minimum performance thresholds."""
+    ...
+
+
+def test_model_bias(
+    model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    sensitive_features: list
+) -> Dict[str, Any]:
+    """Test model for bias across sensitive feature groups."""
+    ...
+
+
+def validate_model_stability(
+    model: Any,
+    X_test: pd.DataFrame,
+    n_iterations: int = 100
+) -> Dict[str, float]:
+    """Validate model prediction stability with perturbations."""
+    ...
+
+
+# ============================================================================
+# MODEL VERSIONING & REGISTRY
+# ============================================================================
+
+def save_model(
+    model: Any,
+    model_path: Path,
+    metadata: Dict[str, Any]
+) -> None:
+    """Save model with metadata to specified path."""
+    ...
+
+
+def register_model(
+    model: Any,
+    model_name: str,
+    version: str,
+    metrics: Dict[str, float],
+    registry_uri: Optional[str] = None
+) -> str:
+    """Register model in model registry and return model URI."""
+    ...
+
+
+def load_model(model_path: Path) -> Any:
+    """Load model from specified path."""
+    ...
+
+
+def compare_models(
+    current_model: Any,
+    new_model: Any,
+    X_test: pd.DataFrame,
+    y_test: pd.Series
+) -> Dict[str, Any]:
+    """Compare performance of current production model vs new model."""
+    ...
+
+
+# ============================================================================
+# DEPLOYMENT & MONITORING
+# ============================================================================
+
+def create_model_artifact(
+    model: Any,
+    preprocessor: Any,
+    metadata: Dict[str, Any],
+    output_path: Path
+) -> None:
+    """Create deployment-ready model artifact with all dependencies."""
+    ...
+
+
+def validate_deployment_readiness(
+    model_path: Path,
+    test_data_path: Path
+) -> Tuple[bool, Dict[str, Any]]:
+    """Validate model is ready for deployment."""
+    ...
+
+
+def generate_model_card(
+    model: Any,
+    metrics: Dict[str, float],
+    metadata: Dict[str, Any],
+    output_path: Path
+) -> None:
+    """Generate model card documentation for governance."""
+    ...
+
+
+# ============================================================================
+# PIPELINE ORCHESTRATION
+# ============================================================================
+
+def run_training_pipeline(
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute complete training pipeline and return results."""
+    ...
+
+
+def run_evaluation_pipeline(
+    model_path: Path,
+    test_data_path: Path,
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute model evaluation pipeline."""
+    ...
+
+
+def run_deployment_pipeline(
+    model_path: Path,
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute deployment pipeline."""
+    ...
+```
+
+## Test File Structure
+
+```python
+# tests/test_pipeline.py
+
+"""
+Comprehensive test suite for fraud detection pipeline.
+"""
+
+import pytest
+import pandas as pd
+from pathlib import Path
+
+
+# ============================================================================
+# FIXTURES
+# ============================================================================
+
+def test_sample_data_fixture():
+    """Test that sample data fixture is properly configured."""
+    ...
+
+
+def test_model_fixture():
+    """Test that model fixture is properly initialized."""
+    ...
+
+
+def test_config_fixture():
+    """Test that configuration fixture contains required keys."""
+    ...
+
+
+# ============================================================================
+# DATA LOADING & VALIDATION TESTS
+# ============================================================================
+
+def test_load_data_valid_path():
+    """Test loading data from valid CSV path."""
+    ...
+
+
+def test_load_data_invalid_path():
+    """Test that loading from invalid path raises appropriate error."""
+    ...
+
+
+def test_validate_data_schema_valid():
+    """Test schema validation passes with correct schema."""
+    ...
+
+
+def test_validate_data_schema_invalid():
+    """Test schema validation fails with incorrect schema."""
+    ...
+
+
+def test_check_data_quality_no_issues():
+    """Test data quality check on clean dataset."""
+    ...
+
+
+def test_check_data_quality_with_issues():
+    """Test data quality check detects missing values and duplicates."""
+    ...
+
+
+# ============================================================================
+# DATA PREPROCESSING TESTS
+# ============================================================================
+
+def test_preprocess_features_output_shape():
+    """Test that preprocessing maintains expected output shape."""
+    ...
+
+
+def test_preprocess_features_no_nulls():
+    """Test that preprocessing handles null values correctly."""
+    ...
+
+
+def test_split_data_proportions():
+    """Test that data splitting produces correct proportions."""
+    ...
+
+
+def test_split_data_stratification():
+    """Test that data splitting maintains class distribution."""
+    ...
+
+
+def test_handle_class_imbalance_smote():
+    """Test SMOTE balancing increases minority class samples."""
+    ...
+
+
+def test_handle_class_imbalance_invalid_method():
+    """Test that invalid balancing method raises error."""
+    ...
+
+
+# ============================================================================
+# MODEL TRAINING TESTS
+# ============================================================================
+
+def test_train_model_basic():
+    """Test basic model training completes successfully."""
+    ...
+
+
+def test_train_model_with_custom_params():
+    """Test model training with custom hyperparameters."""
+    ...
+
+
+def test_cross_validate_model_returns_metrics():
+    """Test cross-validation returns expected metric keys."""
+    ...
+
+
+def test_cross_validate_model_folds():
+    """Test cross-validation uses correct number of folds."""
+    ...
+
+
+def test_tune_hyperparameters_improves_performance():
+    """Test hyperparameter tuning returns optimized model."""
+    ...
+
+
+def test_tune_hyperparameters_with_empty_grid():
+    """Test hyperparameter tuning handles empty parameter grid."""
+    ...
+
+
+# ============================================================================
+# MODEL EVALUATION TESTS
+# ============================================================================
+
+def test_evaluate_model_metrics_range():
+    """Test evaluation metrics are within valid ranges."""
+    ...
+
+
+def test_evaluate_model_required_metrics():
+    """Test evaluation returns all required metrics."""
+    ...
+
+
+def test_calculate_business_metrics_positive():
+    """Test business metrics calculation returns positive values."""
+    ...
+
+
+def test_calculate_business_metrics_keys():
+    """Test business metrics contain expected keys."""
+    ...
+
+
+def test_generate_evaluation_report_creates_file():
+    """Test evaluation report file is created."""
+    ...
+
+
+def test_generate_evaluation_report_content():
+    """Test evaluation report contains required sections."""
+    ...
+
+
+# ============================================================================
+# MODEL VALIDATION TESTS
+# ============================================================================
+
+def test_check_performance_thresholds_pass():
+    """Test performance threshold check passes with good metrics."""
+    ...
+
+
+def test_check_performance_thresholds_fail():
+    """Test performance threshold check fails with poor metrics."""
+    ...
+
+
+def test_model_bias_detection():
+    """Test bias detection across demographic groups."""
+    ...
+
+
+def test_model_bias_no_sensitive_features():
+    """Test bias detection handles missing sensitive features."""
+    ...
+
+
+def test_validate_model_stability_consistent():
+    """Test model stability validation with consistent predictions."""
+    ...
+
+
+def test_validate_model_stability_variance():
+    """Test model stability detects high prediction variance."""
+    ...
+
+
+# ============================================================================
+# MODEL VERSIONING TESTS
+# ============================================================================
+
+def test_save_model_creates_file():
+    """Test model saving creates file at specified path."""
+    ...
+
+
+def test_save_model_with_metadata():
+    """Test model saving includes metadata."""
+    ...
+
+
+def test_load_model_returns_model():
+    """Test model loading returns valid model object."""
+    ...
+
+
+def test_load_model_invalid_path():
+    """Test loading from invalid path raises error."""
+    ...
+
+
+def test_register_model_returns_uri():
+    """Test model registration returns valid URI."""
+    ...
+
+
+def test_compare_models_performance():
+    """Test model comparison returns performance differences."""
+    ...
+
+
+# ============================================================================
+# DEPLOYMENT TESTS
+# ============================================================================
+
+def test_create_model_artifact_structure():
+    """Test model artifact has correct structure."""
+    ...
+
+
+def test_validate_deployment_readiness_pass():
+    """Test deployment validation passes for valid model."""
+    ...
+
+
+def test_validate_deployment_readiness_fail():
+    """Test deployment validation fails for invalid model."""
+    ...
+
+
+def test_generate_model_card_content():
+    """Test model card contains required documentation."""
+    ...
+
+
+# ============================================================================
+# PIPELINE INTEGRATION TESTS
+# ============================================================================
+
+def test_run_training_pipeline_end_to_end():
+    """Test complete training pipeline executes successfully."""
+    ...
+
+
+def test_run_training_pipeline_with_invalid_config():
+    """Test training pipeline handles invalid configuration."""
+    ...
+
+
+def test_run_evaluation_pipeline_end_to_end():
+    """Test complete evaluation pipeline executes successfully."""
+    ...
+
+
+def test_run_deployment_pipeline_end_to_end():
+    """Test complete deployment pipeline executes successfully."""
+    ...
+
+
+# ============================================================================
+# EDGE CASE TESTS
+# ============================================================================
+
+def test_empty_dataset_handling():
+    """Test pipeline handles empty dataset gracefully."""
+    ...
+
+
+def test_single_class_dataset():
+    """Test pipeline handles dataset with single class."""
+    ...
+
+
+def test_extreme_class_imbalance():
+    """Test pipeline handles extreme class imbalance (99:1)."""
+    ...
+
+
+def test_missing_features():
+    """Test pipeline handles missing required features."""
+    ...
+
+
+def test_concurrent_pipeline_execution():
+    """Test multiple pipeline instances can run concurrently."""
+    ...
+```
+
+## GitHub Actions Workflow Structure
+
+```yaml
+# .github/workflows/ci-cd.yml
+
+name: Fraud Detection Model CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly retraining
+
+env:
+  PYTHON_VERSION: '3.9'
+  MODEL_REGISTRY: 's3://fraud-detection-models'
+
+jobs:
+  
+  # ============================================================================
+  # CODE QUALITY & LINTING
+  # ============================================================================
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Run black formatter check
+      - name: Run flake8 linting
+      - name: Run isort import sorting check
+      - name: Run mypy type checking
+      - name: Run bandit security checks
+      - name: Run pylint code analysis
+
+  # ============================================================================
+  # UNIT & INTEGRATION TESTS
+  # ============================================================================
+  test:
+    name: Unit and Integration Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10']
+    steps:
+      - name: Checkout code
+      - name: Set up Python ${{ matrix.python-version }}
+      - name: Install dependencies
+      - name: Run pytest with coverage
+      - name: Upload coverage to Codecov
+      - name: Generate coverage report
+      - name: Check coverage threshold (>80%)
+
+  # ============================================================================
+  # DATA VALIDATION
+  # ============================================================================
+  data-validation:
+    name: Data Quality Validation
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download latest training data
+      - name: Run data quality checks
+      - name: Validate data schema
+      - name: Check for data drift
+      - name: Generate data quality report
+      - name: Upload data validation artifacts
+
+  # ============================================================================
+  # MODEL TRAINING
+  # ============================================================================
+  train-model:
+    name: Train Fraud Detection Model
+    runs-on: ubuntu-latest
+    needs: [test, data-validation]
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure AWS credentials
+      - name: Download training data
+      - name: Run training pipeline
+      - name: Perform hyperparameter tuning
+      - name: Save trained model
+      - name: Upload model artifacts
+      - name: Log metrics to MLflow
+
+  # ============================================================================
+  # MODEL EVALUATION
+  # ============================================================================
+  evaluate-model:
+    name: Evaluate Model Performance
+    runs-on: ubuntu-latest
+    needs: train-model
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download model artifacts
+      - name: Download test data
+      - name: Run evaluation pipeline
+      - name: Calculate performance metrics
+      - name: Calculate business metrics
+      - name: Test for model bias
+      - name: Validate model stability
+      - name: Generate evaluation report
+      - name: Upload evaluation artifacts
+
+  # ============================================================================
+  # MODEL VALIDATION & GATING
+  # ============================================================================
+  validate-model:
+    name: Model Validation Gate
+    runs-on: ubuntu-latest
+    needs: evaluate-model
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Download evaluation results
+      - name: Check performance thresholds
+      - name: Compare with production model
+      - name: Validate deployment readiness
+      - name: Run A/B testing simulation
+      - name: Generate validation report
+      - name: Fail if thresholds not met
+
+  # ============================================================================
+  # MODEL REGISTRATION
+  # ============================================================================
+  register-model:
+    name: Register Model
+    runs-on: ubuntu-latest
+    needs: validate-model
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure model registry
+      - name: Download model artifacts
+      - name: Generate model card
+      - name: Register model in MLflow
+      - name: Tag model version
+      - name: Update model metadata
+      - name: Notify team on Slack
+
+  # ============================================================================
+  # STAGING DEPLOYMENT
+  # ============================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: register-model
+    environment: staging
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure AWS credentials
+      - name: Download model from registry
+      - name: Create deployment artifact
+      - name: Deploy to SageMaker staging endpoint
+      - name: Run smoke tests
+      - name: Run integration tests
+      - name: Monitor endpoint health
+      - name: Notify deployment status
+
+  # ============================================================================
+  # PRODUCTION DEPLOYMENT
+  # ============================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure AWS credentials
+      - name: Download model from registry
+      - name: Create production artifact
+      - name: Deploy to SageMaker production endpoint
+      - name: Implement blue-green deployment
+      - name: Run production smoke tests
+      - name: Enable traffic shifting
+      - name: Monitor production metrics
+      - name: Rollback on failure
+      - name: Notify deployment success
+
+  # ============================================================================
+  # POST-DEPLOYMENT MONITORING
+  # ============================================================================
+  post-deployment:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    steps:
+      - name: Checkout code
+      - name: Set up Python
+      - name: Install dependencies
+      - name: Configure monitoring dashboards
+      - name: Set up CloudWatch alarms
+      - name: Configure data drift detection
+      - name: Set up model performance tracking
+      - name: Generate deployment summary
+      - name: Update documentation
+      - name: Notify stakeholders
+```
+
+---
+
+**Structure complete.** Ready for Step 2 implementation upon your confirmation.

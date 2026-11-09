@@ -1,0 +1,175 @@
+Below are the complete scripts and configuration files for a CI/CD pipeline suited for a fraud detection model using the specified requirements.
+
+### 1. Python Pipeline Script (`pipeline.py`)
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+import mlflow
+from mlflow import sklearn
+from sklearn.exceptions import NotFittedError
+from sklearn.base import BaseEstimator, ClassifierMixin
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class FraudDetectionModel(BaseEstimator, ClassifierMixin):
+    def __init__(self, n_estimators=100, random_state=42):
+        self.n_estimators = n_estimators
+        self.random_state = random_state
+        self.model = RandomForestClassifier(
+            n_estimators=self.n_estimators,
+            random_state=self.random_state
+        )
+    
+    def fit(self, X, y):
+        self.model.fit(X, y)
+        return self
+    
+    def predict(self, X):
+        if self.model:
+            return self.model.predict(X)
+        else:
+            raise NotFittedError("This FraudDetectionModel instance is not fitted yet.")
+    
+    def predict_proba(self, X):
+        if self.model:
+            return self.model.predict_proba(X)
+        else:
+            raise NotFittedError("This FraudDetectionModel instance is not fitted yet.")
+
+def load_data():
+    try:
+        data = pd.read_csv('creditcard.csv')
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def train_and_evaluate():
+    data = load_data()
+    X = data.drop('Class', axis=1)
+    y = data['Class']
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+    
+    model = FraudDetectionModel()
+    model.fit(X_train, y_train)
+    
+    y_pred = model.predict(X_test)
+    auc_score = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+    
+    logger.info("\n" + classification_report(y_test, y_pred))
+    logger.info(f"ROC AUC Score: {auc_score}")
+    
+    log_to_mlflow(model, auc_score)
+
+def log_to_mlflow(model, auc_score):
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.log_param("n_estimators", model.n_estimators)
+            mlflow.log_param("random_state", model.random_state)
+            mlflow.log_metric("auc_score", auc_score)
+            sklearn.log_model(model.model, "model")
+            logger.info("Model logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+if __name__ == "__main__":
+    try:
+        train_and_evaluate()
+    except Exception as e:
+        logger.error(f"An error occurred during the pipeline execution: {e}")
+```
+
+### 2. Pytest Test File (`test_pipeline.py`)
+
+```python
+import pytest
+from pipeline import FraudDetectionModel, load_data
+from sklearn.exceptions import NotFittedError
+import pandas as pd
+
+def test_load_data():
+    data = load_data()
+    assert isinstance(data, pd.DataFrame), "Data should be a pandas DataFrame"
+    assert 'Class' in data.columns, "Data should contain 'Class' column"
+
+def test_model_initialization():
+    model = FraudDetectionModel()
+    assert model.n_estimators == 100, "Default n_estimators should be 100"
+    assert model.random_state == 42, "Default random_state should be 42"
+
+def test_model_not_fitted_error():
+    model = FraudDetectionModel()
+    with pytest.raises(NotFittedError):
+        model.predict([[0]*30])  # Assuming 30 features
+```
+
+### 3. GitHub Actions Workflow (`.github/workflows/ci-cd.yml`)
+
+```yaml
+name: CI/CD for Fraud Detection Model
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py --maxfail=1 --disable-warnings
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_and_test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Deploy model
+      run: |
+        python pipeline.py
+```
+
+Make sure to adjust your dataset file path and install the necessary Python packages in `requirements.txt`, including `pandas`, `numpy`, `scikit-learn`, `mlflow`, and `pytest`. This setup is structured to handle errors and log them appropriately, ensuring a production-ready pipeline.

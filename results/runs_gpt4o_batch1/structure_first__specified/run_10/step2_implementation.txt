@@ -1,0 +1,104 @@
+Implementing the full Python module for the fraud detection pipeline involves filling in the function definitions with actual logic. Below is a complete implementation of the pipeline based on the structure you provided:
+
+```python
+# fraud_detection_pipeline/data_loader.py
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data(file_path: str):
+    """Load and preprocess the dataset from the given file path."""
+    data = pd.read_csv(file_path)
+    # Assuming the last column is the target
+    X = data.iloc[:, :-1]
+    y = data.iloc[:, -1]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+# fraud_detection_pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train) -> RandomForestClassifier:
+    """Train the RandomForestClassifier model on the training data."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# fraud_detection_pipeline/model_evaluator.py
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the trained model and return performance metrics."""
+    y_pred = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred),
+        'recall': recall_score(y_test, y_pred),
+        'f1_score': f1_score(y_test, y_pred)
+    }
+    return metrics
+
+# fraud_detection_pipeline/mlflow_logger.py
+import mlflow
+
+def log_to_mlflow(params: dict, metrics: dict, model):
+    """Log the model parameters, metrics, and model artifacts to MLflow."""
+    mlflow.log_params(params)
+    mlflow.log_metrics(metrics)
+    mlflow.sklearn.log_model(model, "model")
+
+# fraud_detection_pipeline/drift_detector.py
+from sklearn.metrics import accuracy_score
+
+def detect_concept_drift(X_prev, y_prev, X_new, y_new) -> bool:
+    """Detect concept drift between previous and new datasets."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_prev, y_prev)
+    prev_accuracy = accuracy_score(y_prev, model.predict(X_prev))
+    new_accuracy = accuracy_score(y_new, model.predict(X_new))
+    drift_detected = abs(new_accuracy - prev_accuracy) > 0.05
+    return drift_detected
+
+# fraud_detection_pipeline/main_pipeline.py
+from data_loader import load_data
+from model_trainer import train_model
+from model_evaluator import evaluate_model
+from mlflow_logger import log_to_mlflow
+
+def execute_pipeline(file_path: str):
+    """Execute the entire ML pipeline: loading data, training, evaluating, and logging."""
+    X_train, X_test, y_train, y_test = load_data(file_path)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    params = {'n_estimators': 100, 'random_state': 42}
+    log_to_mlflow(params, metrics, model)
+
+# tests/test_pipeline.py
+import pytest
+from data_loader import load_data
+from model_trainer import train_model
+from model_evaluator import evaluate_model
+
+def test_load_data():
+    """Test the data loading and preprocessing functionality."""
+    X_train, X_test, y_train, y_test = load_data('data/sample.csv')
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+
+def test_train_model():
+    """Test the training function for the RandomForestClassifier."""
+    X_train, X_test, y_train, y_test = load_data('data/sample.csv')
+    model = train_model(X_train, y_train)
+    assert model is not None
+
+def test_evaluate_model():
+    """Test the model evaluation process and ensure it returns correct metrics."""
+    X_train, X_test, y_train, y_test = load_data('data/sample.csv')
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+```
+
+This implementation includes necessary logic for each component, ensuring that each part of the pipeline is functional and testable. Adjust the data file paths and any dataset-specific logic to match your actual dataset and environment.

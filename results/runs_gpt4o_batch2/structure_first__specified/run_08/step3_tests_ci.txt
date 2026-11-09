@@ -1,0 +1,95 @@
+Certainly! Below is the complete pytest test file and the GitHub Actions workflow YAML file as requested:
+
+### (a) Complete Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from src.data_loader import load_data
+from src.model import train_random_forest
+from src.evaluation import evaluate_model
+from sklearn.datasets import make_classification
+
+def test_load_data():
+    """Test if data loading and preprocessing is successful."""
+    X_train, X_test, y_train, y_test = load_data('data/creditcard.csv')
+    assert not X_train.empty
+    assert not X_test.empty
+    assert len(y_train) > 0
+    assert len(y_test) > 0
+
+def test_train_random_forest():
+    """Test if RandomForestClassifier is trained correctly."""
+    X_train, X_test, y_train, y_test = load_data('data/creditcard.csv')
+    model = train_random_forest(X_train, y_train)
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    """Test if model evaluation returns correct metrics."""
+    X_train, X_test, y_train, y_test = load_data('data/creditcard.csv')
+    model = train_random_forest(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+
+def test_model_performance():
+    """Test model performance with synthetic data."""
+    X, y = make_classification(n_samples=100, n_features=20, n_classes=2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_random_forest(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert metrics['accuracy'] > 0.5
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+        pip install scikit-learn
+        pip install pandas
+        pip install mlflow
+
+    - name: Run tests
+      run: |
+        pytest tests
+```
+
+### Explanation:
+
+1. **Pytest Test File:**
+   - The `test_pipeline.py` file includes tests for data loading, model training, and evaluation.
+   - An additional test `test_model_performance` is added to check the model's performance using synthetic data.
+
+2. **GitHub Actions Workflow:**
+   - The workflow triggers on pushes and pull requests to the `main` branch.
+   - It sets up a Python environment, installs necessary dependencies, and runs the test suite using `pytest`.
+
+This setup ensures that your code is tested automatically upon each commit or pull request, maintaining the integrity and reliability of the pipeline.

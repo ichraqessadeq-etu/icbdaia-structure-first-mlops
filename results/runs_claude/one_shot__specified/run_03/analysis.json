@@ -1,0 +1,100 @@
+{
+  "n_python_blocks": 2,
+  "n_parse_ok": 2,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": true,
+  "is_iih": false,
+  "n_tests": 33,
+  "complete": true,
+  "uses_mlflow": true,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 363
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 364
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 379
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 392
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 380
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 393
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 116
+          },
+          {
+            "kind": "RVH",
+            "rule": "unseeded_rng",
+            "detail": "np.random.randn(...) with no global seed set",
+            "lineno": 117
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 3,
+  "cost": {
+    "calls": 1,
+    "prompt_tokens": 184,
+    "completion_tokens": 19451,
+    "errors": [],
+    "truncated_calls": 0,
+    "seconds": 205.19
+  }
+}

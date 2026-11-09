@@ -1,0 +1,2042 @@
+```python
+# src/pipeline/__init__.py
+"""Fraud detection MLOps pipeline package."""
+
+__version__ = "1.0.0"
+
+from .data_validation import validate_data_pipeline
+from .model_training import run_training_pipeline
+from .model_evaluation import generate_evaluation_report
+from .model_registry import register_model, promote_model_to_stage
+from .deployment import deploy_to_staging, deploy_to_production
+
+__all__ = [
+    "validate_data_pipeline",
+    "run_training_pipeline",
+    "generate_evaluation_report",
+    "register_model",
+    "promote_model_to_stage",
+    "deploy_to_staging",
+    "deploy_to_production",
+]
+
+
+# src/pipeline/data_validation.py
+"""Data validation module for fraud detection pipeline."""
+
+from typing import Dict, Tuple, Any
+import pandas as pd
+import numpy as np
+from scipy import stats
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def validate_schema(data: pd.DataFrame, expected_schema: Dict) -> bool:
+    """Validate that the data matches the expected schema.
+    
+    Args:
+        data: Input DataFrame to validate
+        expected_schema: Dictionary with expected column names and types
+        
+    Returns:
+        True if schema is valid, False otherwise
+    """
+    try:
+        # Check if all expected columns are present
+        expected_columns = set(expected_schema.keys())
+        actual_columns = set(data.columns)
+        
+        if not expected_columns.issubset(actual_columns):
+            missing_cols = expected_columns - actual_columns
+            logger.error(f"Missing columns: {missing_cols}")
+            return False
+        
+        # Check data types
+        for col, expected_type in expected_schema.items():
+            actual_type = data[col].dtype
+            
+            # Handle type compatibility
+            if expected_type == 'numeric':
+                if not pd.api.types.is_numeric_dtype(actual_type):
+                    logger.error(f"Column {col} expected numeric, got {actual_type}")
+                    return False
+            elif expected_type == 'categorical':
+                if not (pd.api.types.is_object_dtype(actual_type) or 
+                       pd.api.types.is_categorical_dtype(actual_type)):
+                    logger.error(f"Column {col} expected categorical, got {actual_type}")
+                    return False
+            elif expected_type == 'datetime':
+                if not pd.api.types.is_datetime64_any_dtype(actual_type):
+                    logger.error(f"Column {col} expected datetime, got {actual_type}")
+                    return False
+            else:
+                # Direct type comparison
+                if not pd.api.types.is_dtype_equal(actual_type, expected_type):
+                    logger.error(f"Column {col} expected {expected_type}, got {actual_type}")
+                    return False
+        
+        logger.info("Schema validation passed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Schema validation error: {str(e)}")
+        return False
+
+
+def check_data_quality(data: pd.DataFrame) -> Dict[str, Any]:
+    """Check data quality metrics like missing values, duplicates, and outliers.
+    
+    Args:
+        data: Input DataFrame to check
+        
+    Returns:
+        Dictionary containing data quality metrics
+    """
+    quality_metrics = {
+        'total_rows': len(data),
+        'total_columns': len(data.columns),
+        'missing_values': {},
+        'missing_percentage': {},
+        'duplicate_rows': 0,
+        'duplicate_percentage': 0.0,
+        'outliers': {},
+        'quality_score': 0.0
+    }
+    
+    # Check missing values
+    missing_counts = data.isnull().sum()
+    quality_metrics['missing_values'] = missing_counts.to_dict()
+    quality_metrics['missing_percentage'] = (missing_counts / len(data) * 100).to_dict()
+    
+    # Check duplicates
+    duplicate_count = data.duplicated().sum()
+    quality_metrics['duplicate_rows'] = int(duplicate_count)
+    quality_metrics['duplicate_percentage'] = float(duplicate_count / len(data) * 100)
+    
+    # Check outliers using IQR method for numeric columns
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        Q1 = data[col].quantile(0.25)
+        Q3 = data[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        
+        outlier_count = ((data[col] < lower_bound) | (data[col] > upper_bound)).sum()
+        quality_metrics['outliers'][col] = {
+            'count': int(outlier_count),
+            'percentage': float(outlier_count / len(data) * 100),
+            'lower_bound': float(lower_bound),
+            'upper_bound': float(upper_bound)
+        }
+    
+    # Calculate overall quality score (0-100)
+    missing_score = max(0, 100 - (sum(quality_metrics['missing_percentage'].values()) / len(data.columns)))
+    duplicate_score = max(0, 100 - quality_metrics['duplicate_percentage'])
+    quality_metrics['quality_score'] = (missing_score + duplicate_score) / 2
+    
+    logger.info(f"Data quality score: {quality_metrics['quality_score']:.2f}")
+    
+    return quality_metrics
+
+
+def validate_feature_distributions(data: pd.DataFrame, reference_stats: Dict) -> bool:
+    """Validate that feature distributions haven't drifted beyond thresholds.
+    
+    Args:
+        data: Current data to validate
+        reference_stats: Reference statistics from training/baseline data
+        
+    Returns:
+        True if distributions are within acceptable range, False otherwise
+    """
+    drift_threshold = reference_stats.get('drift_threshold', 0.05)
+    drifted_features = []
+    
+    for feature, ref_stat in reference_stats.get('features', {}).items():
+        if feature not in data.columns:
+            logger.warning(f"Feature {feature} not found in current data")
+            continue
+        
+        current_data = data[feature].dropna()
+        
+        if len(current_data) == 0:
+            logger.warning(f"No valid data for feature {feature}")
+            continue
+        
+        # For numeric features, use Kolmogorov-Smirnov test
+        if pd.api.types.is_numeric_dtype(current_data):
+            ref_mean = ref_stat.get('mean')
+            ref_std = ref_stat.get('std')
+            
+            if ref_mean is None or ref_std is None:
+                continue
+            
+            # Calculate current statistics
+            current_mean = current_data.mean()
+            current_std = current_data.std()
+            
+            # Check if mean shifted significantly (using z-score)
+            mean_shift = abs(current_mean - ref_mean) / (ref_std + 1e-10)
+            
+            # Check if std changed significantly
+            std_ratio = current_std / (ref_std + 1e-10)
+            
+            if mean_shift > 3.0 or std_ratio > 2.0 or std_ratio < 0.5:
+                drifted_features.append({
+                    'feature': feature,
+                    'mean_shift': float(mean_shift),
+                    'std_ratio': float(std_ratio),
+                    'current_mean': float(current_mean),
+                    'reference_mean': float(ref_mean)
+                })
+        
+        # For categorical features, check distribution changes
+        elif pd.api.types.is_object_dtype(current_data) or pd.api.types.is_categorical_dtype(current_data):
+            ref_dist = ref_stat.get('distribution', {})
+            current_dist = current_data.value_counts(normalize=True).to_dict()
+            
+            # Calculate distribution difference
+            all_categories = set(ref_dist.keys()) | set(current_dist.keys())
+            max_diff = 0
+            
+            for cat in all_categories:
+                ref_prob = ref_dist.get(cat, 0)
+                curr_prob = current_dist.get(cat, 0)
+                max_diff = max(max_diff, abs(curr_prob - ref_prob))
+            
+            if max_diff > drift_threshold:
+                drifted_features.append({
+                    'feature': feature,
+                    'max_distribution_diff': float(max_diff),
+                    'type': 'categorical'
+                })
+    
+    if drifted_features:
+        logger.warning(f"Feature drift detected in {len(drifted_features)} features: {drifted_features}")
+        return False
+    
+    logger.info("No significant feature drift detected")
+    return True
+
+
+def check_target_balance(data: pd.DataFrame, target_col: str) -> Dict[str, float]:
+    """Check the balance of fraud vs non-fraud cases.
+    
+    Args:
+        data: Input DataFrame
+        target_col: Name of the target column
+        
+    Returns:
+        Dictionary with target balance metrics
+    """
+    if target_col not in data.columns:
+        raise ValueError(f"Target column '{target_col}' not found in data")
+    
+    target_counts = data[target_col].value_counts()
+    total = len(data)
+    
+    balance_metrics = {
+        'total_samples': total,
+        'class_counts': target_counts.to_dict(),
+        'class_percentages': (target_counts / total * 100).to_dict(),
+        'imbalance_ratio': 0.0,
+        'minority_class': None,
+        'majority_class': None
+    }
+    
+    if len(target_counts) >= 2:
+        minority_class = target_counts.idxmin()
+        majority_class = target_counts.idxmax()
+        
+        balance_metrics['minority_class'] = str(minority_class)
+        balance_metrics['majority_class'] = str(majority_class)
+        balance_metrics['imbalance_ratio'] = float(
+            target_counts[majority_class] / target_counts[minority_class]
+        )
+    
+    logger.info(f"Target balance - Imbalance ratio: {balance_metrics['imbalance_ratio']:.2f}")
+    
+    return balance_metrics
+
+
+def validate_data_pipeline(data_path: str, config: Dict) -> Tuple[pd.DataFrame, Dict]:
+    """Run full data validation pipeline and return validated data and metrics.
+    
+    Args:
+        data_path: Path to the data file
+        config: Configuration dictionary with validation parameters
+        
+    Returns:
+        Tuple of (validated DataFrame, validation metrics dictionary)
+    """
+    logger.info(f"Starting data validation pipeline for {data_path}")
+    
+    validation_results = {
+        'schema_valid': False,
+        'quality_metrics': {},
+        'distribution_valid': False,
+        'target_balance': {},
+        'validation_passed': False,
+        'errors': []
+    }
+    
+    try:
+        # Load data
+        if data_path.endswith('.csv'):
+            data = pd.read_csv(data_path)
+        elif data_path.endswith('.parquet'):
+            data = pd.read_parquet(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {data_path}")
+        
+        logger.info(f"Loaded data with shape {data.shape}")
+        
+        # 1. Schema validation
+        expected_schema = config.get('expected_schema', {})
+        if expected_schema:
+            validation_results['schema_valid'] = validate_schema(data, expected_schema)
+            if not validation_results['schema_valid']:
+                validation_results['errors'].append("Schema validation failed")
+        else:
+            validation_results['schema_valid'] = True
+            logger.warning("No schema provided, skipping schema validation")
+        
+        # 2. Data quality check
+        validation_results['quality_metrics'] = check_data_quality(data)
+        
+        quality_threshold = config.get('quality_threshold', 70.0)
+        if validation_results['quality_metrics']['quality_score'] < quality_threshold:
+            validation_results['errors'].append(
+                f"Quality score {validation_results['quality_metrics']['quality_score']:.2f} "
+                f"below threshold {quality_threshold}"
+            )
+        
+        # 3. Feature distribution validation
+        reference_stats = config.get('reference_stats')
+        if reference_stats:
+            validation_results['distribution_valid'] = validate_feature_distributions(
+                data, reference_stats
+            )
+            if not validation_results['distribution_valid']:
+                validation_results['errors'].append("Feature distribution drift detected")
+        else:
+            validation_results['distribution_valid'] = True
+            logger.warning("No reference stats provided, skipping distribution validation")
+        
+        # 4. Target balance check
+        target_col = config.get('target_column')
+        if target_col:
+            validation_results['target_balance'] = check_target_balance(data, target_col)
+            
+            max_imbalance = config.get('max_imbalance_ratio', 100.0)
+            if validation_results['target_balance']['imbalance_ratio'] > max_imbalance:
+                validation_results['errors'].append(
+                    f"Imbalance ratio {validation_results['target_balance']['imbalance_ratio']:.2f} "
+                    f"exceeds threshold {max_imbalance}"
+                )
+        
+        # Overall validation status
+        validation_results['validation_passed'] = (
+            validation_results['schema_valid'] and
+            validation_results['distribution_valid'] and
+            len(validation_results['errors']) == 0
+        )
+        
+        if validation_results['validation_passed']:
+            logger.info("Data validation pipeline completed successfully")
+        else:
+            logger.error(f"Data validation failed: {validation_results['errors']}")
+        
+        return data, validation_results
+        
+    except Exception as e:
+        logger.error(f"Data validation pipeline error: {str(e)}")
+        validation_results['errors'].append(str(e))
+        raise
+
+
+# src/pipeline/model_training.py
+"""Model training module for fraud detection pipeline."""
+
+from typing import Dict, Any, Tuple
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split
+import joblib
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def prepare_features(data: pd.DataFrame, config: Dict) -> Tuple[pd.DataFrame, pd.Series]:
+    """Prepare features and target for model training.
+    
+    Args:
+        data: Input DataFrame
+        config: Configuration dictionary with feature and target specifications
+        
+    Returns:
+        Tuple of (features DataFrame, target Series)
+    """
+    logger.info("Preparing features for training")
+    
+    target_col = config.get('target_column')
+    if not target_col or target_col not in data.columns:
+        raise ValueError(f"Target column '{target_col}' not found in data")
+    
+    # Separate features and target
+    feature_cols = config.get('feature_columns')
+    if feature_cols:
+        # Use specified feature columns
+        missing_cols = set(feature_cols) - set(data.columns)
+        if missing_cols:
+            raise ValueError(f"Feature columns not found: {missing_cols}")
+        X = data[feature_cols].copy()
+    else:
+        # Use all columns except target
+        exclude_cols = config.get('exclude_columns', [])
+        exclude_cols.append(target_col)
+        X = data.drop(columns=exclude_cols, errors='ignore').copy()
+    
+    y = data[target_col].copy()
+    
+    # Handle missing values
+    missing_strategy = config.get('missing_strategy', 'drop')
+    if missing_strategy == 'drop':
+        # Drop rows with missing values
+        valid_idx = X.notna().all(axis=1) & y.notna()
+        X = X[valid_idx]
+        y = y[valid_idx]
+    elif missing_strategy == 'fill':
+        # Fill numeric with median, categorical with mode
+        for col in X.columns:
+            if pd.api.types.is_numeric_dtype(X[col]):
+                X[col].fillna(X[col].median(), inplace=True)
+            else:
+                X[col].fillna(X[col].mode()[0] if len(X[col].mode()) > 0 else 'missing', 
+                            inplace=True)
+    
+    # Encode categorical variables
+    categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+    if len(categorical_cols) > 0:
+        logger.info(f"Encoding {len(categorical_cols)} categorical columns")
+        for col in categorical_cols:
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col].astype(str))
+    
+    # Feature scaling if requested
+    if config.get('scale_features', False):
+        logger.info("Scaling features")
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
+    
+    logger.info(f"Prepared features shape: {X.shape}, target shape: {y.shape}")
+    
+    return X, y
+
+
+def create_model(config: Dict) -> BaseEstimator:
+    """Create and configure the fraud detection model.
+    
+    Args:
+        config: Configuration dictionary with model specifications
+        
+    Returns:
+        Configured sklearn model instance
+    """
+    model_type = config.get('model_type', 'random_forest')
+    model_params = config.get('model_params', {})
+    random_state = config.get('random_state', 42)
+    
+    logger.info(f"Creating {model_type} model with params: {model_params}")
+    
+    if model_type == 'random_forest':
+        model = RandomForestClassifier(
+            random_state=random_state,
+            **model_params
+        )
+    elif model_type == 'gradient_boosting':
+        model = GradientBoostingClassifier(
+            random_state=random_state,
+            **model_params
+        )
+    elif model_type == 'logistic_regression':
+        model = LogisticRegression(
+            random_state=random_state,
+            **model_params
+        )
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+    
+    return model
+
+
+def train_model(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    model: BaseEstimator, 
+    config: Dict
+) -> BaseEstimator:
+    """Train the fraud detection model.
+    
+    Args:
+        X_train: Training features
+        y_train: Training target
+        model: Model instance to train
+        config: Training configuration
+        
+    Returns:
+        Trained model
+    """
+    logger.info(f"Training model on {len(X_train)} samples")
+    
+    # Handle class imbalance if specified
+    class_weight = config.get('class_weight', None)
+    if class_weight and hasattr(model, 'class_weight'):
+        model.set_params(class_weight=class_weight)
+    
+    # Train the model
+    model.fit(X_train, y_train)
+    
+    # Log training info
+    if hasattr(model, 'feature_importances_'):
+        feature_importance = pd.DataFrame({
+            'feature': X_train.columns,
+            'importance': model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        logger.info(f"Top 5 important features:\n{feature_importance.head()}")
+    
+    logger.info("Model training completed")
+    
+    return model
+
+
+def save_model_artifacts(
+    model: BaseEstimator, 
+    feature_names: list, 
+    output_path: str
+) -> None:
+    """Save trained model and associated artifacts.
+    
+    Args:
+        model: Trained model to save
+        feature_names: List of feature names
+        output_path: Directory path to save artifacts
+    """
+    output_dir = Path(output_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save model
+    model_path = output_dir / 'model.joblib'
+    joblib.dump(model, model_path)
+    logger.info(f"Model saved to {model_path}")
+    
+    # Save feature names
+    features_path = output_dir / 'feature_names.json'
+    with open(features_path, 'w') as f:
+        json.dump(feature_names, f, indent=2)
+    logger.info(f"Feature names saved to {features_path}")
+    
+    # Save model metadata
+    metadata = {
+        'model_type': type(model).__name__,
+        'n_features': len(feature_names),
+        'feature_names': feature_names
+    }
+    
+    if hasattr(model, 'get_params'):
+        metadata['model_params'] = {
+            k: str(v) if not isinstance(v, (int, float, str, bool, type(None))) else v
+            for k, v in model.get_params().items()
+        }
+    
+    if hasattr(model, 'feature_importances_'):
+        metadata['feature_importances'] = {
+            feature: float(importance)
+            for feature, importance in zip(feature_names, model.feature_importances_)
+        }
+    
+    metadata_path = output_dir / 'metadata.json'
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    logger.info(f"Metadata saved to {metadata_path}")
+
+
+def run_training_pipeline(data_path: str, config: Dict) -> Dict[str, Any]:
+    """Execute the complete model training pipeline.
+    
+    Args:
+        data_path: Path to training data
+        config: Configuration dictionary
+        
+    Returns:
+        Dictionary with training results and metrics
+    """
+    logger.info(f"Starting training pipeline with data from {data_path}")
+    
+    results = {
+        'success': False,
+        'model_path': None,
+        'training_samples': 0,
+        'validation_samples': 0,
+        'feature_count': 0,
+        'errors': []
+    }
+    
+    try:
+        # Load data
+        if data_path.endswith('.csv'):
+            data = pd.read_csv(data_path)
+        elif data_path.endswith('.parquet'):
+            data = pd.read_parquet(data_path)
+        else:
+            raise ValueError(f"Unsupported file format: {data_path}")
+        
+        logger.info(f"Loaded training data with shape {data.shape}")
+        
+        # Prepare features
+        X, y = prepare_features(data, config)
+        results['feature_count'] = X.shape[1]
+        
+        # Train-validation split
+        test_size = config.get('validation_split', 0.2)
+        random_state = config.get('random_state', 42)
+        
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=test_size, random_state=random_state, stratify=y
+        )
+        
+        results['training_samples'] = len(X_train)
+        results['validation_samples'] = len(X_val)
+        
+        logger.info(f"Train samples: {len(X_train)}, Validation samples: {len(X_val)}")
+        
+        # Create and train model
+        model = create_model(config)
+        trained_model = train_model(X_train, y_train, model, config)
+        
+        # Calculate training metrics
+        train_score = trained_model.score(X_train, y_train)
+        val_score = trained_model.score(X_val, y_val)
+        
+        results['train_accuracy'] = float(train_score)
+        results['validation_accuracy'] = float(val_score)
+        
+        logger.info(f"Training accuracy: {train_score:.4f}")
+        logger.info(f"Validation accuracy: {val_score:.4f}")
+        
+        # Save model artifacts
+        output_path = config.get('output_path', './models')
+        save_model_artifacts(trained_model, X.columns.tolist(), output_path)
+        results['model_path'] = str(Path(output_path) / 'model.joblib')
+        
+        results['success'] = True
+        logger.info("Training pipeline completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Training pipeline error: {str(e)}")
+        results['errors'].append(str(e))
+        raise
+    
+    return results
+
+
+# src/pipeline/model_evaluation.py
+"""Model evaluation module for fraud detection pipeline."""
+
+from typing import Dict, List, Any
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_auc_score, average_precision_score, confusion_matrix,
+    classification_report, roc_curve, precision_recall_curve
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_classification_metrics(
+    y_true: pd.Series, 
+    y_pred: pd.Series, 
+    y_pred_proba: pd.Series
+) -> Dict[str, float]:
+    """Calculate precision, recall, F1, AUC-ROC, and other classification metrics.
+    
+    Args:
+        y_true: True labels
+        y_pred: Predicted labels
+        y_pred_proba: Predicted probabilities for positive class
+        
+    Returns:
+        Dictionary of classification metrics
+    """
+    metrics = {}
+    
+    # Basic metrics
+    metrics['accuracy'] = float(accuracy_score(y_true, y_pred))
+    metrics['precision'] = float(precision_score(y_true, y_pred, zero_division=0))
+    metrics['recall'] = float(recall_score(y_true, y_pred, zero_division=0))
+    metrics['f1_score'] = float(f1_score(y_true, y_pred, zero_division=0))
+    
+    # ROC-AUC and PR-AUC
+    try:
+        metrics['roc_auc'] = float(roc_auc_score(y_true, y_pred_proba))
+        metrics['pr_auc'] = float(average_precision_score(y_true, y_pred_proba))
+    except ValueError as e:
+        logger.warning(f"Could not calculate AUC metrics: {e}")
+        metrics['roc_auc'] = 0.0
+        metrics['pr_auc'] = 0.0
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    if cm.shape == (2, 2):
+        tn, fp, fn, tp = cm.ravel()
+        metrics['true_positives'] = int(tp)
+        metrics['true_negatives'] = int(tn)
+        metrics['false_positives'] = int(fp)
+        metrics['false_negatives'] = int(fn)
+        
+        # Additional metrics
+        metrics['specificity'] = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+        metrics['false_positive_rate'] = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+        metrics['false_negative_rate'] = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
+    
+    logger.info(f"Classification metrics calculated: F1={metrics['f1_score']:.4f}, "
+                f"ROC-AUC={metrics['roc_auc']:.4f}")
+    
+    return metrics
+
+
+def evaluate_at_thresholds(
+    y_true: pd.Series, 
+    y_pred_proba: pd.Series, 
+    thresholds: List[float]
+) -> pd.DataFrame:
+    """Evaluate model performance at different probability thresholds.
+    
+    Args:
+        y_true: True labels
+        y_pred_proba: Predicted probabilities
+        thresholds: List of probability thresholds to evaluate
+        
+    Returns:
+        DataFrame with metrics at each threshold
+    """
+    results = []
+    
+    for threshold in thresholds:
+        y_pred = (y_pred_proba >= threshold).astype(int)
+        
+        metrics = {
+            'threshold': threshold,
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(y_true, y_pred, zero_division=0),
+            'recall': recall_score(y_true, y_pred, zero_division=0),
+            'f1_score': f1_score(y_true, y_pred, zero_division=0)
+        }
+        
+        # Add confusion matrix values
+        cm = confusion_matrix(y_true, y_pred)
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            metrics.update({
+                'true_positives': tp,
+                'false_positives': fp,
+                'true_negatives': tn,
+                'false_negatives': fn
+            })
+        
+        results.append(metrics)
+    
+    df_results = pd.DataFrame(results)
+    logger.info(f"Evaluated model at {len(thresholds)} thresholds")
+    
+    return df_results
+
+
+def calculate_business_metrics(
+    y_true: pd.Series, 
+    y_pred: pd.Series, 
+    transaction_amounts: pd.Series
+) -> Dict[str, float]:
+    """Calculate business-relevant metrics like detected fraud amount and false positive cost.
+    
+    Args:
+        y_true: True labels (1 for fraud, 0 for legitimate)
+        y_pred: Predicted labels
+        transaction_amounts: Transaction amounts
+        
+    Returns:
+        Dictionary of business metrics
+    """
+    business_metrics = {}
+    
+    # Align indices
+    mask = y_true.index.intersection(y_pred.index).intersection(transaction_amounts.index)
+    y_true_aligned = y_true.loc[mask]
+    y_pred_aligned = y_pred.loc[mask]
+    amounts_aligned = transaction_amounts.loc[mask]
+    
+    # Total fraud amount in dataset
+    total_fraud_amount = amounts_aligned[y_true_aligned == 1].sum()
+    business_metrics['total_fraud_amount'] = float(total_fraud_amount)
+    
+    # Detected fraud amount (true positives)
+    detected_fraud_amount = amounts_aligned[(y_true_aligned == 1) & (y_pred_aligned == 1)].sum()
+    business_metrics['detected_fraud_amount'] = float(detected_fraud_amount)
+    
+    # Missed fraud amount (false negatives)
+    missed_fraud_amount = amounts_aligned[(y_true_aligned == 1) & (y_pred_aligned == 0)].sum()
+    business_metrics['missed_fraud_amount'] = float(missed_fraud_amount)
+    
+    # False positive amount (legitimate transactions flagged as fraud)
+    false_positive_amount = amounts_aligned[(y_true_aligned == 0) & (y_pred_aligned == 1)].sum()
+    business_metrics['false_positive_amount'] = float(false_positive_amount)
+    
+    # Detection rate by amount
+    if total_fraud_amount > 0:
+        business_metrics['fraud_detection_rate'] = float(
+            detected_fraud_amount / total_fraud_amount
+        )
+    else:
+        business_metrics['fraud_detection_rate'] = 0.0
+    
+    # Cost metrics (assuming some business costs)
+    fraud_investigation_cost = 50  # Cost per false positive investigation
+    fraud_loss_multiplier = 1.0  # Cost of missed fraud (could be > 1 for chargebacks, etc.)
+    
+    total_false_positives = ((y_true_aligned == 0) & (y_pred_aligned == 1)).sum()
+    business_metrics['false_positive_cost'] = float(
+        total_false_positives * fraud_investigation_cost
+    )
+    
+    business_metrics['missed_fraud_cost'] = float(
+        missed_fraud_amount * fraud_loss_multiplier
+    )
+    
+    business_metrics['total_cost'] = (
+        business_metrics['false_positive_cost'] + 
+        business_metrics['missed_fraud_cost']
+    )
+    
+    # Savings (fraud detected and prevented)
+    business_metrics['fraud_prevented_savings'] = float(detected_fraud_amount)
+    
+    business_metrics['net_benefit'] = (
+        business_metrics['fraud_prevented_savings'] - 
+        business_metrics['total_cost']
+    )
+    
+    logger.info(f"Business metrics - Detected fraud: ${detected_fraud_amount:,.2f}, "
+                f"Net benefit: ${business_metrics['net_benefit']:,.2f}")
+    
+    return business_metrics
+
+
+def compare_with_baseline(
+    current_metrics: Dict, 
+    baseline_metrics: Dict, 
+    tolerance: float
+) -> bool:
+    """Compare current model metrics with baseline to ensure no regression.
+    
+    Args:
+        current_metrics: Current model metrics
+        baseline_metrics: Baseline model metrics
+        tolerance: Acceptable degradation tolerance (e.g., 0.05 for 5%)
+        
+    Returns:
+        True if current model meets baseline requirements, False otherwise
+    """
+    # Key metrics to compare
+    key_metrics = ['f1_score', 'roc_auc', 'precision', 'recall']
+    
+    comparison_results = {}
+    all_passed = True
+    
+    for metric in key_metrics:
+        if metric not in baseline_metrics:
+            logger.warning(f"Baseline metric '{metric}' not found, skipping comparison")
+            continue
+        
+        baseline_value = baseline_metrics[metric]
+        current_value = current_metrics.get(metric, 0.0)
+        
+        # Calculate relative change
+        if baseline_value > 0:
+            relative_change = (current_value - baseline_value) / baseline_value
+        else:
+            relative_change = 0.0
+        
+        # Check if within tolerance
+        passed = relative_change >= -tolerance
+        
+        comparison_results[metric] = {
+            'baseline': baseline_value,
+            'current': current_value,
+            'relative_change': relative_change,
+            'passed': passed
+        }
+        
+        if not passed:
+            all_passed = False
+            logger.warning(
+                f"Metric '{metric}' degraded: baseline={baseline_value:.4f}, "
+                f"current={current_value:.4f}, change={relative_change:.2%}"
+            )
+    
+    if all_passed:
+        logger.info("All metrics meet or exceed baseline requirements")
+    else:
+        logger.error("Model regression detected - some metrics below baseline tolerance")
+    
+    return all_passed
+
+
+def generate_evaluation_report(
+    model: BaseEstimator, 
+    X_test: pd.DataFrame, 
+    y_test: pd.Series, 
+    config: Dict
+) -> Dict[str, Any]:
+    """Generate comprehensive evaluation report with all metrics.
+    
+    Args:
+        model: Trained model to evaluate
+        X_test: Test features
+        y_test: Test labels
+        config: Evaluation configuration
+        
+    Returns:
+        Dictionary containing comprehensive evaluation report
+    """
+    logger.info(f"Generating evaluation report on {len(X_test)} test samples")
+    
+    report = {
+        'test_samples': len(X_test),
+        'feature_count': X_test.shape[1],
+        'classification_metrics': {},
+        'threshold_analysis': None,
+        'business_metrics': {},
+        'baseline_comparison': {},
+        'passed_baseline': True
+    }
+    
+    try:
+        # Generate predictions
+        y_pred = model.predict(X_test)
+        
+        # Get prediction probabilities
+        if hasattr(model, 'predict_proba'):
+            y_pred_proba = model.predict_proba(X_test)[:, 1]
+        else:
+            y_pred_proba = model.decision_function(X_test)
+            # Normalize to [0, 1]
+            y_pred_proba = (y_pred_proba - y_pred_proba.min()) / (
+                y_pred_proba.max() - y_pred_proba.min() + 1e-10
+            )
+        
+        # Calculate classification metrics
+        report['classification_metrics'] = calculate_classification_metrics(
+            y_test, y_pred, y_pred_proba
+        )
+        
+        # Threshold analysis
+        thresholds = config.get('evaluation_thresholds', [0.3, 0.5, 0.7, 0.9])
+        report['threshold_analysis'] = evaluate_at_thresholds(
+            y_test, y_pred_proba, thresholds
+        ).to_dict('records')
+        
+        # Business metrics if transaction amounts provided
+        if 'transaction_amounts' in config:
+            transaction_amounts = config['transaction_amounts']
+            if isinstance(transaction_amounts, pd.Series):
+                report['business_metrics'] = calculate_business_metrics(
+                    y_test, y_pred, transaction_amounts
+                )
+        
+        # Baseline comparison
+        if 'baseline_metrics' in config:
+            baseline_metrics = config['baseline_metrics']
+            tolerance = config.get('baseline_tolerance', 0.05)
+            
+            report['passed_baseline'] = compare_with_baseline(
+                report['classification_metrics'],
+                baseline_metrics,
+                tolerance
+            )
+            
+            report['baseline_comparison'] = {
+                'baseline_metrics': baseline_metrics,
+                'tolerance': tolerance,
+                'passed': report['passed_baseline']
+            }
+        
+        # Feature importance if available
+        if hasattr(model, 'feature_importances_'):
+            feature_importance = pd.DataFrame({
+                'feature': X_test.columns,
+                'importance': model.feature_importances_
+            }).sort_values('importance', ascending=False)
+            
+            report['feature_importance'] = feature_importance.to_dict('records')
+        
+        logger.info("Evaluation report generated successfully")
+        
+    except Exception as e:
+        logger.error(f"Error generating evaluation report: {str(e)}")
+        raise
+    
+    return report
+
+
+# src/pipeline/model_registry.py
+"""Model registry module for fraud detection pipeline."""
+
+from typing import Dict, Optional, Any
+from pathlib import Path
+import json
+import joblib
+import logging
+from datetime import datetime
+import shutil
+
+logger = logging.getLogger(__name__)
+
+
+def register_model(
+    model_path: str, 
+    metrics: Dict, 
+    metadata: Dict, 
+    registry_uri: str
+) -> str:
+    """Register model in the model registry (e.g., MLflow).
+    
+    Args:
+        model_path: Path to the model file
+        metrics: Model performance metrics
+        metadata: Additional model metadata
+        registry_uri: URI of the model registry
+        
+    Returns:
+        Model version identifier
+    """
+    logger.info(f"Registering model from {model_path} to registry {registry_uri}")
+    
+    try:
+        # Try to use MLflow if available
+        try:
+            import mlflow
+            
+            mlflow.set_tracking_uri(registry_uri)
+            
+            model_name = metadata.get('model_name', 'fraud-detection-model')
+            
+            with mlflow.start_run(run_name=f"model_registration_{datetime.now().isoformat()}"):
+                # Log metrics
+                for metric_name, metric_value in metrics.items():
+                    if isinstance(metric_value, (int, float)):
+                        mlflow.log_metric(metric_name, metric_value)
+                
+                # Log parameters/metadata
+                for key, value in metadata.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        mlflow.log_param(key, value)
+                
+                # Log model
+                model = joblib.load(model_path)
+                mlflow.sklearn.log_model(
+                    model, 
+                    "model",
+                    registered_model_name=model_name
+                )
+                
+                run_id = mlflow.active_run().info.run_id
+                
+                # Get model version
+                client = mlflow.tracking.MlflowClient()
+                model_versions = client.search_model_versions(f"name='{model_name}'")
+                
+                if model_versions:
+                    latest_version = max([int(mv.version) for mv in model_versions])
+                    version = str(latest_version)
+                else:
+                    version = "1"
+                
+                logger.info(f"Model registered in MLflow with version {version}")
+                return version
+                
+        except ImportError:
+            logger.warning("MLflow not available, using local registry")
+            
+            # Fallback to local file-based registry
+            registry_path = Path(registry_uri)
+            registry_path.mkdir(parents=True, exist_ok=True)
+            
+            model_name = metadata.get('model_name', 'fraud-detection-model')
+            
+            # Create version directory
+            versions_dir = registry_path / model_name / "versions"
+            versions_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Determine next version number
+            existing_versions = [
+                int(d.name) for d in versions_dir.iterdir() 
+                if d.is_dir() and d.name.isdigit()
+            ]
+            next_version = max(existing_versions, default=0) + 1
+            version = str(next_version)
+            
+            version_dir = versions_dir / version
+            version_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy model file
+            model_dest = version_dir / "model.joblib"
+            shutil.copy2(model_path, model_dest)
+            
+            # Save metrics
+            metrics_path = version_dir / "metrics.json"
+            with open(metrics_path, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            
+            # Save metadata
+            metadata['version'] = version
+            metadata['registered_at'] = datetime.now().isoformat()
+            metadata_path = version_dir / "metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            logger.info(f"Model registered locally with version {version}")
+            return version
+            
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise
+
+
+def get_latest_model_version(model_name: str, registry_uri: str) -> Optional[str]:
+    """Retrieve the latest version of a model from the registry.
+    
+    Args:
+        model_name: Name of the model
+        registry_uri: URI of the model registry
+        
+    Returns:
+        Latest model version or None if not found
+    """
+    try:
+        # Try MLflow first
+        try:
+            import mlflow
+            
+            mlflow.set_tracking_uri(registry_uri)
+            client = mlflow.tracking.MlflowClient()
+            
+            model_versions = client.search_model_versions(f"name='{model_name}'")
+            
+            if not model_versions:
+                logger.warning(f"No versions found for model {model_name}")
+                return None
+            
+            latest_version = max([int(mv.version) for mv in model_versions])
+            logger.info(f"Latest version for {model_name}: {latest_version}")
+            return str(latest_version)
+            
+        except ImportError:
+            # Fallback to local registry
+            registry_path = Path(registry_uri)
+            versions_dir = registry_path / model_name / "versions"
+            
+            if not versions_dir.exists():
+                logger.warning(f"No versions found for model {model_name}")
+                return None
+            
+            existing_versions = [
+                int(d.name) for d in versions_dir.iterdir() 
+                if d.is_dir() and d.name.isdigit()
+            ]
+            
+            if not existing_versions:
+                return None
+            
+            latest_version = max(existing_versions)
+            logger.info(f"Latest version for {model_name}: {latest_version}")
+            return str(latest_version)
+            
+    except Exception as e:
+        logger.error(f"Error getting latest model version: {str(e)}")
+        return None
+
+
+def promote_model_to_stage(
+    model_name: str, 
+    version: str, 
+    stage: str, 
+    registry_uri: str
+) -> None:
+    """Promote a model version to a specific stage (staging/production).
+    
+    Args:
+        model_name: Name of the model
+        version: Model version to promote
+        stage: Target stage (e.g., 'staging', 'production')
+        registry_uri: URI of the model registry
+    """
+    logger.info(f"Promoting {model_name} version {version} to {stage}")
+    
+    try:
+        # Try MLflow first
+        try:
+            import mlflow
+            
+            mlflow.set_tracking_uri(registry_uri)
+            client = mlflow.tracking.MlflowClient()
+            
+            # Archive current production models if promoting to production
+            if stage.lower() == 'production':
+                current_prod_versions = client.get_latest_versions(
+                    model_name, 
+                    stages=["Production"]
+                )
+                for mv in current_prod_versions:
+                    client.transition_model_version_stage(
+                        name=model_name,
+                        version=mv.version,
+                        stage="Archived"
+                    )
+            
+            # Promote new version
+            client.transition_model_version_stage(
+                name=model_name,
+                version=version,
+                stage=stage.capitalize()
+            )
+            
+            logger.info(f"Model promoted to {stage} in MLflow")
+            
+        except ImportError:
+            # Fallback to local registry
+            registry_path = Path(registry_uri)
+            version_dir = registry_path / model_name / "versions" / version
+            
+            if not version_dir.exists():
+                raise ValueError(f"Version {version} not found for model {model_name}")
+            
+            # Update metadata with stage
+            metadata_path = version_dir / "metadata.json"
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            metadata['stage'] = stage
+            metadata['promoted_at'] = datetime.now().isoformat()
+            
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Create stage symlink
+            stage_link = registry_path / model_name / f"{stage}_version"
+            if stage_link.exists():
+                stage_link.unlink()
+            stage_link.symlink_to(version_dir)
+            
+            logger.info(f"Model promoted to {stage} in local registry")
+            
+    except Exception as e:
+        logger.error(f"Error promoting model: {str(e)}")
+        raise
+
+
+def compare_model_versions(
+    model_name: str, 
+    version1: str, 
+    version2: str, 
+    registry_uri: str
+) -> Dict:
+    """Compare metrics between two model versions.
+    
+    Args:
+        model_name: Name of the model
+        version1: First version to compare
+        version2: Second version to compare
+        registry_uri: URI of the model registry
+        
+    Returns:
+        Dictionary with comparison results
+    """
+    logger.info(f"Comparing {model_name} versions {version1} and {version2}")
+    
+    comparison = {
+        'version1': version1,
+        'version2': version2,
+        'metrics_comparison': {},
+        'winner': None
+    }
+    
+    try:
+        # Try MLflow first
+        try:
+            import mlflow
+            
+            mlflow.set_tracking_uri(registry_uri)
+            client = mlflow.tracking.MlflowClient()
+            
+            # Get model versions
+            mv1 = client.get_model_version(model_name, version1)
+            mv2 = client.get_model_version(model_name, version2)
+            
+            # Get run metrics
+            run1 = client.get_run(mv1.run_id)
+            run2 = client.get_run(mv2.run_id)
+            
+            metrics1 = run1.data.metrics
+            metrics2 = run2.data.metrics
+            
+        except ImportError:
+            # Fallback to local registry
+            registry_path = Path(registry_uri)
+            
+            metrics1_path = registry_path / model_name / "versions" / version1 / "metrics.json"
+            metrics2_path = registry_path / model_name / "versions" / version2 / "metrics.json"
+            
+            with open(metrics1_path, 'r') as f:
+                metrics1 = json.load(f)
+            
+            with open(metrics2_path, 'r') as f:
+                metrics2 = json.load(f)
+        
+        # Compare metrics
+        all_metrics = set(metrics1.keys()) | set(metrics2.keys())
+        
+        for metric in all_metrics:
+            val1 = metrics1.get(metric, 0)
+            val2 = metrics2.get(metric, 0)
+            
+            comparison['metrics_comparison'][metric] = {
+                'version1': val1,
+                'version2': val2,
+                'difference': val2 - val1,
+                'percent_change': ((val2 - val1) / val1 * 100) if val1 != 0 else 0
+            }
+        
+        # Determine winner based on key metrics
+        key_metrics = ['f1_score', 'roc_auc', 'precision', 'recall']
+        v1_wins = 0
+        v2_wins = 0
+        
+        for metric in key_metrics:
+            if metric in comparison['metrics_comparison']:
+                if comparison['metrics_comparison'][metric]['difference'] > 0:
+                    v2_wins += 1
+                elif comparison['metrics_comparison'][metric]['difference'] < 0:
+                    v1_wins += 1
+        
+        if v2_wins > v1_wins:
+            comparison['winner'] = version2
+        elif v1_wins > v2_wins:
+            comparison['winner'] = version1
+        else:
+            comparison['winner'] = 'tie'
+        
+        logger.info(f"Comparison complete. Winner: {comparison['winner']}")
+        
+    except Exception as e:
+        logger.error(f"Error comparing model versions: {str(e)}")
+        raise
+    
+    return comparison
+
+
+def archive_old_models(
+    model_name: str, 
+    keep_n_versions: int, 
+    registry_uri: str
+) -> None:
+    """Archive old model versions keeping only the N most recent.
+    
+    Args:
+        model_name: Name of the model
+        keep_n_versions: Number of recent versions to keep
+        registry_uri: URI of the model registry
+    """
+    logger.info(f"Archiving old versions of {model_name}, keeping {keep_n_versions} recent")
+    
+    try:
+        # Try MLflow first
+        try:
+            import mlflow
+            
+            mlflow.set_tracking_uri(registry_uri)
+            client = mlflow.tracking.MlflowClient()
+            
+            # Get all versions
+            all_versions = client.search_model_versions(f"name='{model_name}'")
+            
+            # Sort by version number (descending)
+            sorted_versions = sorted(
+                all_versions, 
+                key=lambda x: int(x.version), 
+                reverse=True
+            )
+            
+            # Archive old versions
+            for mv in sorted_versions[keep_n_versions:]:
+                # Don't archive production or staging models
+                if mv.current_stage not in ['Production', 'Staging']:
+                    client.transition_model_version_stage(
+                        name=model_name,
+                        version=mv.version,
+                        stage="Archived"
+                    )
+                    logger.info(f"Archived version {mv.version}")
+            
+        except ImportError:
+            # Fallback to local registry
+            registry_path = Path(registry_uri)
+            versions_dir = registry_path / model_name / "versions"
+            
+            if not versions_dir.exists():
+                logger.warning(f"No versions found for model {model_name}")
+                return
+            
+            # Get all version directories
+            version_dirs = [
+                (int(d.name), d) for d in versions_dir.iterdir() 
+                if d.is_dir() and d.name.isdigit()
+            ]
+            
+            # Sort by version number (descending)
+            version_dirs.sort(reverse=True)
+            
+            # Archive old versions
+            archive_dir = registry_path / model_name / "archived"
+            archive_dir.mkdir(exist_ok=True)
+            
+            for version_num, version_dir in version_dirs[keep_n_versions:]:
+                # Check if in production or staging
+                metadata_path = version_dir / "metadata.json"
+                if metadata_path.exists():
+                    with open(metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    if metadata.get('stage') in ['production', 'staging']:
+                        logger.info(f"Skipping version {version_num} (in {metadata.get('stage')})")
+                        continue
+                
+                # Move to archive
+                archive_dest = archive_dir / str(version_num)
+                if archive_dest.exists():
+                    shutil.rmtree(archive_dest)
+                shutil.move(str(version_dir), str(archive_dest))
+                logger.info(f"Archived version {version_num}")
+        
+        logger.info("Archival complete")
+        
+    except Exception as e:
+        logger.error(f"Error archiving old models: {str(e)}")
+        raise
+
+
+# src/pipeline/deployment.py
+"""Deployment module for fraud detection pipeline."""
+
+from typing import Dict, Optional, List
+import subprocess
+import requests
+import json
+import time
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def build_model_container(model_path: str, config: Dict) -> str:
+    """Build Docker container with the model for deployment.
+    
+    Args:
+        model_path: Path to the model artifacts
+        config: Deployment configuration
+        
+    Returns:
+        Container image tag
+    """
+    logger.info(f"Building container for model at {model_path}")
+    
+    try:
+        image_name = config.get('image_name', 'fraud-detection-model')
+        image_tag = config.get('image_tag', 'latest')
+        full_image = f"{image_name}:{image_tag}"
+        
+        # Create Dockerfile if not exists
+        dockerfile_path = Path(config.get('dockerfile_path', './Dockerfile'))
+        
+        if not dockerfile_path.exists():
+            logger.info("Creating default Dockerfile")
+            dockerfile_content = f"""
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy model artifacts
+COPY {model_path} /app/model/
+
+# Copy serving code
+COPY src/serving /app/serving/
+
+# Expose port
+EXPOSE 8080
+
+# Run server
+CMD ["python", "-m", "serving.app"]
+"""
+            dockerfile_path.write_text(dockerfile_content)
+        
+        # Build Docker image
+        build_command = [
+            'docker', 'build',
+            '-t', full_image,
+            '-f', str(dockerfile_path),
+            '.'
+        ]
+        
+        logger.info(f"Running: {' '.join(build_command)}")
+        
+        result = subprocess.run(
+            build_command,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        logger.info(f"Container built successfully: {full_image}")
+        logger.debug(f"Build output: {result.stdout}")
+        
+        # Push to registry if configured
+        registry = config.get('container_registry')
+        if registry:
+            registry_image = f"{registry}/{full_image}"
+            
+            # Tag for registry
+            subprocess.run(
+                ['docker', 'tag', full_image, registry_image],
+                check=True
+            )
+            
+            # Push to registry
+            logger.info(f"Pushing to registry: {registry_image}")
+            subprocess.run(
+                ['docker', 'push', registry_image],
+                check=True
+            )
+            
+            return registry_image
+        
+        return full_image
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error building container: {e.stderr}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in container build: {str(e)}")
+        raise
+
+
+def validate_deployment_endpoint(endpoint_url: str, test_data: Dict) -> bool:
+    """Validate that the deployed model endpoint is responding correctly.
+    
+    Args:
+        endpoint_url: URL of the deployed endpoint
+        test_data: Test data to send to the endpoint
+        
+    Returns:
+        True if endpoint is healthy, False otherwise
+    """
+    logger.info(f"Validating endpoint: {endpoint_url}")
+    
+    try:
+        # Health check
+        health_url = f"{endpoint_url.rstrip('/')}/health"
+        
+        response = requests.get(health_url, timeout=10)
+        
+        if response.status_code != 200:
+            logger.error(f"Health check failed: {response.status_code}")
+            return False
+        
+        logger.info("Health check passed")
+        
+        # Prediction test
+        predict_url = f"{endpoint_url.rstrip('/')}/predict"
+        
+        response = requests.post(
+            predict_url,
+            json=test_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Prediction request failed: {response.status_code}")
+            return False
+        
+        # Validate response format
+        result = response.json()
+        
+        if 'predictions' not in result and 'prediction' not in result:
+            logger.error(f"Invalid response format: {result}")
+            return False
+        
+        logger.info("Endpoint validation successful")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error validating endpoint: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return False
+
+
+def run_smoke_tests(endpoint_url: str, test_cases: List[Dict]) -> Dict[str, bool]:
+    """Run smoke tests against the deployed model.
+    
+    Args:
+        endpoint_url: URL of the deployed endpoint
+        test_cases: List of test cases with input and expected output
+        
+    Returns:
+        Dictionary with test results
+    """
+    logger.info(f"Running {len(test_cases)} smoke tests")
+    
+    results = {
+        'total_tests': len(test_cases),
+        'passed': 0,
+        'failed': 0,
+        'test_results': []
+    }
+    
+    predict_url = f"{endpoint_url.rstrip('/')}/predict"
+    
+    for i, test_case in enumerate(test_cases):
+        test_name = test_case.get('name', f'test_{i}')
+        test_input = test_case.get('input')
+        expected_output = test_case.get('expected_output')
+        
+        try:
+            response = requests.post(
+                predict_url,
+                json=test_input,
+                headers={'Content-Type': 'application/json'},
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                results['test_results'].append({
+                    'name': test_name,
+                    'passed': False,
+                    'error': f'HTTP {response.status_code}'
+                })
+                results['failed'] += 1
+                continue
+            
+            result = response.json()
+            
+            # Validate against expected output if provided
+            if expected_output:
+                # Simple validation - can be made more sophisticated
+                passed = True
+                for key, expected_value in expected_output.items():
+                    if key not in result:
+                        passed = False
+                        break
+                    
+                    # For predictions, check if in reasonable range
+                    if key in ['prediction', 'predictions']:
+                        actual = result[key]
+                        if isinstance(actual, list):
+                            actual = actual[0]
+                        
+                        # Check if prediction is valid
+                        if not isinstance(actual, (int, float)):
+                            passed = False
+                
+                if passed:
+                    results['passed'] += 1
+                else:
+                    results['failed'] += 1
+                
+                results['test_results'].append({
+                    'name': test_name,
+                    'passed': passed,
+                    'actual': result,
+                    'expected': expected_output
+                })
+            else:
+                # Just check if we got a valid response
+                results['passed'] += 1
+                results['test_results'].append({
+                    'name': test_name,
+                    'passed': True,
+                    'result': result
+                })
+        
+        except Exception as e:
+            logger.error(f"Test {test_name} failed: {str(e)}")
+            results['failed'] += 1
+            results['test_results'].append({
+                'name': test_name,
+                'passed': False,
+                'error': str(e)
+            })
+    
+    logger.info(f"Smoke tests complete: {results['passed']}/{results['total_tests']} passed")
+    
+    return results
+
+
+def deploy_to_staging(model_uri: str, config: Dict) -> str:
+    """Deploy model to staging environment.
+    
+    Args:
+        model_uri: URI of the model to deploy
+        config: Deployment configuration
+        
+    Returns:
+        Staging endpoint URL
+    """
+    logger.info(f"Deploying model to staging: {model_uri}")
+    
+    try:
+        deployment_platform = config.get('platform', 'kubernetes')
+        
+        if deployment_platform == 'kubernetes':
+            # Deploy to Kubernetes
+            namespace = config.get('staging_namespace', 'staging')
+            deployment_name = config.get('deployment_name', 'fraud-detection-staging')
+            
+            # Create/update deployment
+            kubectl_command = [
+                'kubectl', 'apply', '-f', '-'
+            ]
+            
+            deployment_yaml = f"""
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {deployment_name}
+  namespace: {namespace}
+spec:
+  replicas: {config.get('staging_replicas', 2)}
+  selector:
+    matchLabels:
+      app: fraud-detection
+      env: staging
+  template:
+    metadata:
+      labels:
+        app: fraud-detection
+        env: staging
+    spec:
+      containers:
+      - name: model
+        image: {model_uri}
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {deployment_name}-service
+  namespace: {namespace}
+spec:
+  selector:
+    app: fraud-detection
+    env: staging
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: LoadBalancer
+"""
+            
+            result = subprocess.run(
+                kubectl_command,
+                input=deployment_yaml,
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            
+            logger.info(f"Deployed to Kubernetes: {result.stdout}")
+            
+            # Wait for deployment to be ready
+            time.sleep(10)
+            
+            # Get service endpoint
+            service_command = [
+                'kubectl', 'get', 'service',
+                f'{deployment_name}-service',
+                '-n', namespace,
+                '-o', 'jsonpath={.status.loadBalancer.ingress[0].ip}'
+            ]
+            
+            result = subprocess.run(
+                service_command,
+                capture_output=True,
+                text=True
+            )
+            
+            endpoint_ip = result.stdout.strip()
+            endpoint_url = f"http://{endpoint_ip}" if endpoint_ip else "http://localhost:8080"
+            
+        else:
+            # Fallback to local deployment
+            logger.warning("Using local deployment")
+            
+            # Start container locally
+            container_name = config.get('container_name', 'fraud-detection-staging')
+            
+            # Stop existing container
+            subprocess.run(
+                ['docker', 'stop', container_name],
+                capture_output=True
+            )
+            subprocess.run(
+                ['docker', 'rm', container_name],
+                capture_output=True
+            )
+            
+            # Start new container
+            subprocess.run(
+                [
+                    'docker', 'run', '-d',
+                    '--name', container_name,
+                    '-p', '8080:8080',
+                    model_uri
+                ],
+                check=True
+            )
+            
+            endpoint_url = "http://localhost:8080"
+        
+        logger.info(f"Staging deployment complete: {endpoint_url}")
+        return endpoint_url
+        
+    except Exception as e:
+        logger.error(f"Error deploying to staging: {str(e)}")
+        raise
+
+
+def deploy_to_production(
+    model_uri: str, 
+    config: Dict, 
+    approval_required: bool = True
+) -> str:
+    """Deploy model to production environment.
+    
+    Args:
+        model_uri: URI of the model to deploy
+        config: Deployment configuration
+        approval_required: Whether manual approval is required
+        
+    Returns:
+        Production endpoint URL
+    """
+    logger.info(f"Deploying model to production: {model_uri}")
+    
+    if approval_required:
+        logger.info("Manual approval required for production deployment")
+        # In real implementation, this would wait for approval
+        # For now, we'll just log it
+    
+    try:
+        deployment_platform = config.get('platform', 'kubernetes')
+        
+        if deployment_platform == 'kubernetes':
+            namespace = config.get('production_namespace', 'production')
+            deployment_name = config.get('deployment_name', 'fraud-detection-production')
+            
+            # Blue-green deployment strategy
+            current_deployment = f"{deployment_name}-blue"
+            new_deployment = f"{deployment_name}-green"
+            
+            # Deploy new version (green)
+            deployment_yaml = f"""
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {new_deployment}
+  namespace: {namespace}
+spec:
+  replicas: {config.get('production_replicas', 3)}
+  selector:
+    matchLabels:
+      app: fraud-detection
+      env: production
+      version: green
+  template:
+    metadata:
+      labels:
+        app: fraud-detection
+        env: production
+        version: green
+    spec:
+      containers:
+      - name: model
+        image: {model_uri}
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+"""
+            
+            subprocess.run(
+                ['kubectl', 'apply', '-f', '-'],
+                input=deployment_yaml,
+                text=True,
+                check=True
+            )
+            
+            logger.info("Green deployment created, waiting for readiness...")
+            time.sleep(30)
+            
+            # Update service to point to new deployment
+            service_yaml = f"""
+apiVersion: v1
+kind: Service
+metadata:
+  name: {deployment_name}-service
+  namespace: {namespace}
+spec:
+  selector:
+    app: fraud-detection
+    env: production
+    version: green
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: LoadBalancer
+"""
+            
+            subprocess.run(
+                ['kubectl', 'apply', '-f', '-'],
+                input=service_yaml,
+                text=True,
+                check=True
+            )
+            
+            logger.info("Traffic switched to green deployment")
+            
+            # Get endpoint
+            service_command = [
+                'kubectl', 'get', 'service',
+                f'{deployment_name}-service',
+                '-n', namespace,
+                '-o', 'jsonpath={.status.loadBalancer.ingress[0].ip}'
+            ]
+            
+            result = subprocess.run(
+                service_command,
+                capture_output=True,
+                text=True
+            )
+            
+            endpoint_ip = result.stdout.strip()
+            endpoint_url = f"http://{endpoint_ip}" if endpoint_ip else "http://localhost:8080"
+            
+        else:
+            # Local production deployment
+            container_name = config.get('container_name', 'fraud-detection-production')
+            
+            subprocess.run(['docker', 'stop', container_name], capture_output=True)
+            subprocess.run(['docker', 'rm', container_name], capture_output=True)
+            
+            subprocess.run(
+                [
+                    'docker', 'run', '-d',
+                    '--name', container_name,
+                    '-p', '8081:8080',
+                    model_uri
+                ],
+                check=True
+            )
+            
+            endpoint_url = "http://localhost:8081"
+        
+        logger.info(f"Production deployment complete: {endpoint_url}")
+        return endpoint_url
+        
+    except Exception as e:
+        logger.error(f"Error deploying to production: {str(e)}")
+        raise
+
+
+def rollback_deployment(deployment_name: str, previous_version: str) -> bool:
+    """Rollback to a previous model version.
+    
+    Args:
+        deployment_name: Name of the deployment
+        previous_version: Previous version to rollback to
+        
+    Returns:
+        True if rollback successful, False otherwise
+    """
+    logger.info(f"Rolling back {deployment_name} to version {previous_version}")
+    
+    try:
+        # In Kubernetes, switch service back to blue deployment
+        rollback_command = [
+            'kubectl', 'rollout', 'undo',
+            f'deployment/{deployment_name}'
+        ]
+        
+        subprocess.run(rollback_command, check=True)
+        
+        logger.info("Rollback completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error during rollback: {str(e)}")
+        return False
+```

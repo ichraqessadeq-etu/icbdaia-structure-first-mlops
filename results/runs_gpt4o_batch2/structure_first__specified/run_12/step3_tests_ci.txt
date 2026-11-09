@@ -1,0 +1,112 @@
+Certainly! Below is a pytest test file to test the components of the fraud detection pipeline, followed by a GitHub Actions workflow to automate the testing process.
+
+### (a) Complete pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from fraud_detection.pipeline.data_loader import load_data
+from fraud_detection.pipeline.model_trainer import train_model
+from fraud_detection.pipeline.evaluator import evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+
+# Mock data for testing
+MOCK_DATA = {
+    'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    'feature2': [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    'fraud_label': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+}
+
+@pytest.fixture
+def mock_df():
+    return pd.DataFrame(MOCK_DATA)
+
+def test_load_data(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    
+    assert X_train.shape[0] == 8
+    assert X_test.shape[0] == 2
+    assert y_train.shape[0] == 8
+    assert y_test.shape[0] == 2
+
+def test_train_model(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    model = train_model(X_train, y_train)
+    
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model(mock_df, monkeypatch):
+    def mock_read_csv(file_path):
+        return mock_df
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    X_train, X_test, y_train, y_test = load_data('mock_path.csv')
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+    assert 0 <= metrics['accuracy'] <= 1
+    assert 0 <= metrics['precision'] <= 1
+    assert 0 <= metrics['recall'] <= 1
+    assert 0 <= metrics['f1_score'] <= 1
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out the code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest mlflow scikit-learn pandas
+
+    - name: Run tests
+      run: |
+        pytest tests/
+```
+
+This setup includes:
+
+- **pytest Test File**: This file includes tests for the `load_data`, `train_model`, and `evaluate_model` functions using mock data.
+- **GitHub Actions Workflow**: The workflow automates the testing process on every push or pull request to the `main` branch, setting up the Python environment, installing necessary dependencies, and running the tests with pytest.
+
+Ensure that the directory structure and package imports in your project match those specified in the test file. Adjust the `python-version` and any other configuration as needed for your specific environment.

@@ -1,0 +1,156 @@
+Below are the complete configurations for a CI/CD pipeline for a fraud detection model using scikit-learn's `RandomForestClassifier`, MLflow for experiment tracking, and pytest for testing. The pipeline is set to trigger on concept drift detection.
+
+### 1. Python Pipeline Script
+
+```python
+import os
+import logging
+import mlflow
+import mlflow.sklearn
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        # Handle imbalanced data by upsampling the minority class
+        fraud = data[data['Class'] == 1]
+        non_fraud = data[data['Class'] == 0]
+        fraud_upsampled = resample(fraud,
+                                   replace=True,
+                                   n_samples=len(non_fraud),
+                                   random_state=42)
+        data_upsampled = pd.concat([non_fraud, fraud_upsampled])
+        X = data_upsampled.drop('Class', axis=1)
+        y = data_upsampled['Class']
+        return X, y
+    except Exception as e:
+        logger.error(f"Error in preprocessing data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        logger.error(f"Error in training model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        auc_score = roc_auc_score(y_test, predictions)
+        report = classification_report(y_test, predictions)
+        return auc_score, report
+    except Exception as e:
+        logger.error(f"Error in evaluating model: {e}")
+        raise
+
+def main():
+    data_file_path = "creditcard.csv"
+    data = load_data(data_file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Start MLflow run
+    mlflow.set_experiment("Fraud Detection")
+    with mlflow.start_run():
+        model = train_model(X_train, y_train)
+        auc_score, report = evaluate_model(model, X_test, y_test)
+
+        # Log parameters and metrics
+        mlflow.log_param("model_type", "RandomForestClassifier")
+        mlflow.log_metric("auc_score", auc_score)
+
+        # Log model
+        mlflow.sklearn.log_model(model, "model")
+
+        logger.info(f"Model evaluation report: \n{report}")
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2. Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+def test_load_data():
+    data = load_data("creditcard.csv")
+    assert isinstance(data, pd.DataFrame), "Data should be loaded into a DataFrame"
+
+def test_preprocess_data():
+    data = pd.DataFrame({'Class': [0, 1, 0, 1, 0]})
+    X, y = preprocess_data(data)
+    assert len(X) == len(y), "Features and labels should have the same length"
+    assert set(y.unique()) == {0, 1}, "Labels should contain both classes"
+
+def test_train_model():
+    X = pd.DataFrame({'feature1': [1, 2, 3, 4], 'feature2': [5, 6, 7, 8]})
+    y = [0, 1, 0, 1]
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier instance"
+```
+
+### 3. GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # weekly trigger for concept drift check
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest --disable-warnings
+
+    - name: Run pipeline
+      env:
+        MLFLOW_TRACKING_URI: 'http://your-mlflow-server:5000'
+      run: |
+        python pipeline.py
+```
+
+Make sure to replace `http://your-mlflow-server:5000` with the actual URI of your MLflow server. Also, ensure that the `requirements.txt` file includes necessary dependencies like `pandas`, `scikit-learn`, `mlflow`, and `pytest`.

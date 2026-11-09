@@ -1,0 +1,106 @@
+Below is the complete `pytest` test file for the given pipeline module, followed by the GitHub Actions workflow file. These files will help you test the functionality of the pipeline and automate the testing process with CI/CD.
+
+### (a) Pytest Test File
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+from pipeline_module import load_data, check_concept_drift, train_model, evaluate_model, log_to_mlflow
+
+@pytest.fixture
+def sample_data():
+    # Example data fixture
+    X_train = {'feature1': [1, 2, 3, 4], 'feature2': [5, 6, 7, 8]}
+    X_test = {'feature1': [9, 10], 'feature2': [11, 12]}
+    y_train = [0, 1, 0, 1]
+    y_test = [0, 1]
+    return X_train, X_test, y_train, y_test
+
+def test_load_data():
+    # Test that load_data returns the expected structure
+    with patch('pandas.read_csv') as mock_read_csv:
+        mock_read_csv.return_value = pd.DataFrame({
+            'feature1': [1, 2, 3, 4, 9, 10],
+            'feature2': [5, 6, 7, 8, 11, 12],
+            'label': [0, 1, 0, 1, 0, 1]
+        })
+        X_train, X_test, y_train, y_test = load_data('dummy_path')
+        assert len(X_train) == 4
+        assert len(X_test) == 2
+        assert len(y_train) == 4
+        assert len(y_test) == 2
+
+def test_check_concept_drift(sample_data):
+    # Test the concept drift detection
+    drift_detected = check_concept_drift(sample_data)
+    assert drift_detected is False  # Expected outcome based on sample_data
+
+def test_train_model(sample_data):
+    # Test the training process
+    model = train_model(sample_data)
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model(sample_data):
+    # Test the evaluation metrics
+    model = train_model(sample_data)
+    metrics = evaluate_model(model, sample_data)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+
+def test_log_to_mlflow(sample_data):
+    # Test the MLflow logging (mocked)
+    model = MagicMock()
+    metrics = {'accuracy': 1.0, 'precision': 1.0, 'recall': 1.0, 'f1_score': 1.0}
+    with patch('mlflow.start_run'), patch('mlflow.log_params'), patch('mlflow.log_metrics'), patch('mlflow.sklearn.log_model'):
+        log_to_mlflow(model, metrics)
+```
+
+### (b) GitHub Actions Workflow File
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn mlflow
+
+    - name: Test with pytest
+      run: |
+        pytest --maxfail=1 --disable-warnings
+
+    - name: Archive test results
+      if: failure()
+      uses: actions/upload-artifact@v2
+      with:
+        name: pytest-results
+        path: ./test-results
+```
+
+### Notes:
+- The `pytest` test file uses fixtures and mocks to simulate the behavior of the pipeline components, ensuring the tests are isolated and do not depend on the actual data or external services.
+- The GitHub Actions workflow includes steps for checking out the code, setting up Python, installing dependencies, running tests, and uploading test results as artifacts if any test fails.

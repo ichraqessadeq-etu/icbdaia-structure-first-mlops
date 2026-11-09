@@ -1,0 +1,162 @@
+Below are the complete code snippets for the requirements you have specified:
+
+### 1. Python Pipeline Script
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+import mlflow
+import mlflow.sklearn
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import roc_curve
+from sklearn.metrics import auc
+from sklearn.metrics import f1_score
+
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise Exception(f"Error loading data: {e}")
+
+
+def preprocess_data(data):
+    try:
+        # Assuming the class column is named 'Class' and features are all others
+        X = data.drop(columns=['Class'])
+        y = data['Class']
+        return X, y
+    except Exception as e:
+        raise Exception(f"Error preprocessing data: {e}")
+
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise Exception(f"Error during model training: {e}")
+
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+        
+        acc = accuracy_score(y_test, y_pred)
+        roc_auc = roc_auc_score(y_test, y_proba)
+        f1 = f1_score(y_test, y_pred)
+        
+        print("Evaluation Metrics:")
+        print(f"Accuracy: {acc}")
+        print(f"ROC AUC: {roc_auc}")
+        print(f"F1 Score: {f1}")
+        
+        return {
+            "accuracy": acc,
+            "roc_auc": roc_auc,
+            "f1_score": f1
+        }
+    except Exception as e:
+        raise Exception(f"Error during model evaluation: {e}")
+
+
+def log_experiment(metrics, model, experiment_name="FraudDetection"):
+    try:
+        mlflow.set_experiment(experiment_name)
+        with mlflow.start_run():
+            mlflow.log_metrics(metrics)
+            mlflow.sklearn.log_model(model, "model")
+    except Exception as e:
+        raise Exception(f"Error logging experiment: {e}")
+
+
+def main(file_path):
+    try:
+        data = load_data(file_path)
+        X, y = preprocess_data(data)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        model = train_model(X_train, y_train)
+        metrics = evaluate_model(model, X_test, y_test)
+        log_experiment(metrics, model)
+    except Exception as e:
+        print(f"Pipeline failed: {e}")
+
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### 2. Pytest Test File
+
+```python
+import pytest
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+def test_load_data():
+    data = load_data("creditcard.csv")
+    assert not data.empty, "Data should not be empty"
+    assert "Class" in data.columns, "Data should have 'Class' column"
+
+def test_preprocess_data():
+    data = load_data("creditcard.csv")
+    X, y = preprocess_data(data)
+    assert len(X) == len(y), "Features and target should have the same number of samples"
+
+def test_train_model():
+    data = load_data("creditcard.csv")
+    X, y = preprocess_data(data)
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier), "Model should be an instance of RandomForestClassifier"
+```
+
+### 3. GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD Pipeline for Fraud Detection
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # Weekly trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install scikit-learn pandas pytest mlflow
+        
+    - name: Run tests
+      run: |
+        pytest tests/
+        
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+```
+
+These scripts and configurations set up a complete CI/CD pipeline for a fraud detection model using scikit-learn, MLflow, and GitHub Actions. Make sure to adjust file paths and configurations according to your specific project setup.

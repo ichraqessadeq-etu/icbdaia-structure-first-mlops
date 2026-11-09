@@ -1,0 +1,8 @@
+# analysis and figure (no API key needed)
+numpy
+scipy
+matplotlib
+# generation only (paid API calls)
+openai>=1.0
+anthropic>=0.40
+python-dotenv

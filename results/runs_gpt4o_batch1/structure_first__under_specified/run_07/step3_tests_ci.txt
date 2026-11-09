@@ -1,0 +1,114 @@
+Certainly! Below is the complete pytest test file to test the functions in your pipeline module, followed by a GitHub Actions workflow configuration to automate the testing process.
+
+### (a) Pytest Test File
+
+Create a file named `test_pipeline.py` in your `tests` directory:
+
+```python
+# tests/test_pipeline.py
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.data_preprocessing import load_data, preprocess_data
+from fraud_detection.pipeline.model_training import train_model
+from fraud_detection.pipeline.model_evaluation import evaluate_model
+from fraud_detection.pipeline.model_deployment import deploy_model
+import joblib
+import os
+
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [1, 2, 3, 4, None],
+        'feature2': [5, 6, None, 8, 9],
+        'target': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    file_path = tmp_path / "sample.csv"
+    sample_csv = "feature1,feature2,target\n1,5,0\n2,6,1\n3,,0\n4,8,1\n,9,0"
+    file_path.write_text(sample_csv)
+
+    # Test loading data
+    data = load_data(file_path)
+    assert isinstance(data, pd.DataFrame)
+    assert len(data) == 5
+
+def test_preprocess_data(sample_data):
+    preprocessed_data = preprocess_data(sample_data)
+    assert preprocessed_data.isnull().sum().sum() == 0  # No missing values
+    assert len(preprocessed_data) == 2  # Only rows with no missing values
+
+def test_train_model(sample_data):
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    accuracy = evaluate_model(model, preprocessed_data)
+    assert isinstance(accuracy, float)
+    assert 0.0 <= accuracy <= 1.0
+
+def test_deploy_model(sample_data, tmp_path):
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    file_path = tmp_path / "deployed_model.pkl"
+    
+    # Change the deploy path for testing
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(joblib, 'dump', lambda m, f: joblib.dump(m, file_path))
+        deploy_model(model)
+    
+    # Check if the model file is created
+    assert os.path.exists(file_path)
+    loaded_model = joblib.load(file_path)
+    assert isinstance(loaded_model, RandomForestClassifier)
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `python-app.yml` in the `.github/workflows` directory:
+
+```yaml
+# .github/workflows/python-app.yml
+name: Python application
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: |
+        pytest tests
+```
+
+### Explanation
+- **Pytest Test File**: The test file uses pytest to test each function in your pipeline. It includes fixtures for sample data and tests for each module function, ensuring that they behave as expected.
+- **GitHub Actions Workflow**: This workflow triggers on pushes and pull requests to the `main` branch. It sets up Python, installs dependencies, and runs your pytest test suite. Adjust the `python-version` to match your development environment if necessary.

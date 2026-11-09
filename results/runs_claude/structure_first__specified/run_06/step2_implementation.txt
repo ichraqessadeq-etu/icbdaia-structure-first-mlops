@@ -1,0 +1,861 @@
+# Step 2: Complete Pipeline Module Implementation
+
+```python
+"""Main ML pipeline orchestration."""
+
+import mlflow
+import mlflow.sklearn
+from typing import Dict, Any, Optional, Tuple
+import logging
+import yaml
+from pathlib import Path
+import sys
+import argparse
+from datetime import datetime
+import json
+
+from data_processing import (
+    load_data,
+    validate_data,
+    handle_missing_values,
+    engineer_features,
+    split_data,
+    scale_features,
+    handle_imbalanced_data
+)
+from model import create_model, train_model, save_model, predict, predict_proba
+from evaluation import calculate_metrics, calculate_business_metrics, generate_evaluation_report
+from drift_detection import (
+    detect_feature_drift,
+    detect_prediction_drift,
+    check_performance_degradation,
+    should_retrain
+)
+
+
+def setup_logging(log_level: str = "INFO") -> None:
+    """Configure logging for the pipeline.
+    
+    Args:
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    """
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f'Invalid log level: {log_level}')
+    
+    logging.basicConfig(
+        level=numeric_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(f'pipeline_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+        ]
+    )
+    
+    # Set third-party loggers to WARNING to reduce noise
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
+    logging.getLogger('PIL').setLevel(logging.WARNING)
+    
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load pipeline configuration from YAML file.
+    
+    Args:
+        config_path: Path to YAML configuration file
+        
+    Returns:
+        Dictionary containing configuration parameters
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        yaml.YAMLError: If config file is invalid YAML
+    """
+    logger = logging.getLogger(__name__)
+    
+    config_file = Path(config_path)
+    if not config_file.exists():
+        logger.error(f"Configuration file not found: {config_path}")
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        logger.info(f"Successfully loaded configuration from {config_path}")
+        
+        # Validate required configuration sections
+        required_sections = ['data', 'model', 'evaluation', 'drift_detection', 'mlflow']
+        missing_sections = [section for section in required_sections if section not in config]
+        
+        if missing_sections:
+            logger.warning(f"Missing configuration sections: {missing_sections}")
+        
+        return config
+        
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing YAML configuration: {e}")
+        raise
+
+
+def setup_mlflow(experiment_name: str, tracking_uri: Optional[str] = None) -> None:
+    """Setup MLflow experiment tracking.
+    
+    Args:
+        experiment_name: Name of the MLflow experiment
+        tracking_uri: MLflow tracking server URI (optional)
+    """
+    logger = logging.getLogger(__name__)
+    
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+        logger.info(f"MLflow tracking URI set to: {tracking_uri}")
+    else:
+        logger.info("Using default MLflow tracking (local)")
+    
+    # Create or get experiment
+    try:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment is None:
+            experiment_id = mlflow.create_experiment(
+                experiment_name,
+                tags={
+                    "project": "fraud-detection",
+                    "created_at": datetime.now().isoformat()
+                }
+            )
+            logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
+        else:
+            experiment_id = experiment.experiment_id
+            logger.info(f"Using existing MLflow experiment: {experiment_name} (ID: {experiment_id})")
+        
+        mlflow.set_experiment(experiment_name)
+        
+    except Exception as e:
+        logger.error(f"Error setting up MLflow experiment: {e}")
+        raise
+
+
+def run_data_pipeline(config: Dict[str, Any]) -> Tuple[Any, Any, Any, Any, Any]:
+    """Execute data loading and preprocessing pipeline.
+    
+    Args:
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test, scaler)
+        
+    Raises:
+        ValueError: If data validation fails
+        Exception: If any pipeline step fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Starting data pipeline...")
+    
+    try:
+        # Extract configuration
+        data_config = config.get('data', {})
+        data_path = data_config.get('path', 'data/creditcard.csv')
+        target_column = data_config.get('target_column', 'Class')
+        test_size = data_config.get('test_size', 0.2)
+        random_state = data_config.get('random_state', 42)
+        handle_imbalance = data_config.get('handle_imbalance', True)
+        imbalance_strategy = data_config.get('imbalance_strategy', 'smote')
+        
+        # Step 1: Load data
+        logger.info(f"Loading data from {data_path}")
+        df = load_data(data_path)
+        logger.info(f"Loaded {len(df)} records with {len(df.columns)} columns")
+        
+        # Step 2: Validate data
+        logger.info("Validating data schema and quality...")
+        if not validate_data(df):
+            raise ValueError("Data validation failed")
+        logger.info("Data validation passed")
+        
+        # Step 3: Handle missing values
+        logger.info("Handling missing values...")
+        df = handle_missing_values(df)
+        
+        # Step 4: Engineer features
+        logger.info("Engineering features...")
+        df = engineer_features(df)
+        logger.info(f"Feature engineering complete. Total features: {len(df.columns)}")
+        
+        # Step 5: Split data
+        logger.info(f"Splitting data (test_size={test_size})...")
+        X_train, X_test, y_train, y_test = split_data(
+            df,
+            target_column=target_column,
+            test_size=test_size,
+            random_state=random_state
+        )
+        logger.info(f"Training set: {len(X_train)} samples")
+        logger.info(f"Test set: {len(X_test)} samples")
+        logger.info(f"Fraud rate in training: {y_train.mean():.4f}")
+        logger.info(f"Fraud rate in test: {y_test.mean():.4f}")
+        
+        # Step 6: Scale features
+        logger.info("Scaling features...")
+        X_train_scaled, X_test_scaled, scaler = scale_features(X_train, X_test)
+        
+        # Step 7: Handle imbalanced data (if configured)
+        if handle_imbalance:
+            logger.info(f"Handling imbalanced data using {imbalance_strategy}...")
+            original_size = len(X_train_scaled)
+            X_train_scaled, y_train = handle_imbalanced_data(
+                X_train_scaled,
+                y_train.values,
+                strategy=imbalance_strategy
+            )
+            logger.info(f"Resampled training set from {original_size} to {len(X_train_scaled)} samples")
+            logger.info(f"New fraud rate in training: {y_train.mean():.4f}")
+        
+        logger.info("Data pipeline completed successfully")
+        return X_train_scaled, X_test_scaled, y_train, y_test, scaler
+        
+    except Exception as e:
+        logger.error(f"Error in data pipeline: {e}")
+        raise
+
+
+def run_training_pipeline(
+    X_train: Any,
+    y_train: Any,
+    config: Dict[str, Any]
+) -> Any:
+    """Execute model training pipeline.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Trained model
+        
+    Raises:
+        Exception: If training fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Starting training pipeline...")
+    
+    try:
+        # Extract model configuration
+        model_config = config.get('model', {})
+        hyperparameters = model_config.get('hyperparameters', {})
+        model_path = model_config.get('save_path', 'models/fraud_detector.pkl')
+        
+        # Step 1: Create model
+        logger.info("Creating model with hyperparameters:")
+        for param, value in hyperparameters.items():
+            logger.info(f"  {param}: {value}")
+        
+        model = create_model(hyperparameters)
+        
+        # Step 2: Train model
+        logger.info("Training model...")
+        start_time = datetime.now()
+        model = train_model(model, X_train, y_train)
+        training_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Model training completed in {training_time:.2f} seconds")
+        
+        # Step 3: Save model
+        logger.info(f"Saving model to {model_path}")
+        Path(model_path).parent.mkdir(parents=True, exist_ok=True)
+        save_model(model, model_path)
+        
+        logger.info("Training pipeline completed successfully")
+        return model
+        
+    except Exception as e:
+        logger.error(f"Error in training pipeline: {e}")
+        raise
+
+
+def run_evaluation_pipeline(
+    model: Any,
+    X_test: Any,
+    y_test: Any,
+    config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Execute model evaluation pipeline.
+    
+    Args:
+        model: Trained model
+        X_test: Test features
+        y_test: Test labels
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Dictionary containing evaluation metrics and results
+        
+    Raises:
+        Exception: If evaluation fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Starting evaluation pipeline...")
+    
+    try:
+        # Extract evaluation configuration
+        eval_config = config.get('evaluation', {})
+        output_dir = eval_config.get('output_dir', 'outputs/evaluation')
+        fraud_cost = eval_config.get('fraud_cost', 100.0)
+        investigation_cost = eval_config.get('investigation_cost', 10.0)
+        min_precision = eval_config.get('min_precision', 0.85)
+        min_recall = eval_config.get('min_recall', 0.75)
+        min_f1 = eval_config.get('min_f1', 0.80)
+        
+        # Create output directory
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Step 1: Generate predictions
+        logger.info("Generating predictions...")
+        y_pred = predict(model, X_test)
+        y_pred_proba = predict_proba(model, X_test)
+        
+        # Step 2: Calculate metrics
+        logger.info("Calculating evaluation metrics...")
+        metrics = calculate_metrics(y_test, y_pred, y_pred_proba)
+        
+        logger.info("Model Performance Metrics:")
+        for metric_name, metric_value in metrics.items():
+            logger.info(f"  {metric_name}: {metric_value:.4f}")
+        
+        # Step 3: Calculate business metrics
+        logger.info("Calculating business metrics...")
+        business_metrics = calculate_business_metrics(
+            y_test,
+            y_pred,
+            fraud_cost=fraud_cost,
+            investigation_cost=investigation_cost
+        )
+        
+        logger.info("Business Metrics:")
+        for metric_name, metric_value in business_metrics.items():
+            if isinstance(metric_value, float):
+                logger.info(f"  {metric_name}: ${metric_value:,.2f}")
+            else:
+                logger.info(f"  {metric_name}: {metric_value}")
+        
+        # Step 4: Generate comprehensive evaluation report
+        logger.info(f"Generating evaluation report in {output_dir}")
+        report = generate_evaluation_report(
+            y_test,
+            y_pred,
+            y_pred_proba,
+            output_dir
+        )
+        
+        # Step 5: Check performance thresholds
+        logger.info("Checking performance thresholds...")
+        thresholds_met = True
+        
+        if metrics['precision'] < min_precision:
+            logger.warning(f"Precision {metrics['precision']:.4f} below threshold {min_precision}")
+            thresholds_met = False
+        
+        if metrics['recall'] < min_recall:
+            logger.warning(f"Recall {metrics['recall']:.4f} below threshold {min_recall}")
+            thresholds_met = False
+        
+        if metrics['f1_score'] < min_f1:
+            logger.warning(f"F1-score {metrics['f1_score']:.4f} below threshold {min_f1}")
+            thresholds_met = False
+        
+        if thresholds_met:
+            logger.info("All performance thresholds met ✓")
+        else:
+            logger.warning("Some performance thresholds not met")
+        
+        # Combine all results
+        evaluation_results = {
+            'metrics': metrics,
+            'business_metrics': business_metrics,
+            'report': report,
+            'thresholds_met': thresholds_met,
+            'output_dir': output_dir
+        }
+        
+        logger.info("Evaluation pipeline completed successfully")
+        return evaluation_results
+        
+    except Exception as e:
+        logger.error(f"Error in evaluation pipeline: {e}")
+        raise
+
+
+def run_drift_detection_pipeline(
+    reference_data_path: str,
+    current_data_path: str,
+    baseline_metrics: Dict[str, float],
+    config: Dict[str, Any]
+) -> Tuple[bool, Dict[str, Any]]:
+    """Execute drift detection pipeline.
+    
+    Args:
+        reference_data_path: Path to reference dataset
+        current_data_path: Path to current dataset
+        baseline_metrics: Baseline performance metrics
+        config: Pipeline configuration dictionary
+        
+    Returns:
+        Tuple of (should_retrain, drift_results)
+        
+    Raises:
+        Exception: If drift detection fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Starting drift detection pipeline...")
+    
+    try:
+        # Extract drift detection configuration
+        drift_config = config.get('drift_detection', {})
+        feature_drift_threshold = drift_config.get('feature_drift_threshold', 0.2)
+        prediction_drift_threshold = drift_config.get('prediction_drift_threshold', 0.15)
+        performance_threshold = drift_config.get('performance_threshold', 0.1)
+        output_dir = drift_config.get('output_dir', 'outputs/drift')
+        
+        # Create output directory
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Step 1: Load data
+        logger.info(f"Loading reference data from {reference_data_path}")
+        reference_data = load_data(reference_data_path)
+        
+        logger.info(f"Loading current data from {current_data_path}")
+        current_data = load_data(current_data_path)
+        
+        # Step 2: Detect feature drift
+        logger.info("Detecting feature drift...")
+        feature_drift_results = detect_feature_drift(
+            reference_data,
+            current_data,
+            threshold=feature_drift_threshold
+        )
+        
+        # Count drifted features
+        drifted_features = [
+            feature for feature, results in feature_drift_results.items()
+            if results.get('drift_detected', False)
+        ]
+        
+        if drifted_features:
+            logger.warning(f"Drift detected in {len(drifted_features)} features:")
+            for feature in drifted_features[:5]:  # Show first 5
+                psi = feature_drift_results[feature].get('psi', 0)
+                logger.warning(f"  {feature}: PSI = {psi:.4f}")
+            if len(drifted_features) > 5:
+                logger.warning(f"  ... and {len(drifted_features) - 5} more")
+        else:
+            logger.info("No feature drift detected")
+        
+        # Step 3: Detect prediction drift (if model exists)
+        prediction_drift_results = {}
+        try:
+            model_path = config.get('model', {}).get('save_path', 'models/fraud_detector.pkl')
+            from model import load_model
+            
+            logger.info("Loading model for prediction drift detection...")
+            model = load_model(model_path)
+            
+            # Generate predictions on both datasets
+            target_col = config.get('data', {}).get('target_column', 'Class')
+            
+            # Prepare reference data
+            ref_features = reference_data.drop(columns=[target_col])
+            ref_predictions = predict_proba(model, ref_features.values)
+            
+            # Prepare current data
+            curr_features = current_data.drop(columns=[target_col])
+            curr_predictions = predict_proba(model, curr_features.values)
+            
+            logger.info("Detecting prediction drift...")
+            prediction_drift_results = detect_prediction_drift(
+                ref_predictions[:, 1],  # Probability of fraud class
+                curr_predictions[:, 1],
+                threshold=prediction_drift_threshold
+            )
+            
+            if prediction_drift_results.get('drift_detected', False):
+                logger.warning(f"Prediction drift detected: PSI = {prediction_drift_results.get('psi', 0):.4f}")
+            else:
+                logger.info("No prediction drift detected")
+                
+        except FileNotFoundError:
+            logger.warning("Model not found, skipping prediction drift detection")
+        except Exception as e:
+            logger.warning(f"Could not perform prediction drift detection: {e}")
+        
+        # Step 4: Check performance degradation
+        performance_degraded = False
+        if baseline_metrics:
+            logger.info("Checking for performance degradation...")
+            
+            # Calculate current metrics (if we have labels)
+            try:
+                current_metrics = {}
+                if target_col in current_data.columns:
+                    y_current = current_data[target_col]
+                    X_current = current_data.drop(columns=[target_col])
+                    
+                    y_pred_current = predict(model, X_current.values)
+                    y_pred_proba_current = predict_proba(model, X_current.values)
+                    
+                    current_metrics = calculate_metrics(
+                        y_current.values,
+                        y_pred_current,
+                        y_pred_proba_current
+                    )
+                    
+                    performance_degraded = check_performance_degradation(
+                        current_metrics,
+                        baseline_metrics,
+                        threshold=performance_threshold
+                    )
+                    
+                    if performance_degraded:
+                        logger.warning("Performance degradation detected:")
+                        for metric in ['precision', 'recall', 'f1_score']:
+                            if metric in baseline_metrics and metric in current_metrics:
+                                baseline = baseline_metrics[metric]
+                                current = current_metrics[metric]
+                                change = ((current - baseline) / baseline) * 100
+                                logger.warning(f"  {metric}: {baseline:.4f} -> {current:.4f} ({change:+.2f}%)")
+                    else:
+                        logger.info("No significant performance degradation detected")
+                        
+            except Exception as e:
+                logger.warning(f"Could not check performance degradation: {e}")
+        
+        # Step 5: Determine if retraining is needed
+        drift_results = {
+            'feature_drift': feature_drift_results,
+            'prediction_drift': prediction_drift_results,
+            'performance_degraded': performance_degraded,
+            'drifted_features_count': len(drifted_features),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        retrain_needed, reason = should_retrain(
+            {'feature_drift': len(drifted_features) > 0, 'prediction_drift': prediction_drift_results.get('drift_detected', False)},
+            {'performance_degraded': performance_degraded}
+        )
+        
+        drift_results['retrain_needed'] = retrain_needed
+        drift_results['retrain_reason'] = reason
+        
+        if retrain_needed:
+            logger.warning(f"Retraining recommended: {reason}")
+        else:
+            logger.info(f"No retraining needed: {reason}")
+        
+        # Step 6: Save drift report
+        report_path = Path(output_dir) / f"drift_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(report_path, 'w') as f:
+            json.dump(drift_results, f, indent=2, default=str)
+        logger.info(f"Drift report saved to {report_path}")
+        
+        logger.info("Drift detection pipeline completed successfully")
+        return retrain_needed, drift_results
+        
+    except Exception as e:
+        logger.error(f"Error in drift detection pipeline: {e}")
+        raise
+
+
+def log_to_mlflow(
+    model: Any,
+    metrics: Dict[str, float],
+    params: Dict[str, Any],
+    artifacts: Dict[str, str],
+    scaler: Any
+) -> str:
+    """Log model, metrics, parameters, and artifacts to MLflow.
+    
+    Args:
+        model: Trained model to log
+        metrics: Dictionary of metrics to log
+        params: Dictionary of parameters to log
+        artifacts: Dictionary of artifact paths to log
+        scaler: Feature scaler to log
+        
+    Returns:
+        Run ID of the MLflow run
+        
+    Raises:
+        Exception: If MLflow logging fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Logging to MLflow...")
+    
+    try:
+        with mlflow.start_run() as run:
+            run_id = run.info.run_id
+            logger.info(f"MLflow Run ID: {run_id}")
+            
+            # Log parameters
+            logger.info("Logging parameters...")
+            for param_name, param_value in params.items():
+                mlflow.log_param(param_name, param_value)
+            
+            # Log metrics
+            logger.info("Logging metrics...")
+            for metric_name, metric_value in metrics.items():
+                if isinstance(metric_value, (int, float)):
+                    mlflow.log_metric(metric_name, metric_value)
+            
+            # Log model
+            logger.info("Logging model...")
+            mlflow.sklearn.log_model(
+                model,
+                "model",
+                registered_model_name="fraud-detection-model"
+            )
+            
+            # Log scaler as artifact
+            logger.info("Logging scaler...")
+            import joblib
+            scaler_path = "scaler.pkl"
+            joblib.dump(scaler, scaler_path)
+            mlflow.log_artifact(scaler_path)
+            Path(scaler_path).unlink()  # Clean up temporary file
+            
+            # Log artifacts
+            logger.info("Logging artifacts...")
+            for artifact_name, artifact_path in artifacts.items():
+                if Path(artifact_path).exists():
+                    if Path(artifact_path).is_dir():
+                        mlflow.log_artifacts(artifact_path, artifact_name)
+                    else:
+                        mlflow.log_artifact(artifact_path, artifact_name)
+                else:
+                    logger.warning(f"Artifact not found: {artifact_path}")
+            
+            # Log additional metadata
+            mlflow.set_tags({
+                "pipeline_version": "1.0.0",
+                "timestamp": datetime.now().isoformat(),
+                "framework": "scikit-learn"
+            })
+            
+            logger.info(f"Successfully logged to MLflow (Run ID: {run_id})")
+            return run_id
+            
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+
+def main(
+    config_path: str = "config/config.yaml",
+    data_path: Optional[str] = None,
+    check_drift: bool = False,
+    reference_data_path: Optional[str] = None
+) -> int:
+    """Main pipeline execution function.
+    
+    Args:
+        config_path: Path to configuration file
+        data_path: Path to data file (overrides config)
+        check_drift: Whether to perform drift detection
+        reference_data_path: Path to reference data for drift detection
+        
+    Returns:
+        Exit code (0 for success, non-zero for failure)
+    """
+    try:
+        # Setup logging
+        setup_logging()
+        logger = logging.getLogger(__name__)
+        
+        logger.info("="*80)
+        logger.info("FRAUD DETECTION ML PIPELINE")
+        logger.info("="*80)
+        
+        # Load configuration
+        logger.info(f"Loading configuration from {config_path}")
+        config = load_config(config_path)
+        
+        # Override data path if provided
+        if data_path:
+            config['data']['path'] = data_path
+            logger.info(f"Using data path from argument: {data_path}")
+        
+        # Setup MLflow
+        mlflow_config = config.get('mlflow', {})
+        experiment_name = mlflow_config.get('experiment_name', 'fraud-detection')
+        tracking_uri = mlflow_config.get('tracking_uri')
+        
+        setup_mlflow(experiment_name, tracking_uri)
+        
+        # Check if drift detection is requested
+        if check_drift:
+            if not reference_data_path:
+                reference_data_path = config.get('drift_detection', {}).get('reference_data_path')
+            
+            if not reference_data_path:
+                logger.error("Reference data path required for drift detection")
+                return 1
+            
+            current_data_path = config['data']['path']
+            
+            # Load baseline metrics
+            baseline_metrics_path = config.get('drift_detection', {}).get('baseline_metrics_path')
+            baseline_metrics = {}
+            
+            if baseline_metrics_path and Path(baseline_metrics_path).exists():
+                with open(baseline_metrics_path, 'r') as f:
+                    baseline_metrics = json.load(f)
+                logger.info(f"Loaded baseline metrics from {baseline_metrics_path}")
+            
+            # Run drift detection
+            retrain_needed, drift_results = run_drift_detection_pipeline(
+                reference_data_path,
+                current_data_path,
+                baseline_metrics,
+                config
+            )
+            
+            if not retrain_needed:
+                logger.info("No retraining needed. Exiting.")
+                return 0
+            
+            logger.info("Drift detected. Proceeding with retraining...")
+        
+        # Run data pipeline
+        logger.info("\n" + "="*80)
+        logger.info("STEP 1: DATA PIPELINE")
+        logger.info("="*80)
+        X_train, X_test, y_train, y_test, scaler = run_data_pipeline(config)
+        
+        # Run training pipeline
+        logger.info("\n" + "="*80)
+        logger.info("STEP 2: TRAINING PIPELINE")
+        logger.info("="*80)
+        model = run_training_pipeline(X_train, y_train, config)
+        
+        # Run evaluation pipeline
+        logger.info("\n" + "="*80)
+        logger.info("STEP 3: EVALUATION PIPELINE")
+        logger.info("="*80)
+        evaluation_results = run_evaluation_pipeline(model, X_test, y_test, config)
+        
+        # Check if performance thresholds are met
+        if not evaluation_results['thresholds_met']:
+            logger.error("Model does not meet performance thresholds")
+            return 1
+        
+        # Log to MLflow
+        logger.info("\n" + "="*80)
+        logger.info("STEP 4: MLFLOW LOGGING")
+        logger.info("="*80)
+        
+        params = {
+            'test_size': config.get('data', {}).get('test_size', 0.2),
+            'random_state': config.get('data', {}).get('random_state', 42),
+            'handle_imbalance': config.get('data', {}).get('handle_imbalance', True),
+            'imbalance_strategy': config.get('data', {}).get('imbalance_strategy', 'smote'),
+            **config.get('model', {}).get('hyperparameters', {})
+        }
+        
+        artifacts = {
+            'evaluation': evaluation_results['output_dir']
+        }
+        
+        run_id = log_to_mlflow(
+            model,
+            evaluation_results['metrics'],
+            params,
+            artifacts,
+            scaler
+        )
+        
+        # Save baseline metrics for future drift detection
+        baseline_metrics_path = config.get('drift_detection', {}).get('baseline_metrics_path', 'outputs/baseline_metrics.json')
+        Path(baseline_metrics_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(baseline_metrics_path, 'w') as f:
+            json.dump(evaluation_results['metrics'], f, indent=2)
+        logger.info(f"Saved baseline metrics to {baseline_metrics_path}")
+        
+        logger.info("\n" + "="*80)
+        logger.info("PIPELINE COMPLETED SUCCESSFULLY")
+        logger.info("="*80)
+        logger.info(f"MLflow Run ID: {run_id}")
+        logger.info(f"Model saved to: {config.get('model', {}).get('save_path', 'models/fraud_detector.pkl')}")
+        logger.info(f"Evaluation reports: {evaluation_results['output_dir']}")
+        
+        return 0
+        
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Pipeline failed with error: {e}", exc_info=True)
+        return 1
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fraud Detection ML Pipeline")
+    
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config/config.yaml',
+        help='Path to configuration file'
+    )
+    
+    parser.add_argument(
+        '--data',
+        type=str,
+        help='Path to data file (overrides config)'
+    )
+    
+    parser.add_argument(
+        '--check-drift',
+        action='store_true',
+        help='Perform drift detection before training'
+    )
+    
+    parser.add_argument(
+        '--reference-data',
+        type=str,
+        help='Path to reference data for drift detection'
+    )
+    
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        help='Logging level'
+    )
+    
+    args = parser.parse_args()
+    
+    # Setup logging with specified level
+    setup_logging(args.log_level)
+    
+    # Run pipeline
+    exit_code = main(
+        config_path=args.config,
+        data_path=args.data,
+        check_drift=args.check_drift,
+        reference_data_path=args.reference_data
+    )
+    
+    sys.exit(exit_code)
+```
+
+This complete implementation of `src/pipeline.py` includes:
+
+1. **Comprehensive logging** throughout all functions
+2. **Error handling** with try-except blocks and meaningful error messages
+3. **Configuration management** with validation
+4. **MLflow integration** for experiment tracking and model logging
+5. **Modular pipeline steps** that can be run independently or as a complete workflow
+6. **Drift detection integration** with conditional retraining logic
+7. **Command-line interface** using argparse for flexible execution
+8. **Performance threshold checking** to ensure model quality
+9. **Artifact management** for saving and organizing outputs
+10. **Detailed progress reporting** with timestamps and metrics logging
+
+The pipeline orchestrates all components (data processing, model training, evaluation, drift detection) and provides a robust, production-ready ML workflow.

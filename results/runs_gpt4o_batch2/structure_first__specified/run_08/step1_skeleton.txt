@@ -1,0 +1,139 @@
+### Step 1: File Layout
+
+```
+fraud_detection_pipeline/
+│
+├── src/
+│   ├── __init__.py
+│   ├── data_loader.py
+│   ├── model.py
+│   ├── evaluation.py
+│   ├── drift_detection.py
+│   └── main.py
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py
+│
+└── .github/
+    └── workflows/
+        └── ci_cd_pipeline.yml
+```
+
+### Pipeline Module (Python)
+
+#### `data_loader.py`
+
+```python
+def load_data(file_path: str) -> tuple:
+    """Load and preprocess the credit card fraud dataset."""
+    ...
+```
+
+#### `model.py`
+
+```python
+def train_random_forest(X_train, y_train) -> "RandomForestClassifier":
+    """Train a RandomForestClassifier model."""
+    ...
+```
+
+#### `evaluation.py`
+
+```python
+def evaluate_model(model, X_test, y_test) -> dict:
+    """Evaluate the model and return performance metrics."""
+    ...
+```
+
+#### `drift_detection.py`
+
+```python
+def detect_concept_drift(reference_data, current_data) -> bool:
+    """Detect concept drift between reference and current data."""
+    ...
+```
+
+#### `main.py`
+
+```python
+def main():
+    """Main function to run the pipeline."""
+    ...
+```
+
+### Test File (Pytest)
+
+#### `test_pipeline.py`
+
+```python
+def test_load_data():
+    """Test if data loading and preprocessing is successful."""
+    ...
+
+def test_train_random_forest():
+    """Test if RandomForestClassifier is trained correctly."""
+    ...
+
+def test_evaluate_model():
+    """Test if model evaluation returns correct metrics."""
+    ...
+```
+
+### GitHub Actions Workflow (YAML)
+
+#### `ci_cd_pipeline.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly schedule
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+  install_dependencies:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: install_dependencies
+    steps:
+      - name: Run Pytest
+        run: |
+          pytest tests/
+
+  run_pipeline:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Execute pipeline
+        run: |
+          python src/main.py
+```
+
+This structure provides the blueprint for a CI/CD pipeline for a fraud detection model using scikit-learn's `RandomForestClassifier`, with MLflow for logging, and `pytest` for testing. The GitHub Actions workflow automates testing and pipeline execution.

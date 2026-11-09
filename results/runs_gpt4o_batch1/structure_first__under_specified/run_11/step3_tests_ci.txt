@@ -1,0 +1,107 @@
+Here is a complete pytest test file and a GitHub Actions workflow to test and automate the deployment of your pipeline module. 
+
+### (a) Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import (load_data, preprocess_data, train_model, evaluate_model,
+                             save_model, load_model, predict)
+
+def test_load_data():
+    # Test loading data with a non-existent file
+    with pytest.raises(FileNotFoundError):
+        load_data("non_existent_file.csv")
+    
+    # Test loading data with a valid file
+    # Assume 'example.csv' exists for testing purposes
+    data = load_data("example.csv")
+    assert isinstance(data, pd.DataFrame)
+
+def test_preprocess_data():
+    # Create a simple DataFrame for testing
+    data = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6], 'label': [0, 1, 0]})
+    features, labels = preprocess_data(data)
+    assert isinstance(features, pd.DataFrame)
+    assert isinstance(labels, pd.Series)
+    assert 'label' not in features.columns
+
+def test_train_model():
+    # Create preprocessed data
+    features = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6]})
+    labels = pd.Series([0, 1, 0])
+    model, X_test, y_test = train_model((features, labels))
+    assert isinstance(model, RandomForestClassifier)
+    assert X_test.shape[0] == 1  # 20% of 3 is 0.6, rounded to 1
+    assert y_test.shape[0] == 1
+
+def test_evaluate_model():
+    # Create a simple model and test data
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_test = pd.DataFrame({'feature1': [1], 'feature2': [4]})
+    y_test = pd.Series([0])
+    model.fit(X_test, y_test)
+    evaluation = evaluate_model(model, (X_test, y_test))
+    assert 'accuracy' in evaluation
+    assert 'report' in evaluation
+
+def test_save_and_load_model(tmpdir):
+    # Create a simple model and save it
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    path = tmpdir.join("model.pkl")
+    save_model(model, str(path))
+    assert path.check(file=True)
+    
+    # Load the model
+    loaded_model = load_model(str(path))
+    assert isinstance(loaded_model, RandomForestClassifier)
+
+def test_predict():
+    # Create a simple model and new data
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    model.fit(pd.DataFrame({'feature1': [1, 2], 'feature2': [3, 4]}), pd.Series([0, 1]))
+    new_data = pd.DataFrame({'feature1': [1], 'feature2': [3]})
+    predictions = predict(model, new_data)
+    assert isinstance(predictions, pd.Series)
+
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: |
+        pytest
+```
+
+### Notes:
+- **Test File**: The test file includes tests for each function in the module, handling both expected outcomes and error conditions.
+- **GitHub Actions Workflow**: This workflow is triggered on pushes and pull requests to the main branch, sets up the Python environment, installs dependencies, and runs tests using pytest.
+- **Example File**: The test assumes the availability of an `example.csv` file for testing `load_data`. You'll need to include this file in your repository or adjust the test to use a fixture or mock data.

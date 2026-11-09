@@ -1,0 +1,513 @@
+# Step 1: Project Structure and Signatures
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ml_pipeline.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   ├── config.py
+│   └── drift_detector.py
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py
+├── data/
+│   └── .gitkeep
+├── models/
+│   └── .gitkeep
+├── requirements.txt
+├── setup.py
+└── README.md
+```
+
+## Pipeline Module (`src/pipeline.py`)
+
+```python
+"""Main ML pipeline for fraud detection model training and evaluation."""
+
+import logging
+from typing import Tuple, Dict, Any
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+import mlflow
+
+
+def setup_logging(log_level: str = "INFO") -> logging.Logger:
+    """Configure logging for the pipeline."""
+    ...
+
+
+def load_data(data_path: str) -> pd.DataFrame:
+    """Load credit card fraud dataset from CSV file."""
+    ...
+
+
+def validate_data(df: pd.DataFrame) -> bool:
+    """Validate data schema, types, and basic quality checks."""
+    ...
+
+
+def preprocess_data(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split and preprocess data into train/test sets with proper scaling."""
+    ...
+
+
+def handle_imbalance(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    strategy: str = "class_weight"
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Handle class imbalance using specified strategy (class_weight or SMOTE)."""
+    ...
+
+
+def train_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    hyperparameters: Dict[str, Any]
+) -> RandomForestClassifier:
+    """Train RandomForestClassifier with given hyperparameters."""
+    ...
+
+
+def evaluate_model(
+    model: RandomForestClassifier,
+    X_test: np.ndarray,
+    y_test: np.ndarray
+) -> Dict[str, float]:
+    """Evaluate model and return comprehensive metrics for imbalanced classification."""
+    ...
+
+
+def log_to_mlflow(
+    model: RandomForestClassifier,
+    metrics: Dict[str, float],
+    hyperparameters: Dict[str, Any],
+    artifacts: Dict[str, str],
+    experiment_name: str = "fraud_detection"
+) -> str:
+    """Log model, metrics, parameters, and artifacts to MLflow."""
+    ...
+
+
+def save_model_artifacts(
+    model: RandomForestClassifier,
+    metrics: Dict[str, float],
+    output_dir: str = "models"
+) -> Dict[str, str]:
+    """Save model and metrics as artifacts to disk."""
+    ...
+
+
+def check_model_performance(
+    metrics: Dict[str, float],
+    thresholds: Dict[str, float]
+) -> bool:
+    """Validate model performance against minimum thresholds."""
+    ...
+
+
+def run_pipeline(
+    data_path: str,
+    config: Dict[str, Any],
+    mlflow_tracking_uri: str = None
+) -> Tuple[RandomForestClassifier, Dict[str, float], str]:
+    """Execute the complete ML pipeline from data loading to model logging."""
+    ...
+
+
+def main():
+    """Entry point for the pipeline script."""
+    ...
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Configuration Module (`src/config.py`)
+
+```python
+"""Configuration management for the fraud detection pipeline."""
+
+from typing import Dict, Any
+from dataclasses import dataclass, field
+
+
+@dataclass
+class PipelineConfig:
+    """Configuration class for pipeline parameters."""
+    ...
+
+
+def load_config(config_path: str = None) -> Dict[str, Any]:
+    """Load configuration from file or return defaults."""
+    ...
+
+
+def get_default_config() -> Dict[str, Any]:
+    """Return default configuration dictionary."""
+    ...
+
+
+def get_performance_thresholds() -> Dict[str, float]:
+    """Return minimum performance thresholds for model validation."""
+    ...
+```
+
+## Drift Detection Module (`src/drift_detector.py`)
+
+```python
+"""Concept drift detection for triggering model retraining."""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, Tuple, Optional
+
+
+def calculate_psi(
+    expected: np.ndarray,
+    actual: np.ndarray,
+    bins: int = 10
+) -> float:
+    """Calculate Population Stability Index between two distributions."""
+    ...
+
+
+def detect_feature_drift(
+    reference_data: pd.DataFrame,
+    current_data: pd.DataFrame,
+    threshold: float = 0.2
+) -> Dict[str, float]:
+    """Detect drift in individual features using PSI."""
+    ...
+
+
+def detect_prediction_drift(
+    reference_predictions: np.ndarray,
+    current_predictions: np.ndarray,
+    threshold: float = 0.15
+) -> Tuple[bool, float]:
+    """Detect drift in model predictions."""
+    ...
+
+
+def check_concept_drift(
+    reference_data_path: str,
+    current_data_path: str,
+    drift_threshold: float = 0.2
+) -> Tuple[bool, Dict[str, Any]]:
+    """Main function to check for concept drift and return retraining decision."""
+    ...
+```
+
+## Test File (`tests/test_pipeline.py`)
+
+```python
+"""Pytest tests for fraud detection pipeline."""
+
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+
+
+# Fixtures
+
+@pytest.fixture
+def sample_fraud_data():
+    """Create synthetic fraud dataset for testing."""
+    ...
+
+
+@pytest.fixture
+def trained_model():
+    """Create a pre-trained model for testing."""
+    ...
+
+
+@pytest.fixture
+def sample_config():
+    """Create sample configuration dictionary."""
+    ...
+
+
+# Data Tests
+
+def test_load_data_success():
+    """Test successful data loading from valid CSV file."""
+    ...
+
+
+def test_load_data_file_not_found():
+    """Test error handling when data file doesn't exist."""
+    ...
+
+
+def test_validate_data_correct_schema():
+    """Test data validation passes with correct schema."""
+    ...
+
+
+def test_validate_data_missing_columns():
+    """Test data validation fails with missing required columns."""
+    ...
+
+
+def test_validate_data_invalid_types():
+    """Test data validation fails with invalid data types."""
+    ...
+
+
+# Preprocessing Tests
+
+def test_preprocess_data_splits_correctly():
+    """Test data preprocessing creates correct train/test split sizes."""
+    ...
+
+
+def test_preprocess_data_no_leakage():
+    """Test that preprocessing doesn't cause data leakage."""
+    ...
+
+
+def test_handle_imbalance_class_weight():
+    """Test class weight strategy for handling imbalance."""
+    ...
+
+
+def test_handle_imbalance_smote():
+    """Test SMOTE strategy for handling imbalance."""
+    ...
+
+
+# Model Tests
+
+def test_train_model_returns_classifier():
+    """Test that training returns a valid RandomForestClassifier."""
+    ...
+
+
+def test_train_model_with_hyperparameters():
+    """Test model training respects provided hyperparameters."""
+    ...
+
+
+def test_model_predictions_shape():
+    """Test model predictions have correct shape."""
+    ...
+
+
+# Evaluation Tests
+
+def test_evaluate_model_returns_metrics():
+    """Test evaluation returns all required metrics."""
+    ...
+
+
+def test_evaluate_model_metrics_range():
+    """Test that metrics are within valid ranges (0-1)."""
+    ...
+
+
+def test_check_model_performance_passes():
+    """Test performance check passes with good metrics."""
+    ...
+
+
+def test_check_model_performance_fails():
+    """Test performance check fails with poor metrics."""
+    ...
+
+
+# MLflow Tests
+
+def test_log_to_mlflow_creates_run():
+    """Test MLflow logging creates a new run successfully."""
+    ...
+
+
+def test_log_to_mlflow_logs_parameters():
+    """Test MLflow logs all hyperparameters correctly."""
+    ...
+
+
+def test_log_to_mlflow_logs_metrics():
+    """Test MLflow logs all metrics correctly."""
+    ...
+
+
+# Drift Detection Tests
+
+def test_calculate_psi_no_drift():
+    """Test PSI calculation returns low value for identical distributions."""
+    ...
+
+
+def test_calculate_psi_high_drift():
+    """Test PSI calculation returns high value for different distributions."""
+    ...
+
+
+def test_detect_feature_drift():
+    """Test feature drift detection identifies drifted features."""
+    ...
+
+
+def test_check_concept_drift_triggers_retraining():
+    """Test concept drift detection triggers retraining when threshold exceeded."""
+    ...
+
+
+# Integration Tests
+
+def test_run_pipeline_end_to_end():
+    """Test complete pipeline execution from data loading to MLflow logging."""
+    ...
+
+
+def test_pipeline_error_handling():
+    """Test pipeline handles errors gracefully and logs appropriately."""
+    ...
+
+
+def test_save_model_artifacts():
+    """Test model and metrics are saved correctly to disk."""
+    ...
+```
+
+## GitHub Actions Workflow (`github/workflows/ml_pipeline.yml`)
+
+```yaml
+name: ML Pipeline CI/CD
+
+on:
+  # Trigger events (outline)
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily drift check
+  workflow_dispatch:
+    # Manual trigger
+
+env:
+  # Environment variables
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install linting dependencies
+      - Run flake8
+      - Run black check
+      - Run isort check
+      - Run mypy type checking
+
+  # Job 2: Unit & Integration Tests
+  test:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Cache dependencies
+      - Install dependencies
+      - Run pytest with coverage
+      - Upload coverage reports
+      - Check coverage threshold
+
+  # Job 3: Drift Detection
+  drift-detection:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download reference data
+      - Download current production data
+      - Run drift detection script
+      - Set output flag for retraining
+      - Upload drift report
+
+  # Job 4: Model Training (conditional on drift or manual trigger)
+  train-model:
+    needs: [test, drift-detection]
+    if: needs.drift-detection.outputs.requires_retraining == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download training data
+      - Setup MLflow tracking
+      - Run training pipeline
+      - Validate model performance
+      - Register model in MLflow
+      - Save model artifacts
+      - Upload artifacts to storage
+
+  # Job 5: Model Validation & Testing
+  validate-model:
+    needs: train-model
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Download trained model
+      - Run model validation tests
+      - Performance benchmark tests
+      - Bias and fairness checks
+      - Generate validation report
+
+  # Job 6: Deploy to Staging
+  deploy-staging:
+    needs: validate-model
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - Checkout code
+      - Setup cloud CLI
+      - Authenticate
+      - Download model artifacts
+      - Deploy to staging endpoint
+      - Run smoke tests
+      - Update model registry
+
+  # Job 7: Deploy to Production
+  deploy-production:
+    needs: validate-model
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Setup cloud CLI
+      - Authenticate
+      - Download model artifacts
+      - Deploy with blue-green strategy
+      - Run integration tests
+      - Monitor initial metrics
+      - Update production registry
+      - Send notification
+
+  # Job 8: Monitoring Setup
+  setup-monitoring:
+    needs: deploy-production
+    steps:
+      - Setup performance monitoring
+      - Setup drift monitoring
+      - Configure alerts
+      - Update dashboard
+```
+
+---
+
+**Structure Complete.** Ready for Step 2: Full Implementation.

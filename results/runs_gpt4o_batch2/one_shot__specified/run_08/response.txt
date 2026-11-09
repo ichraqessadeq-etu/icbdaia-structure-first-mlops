@@ -1,0 +1,146 @@
+Certainly! Below is a complete CI/CD pipeline for a fraud detection model using a RandomForestClassifier from scikit-learn. The pipeline will include data loading, model training, evaluation, and logging to MLflow. Additionally, I have provided a pytest test file and a GitHub Actions YAML workflow to manage CI/CD.
+
+### 1. Python Pipeline Script (`pipeline.py`)
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+import mlflow
+import mlflow.sklearn
+from sklearn.exceptions import NotFittedError
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise FileNotFoundError(f"Error loading data: {e}")
+
+def preprocess_data(df):
+    try:
+        X = df.drop('Class', axis=1)
+        y = df['Class']
+        return X, y
+    except KeyError as e:
+        raise KeyError(f"Expected 'Class' column not found in the DataFrame: {e}")
+
+def train_model(X_train, y_train):
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        y_pred = model.predict(X_test)
+        roc_auc = roc_auc_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred)
+        return roc_auc, report
+    except NotFittedError as e:
+        raise RuntimeError(f"Model must be trained before evaluation: {e}")
+
+def log_experiment(roc_auc, report, model):
+    mlflow.set_experiment("Fraud Detection")
+    with mlflow.start_run():
+        mlflow.log_metric("roc_auc", roc_auc)
+        mlflow.log_text(report, "classification_report.txt")
+        mlflow.sklearn.log_model(model, "random_forest_model")
+
+def main(file_path):
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    model = train_model(X_train, y_train)
+    roc_auc, report = evaluate_model(model, X_test, y_test)
+    log_experiment(roc_auc, report, model)
+
+if __name__ == "__main__":
+    try:
+        main("creditcard.csv")
+    except Exception as e:
+        print(f"Pipeline execution failed: {e}")
+```
+
+### 2. Pytest Test File (`test_pipeline.py`)
+
+```python
+import pytest
+import pandas as pd
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+def test_load_data():
+    df = load_data("creditcard.csv")
+    assert isinstance(df, pd.DataFrame), "Loaded data should be a DataFrame"
+
+def test_preprocess_data():
+    df = pd.DataFrame({
+        'Feature1': [1, 2, 3],
+        'Feature2': [4, 5, 6],
+        'Class': [0, 1, 0]
+    })
+    X, y = preprocess_data(df)
+    assert 'Class' not in X.columns, "'Class' column should not be in features"
+    assert y.name == 'Class', "Target should be 'Class'"
+
+def test_train_model():
+    X_train = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [4, 5]})
+    y_train = pd.Series([0, 1])
+    model = train_model(X_train, y_train)
+    assert hasattr(model, "predict"), "Model should have a predict method"
+```
+
+### 3. GitHub Actions YAML Workflow (`ci-cd.yml`)
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly run to check for concept drift
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py --maxfail=1 --disable-warnings
+
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+
+    - name: Check for concept drift
+      run: |
+        # Add your concept drift detection logic here
+        echo "Concept drift check is not implemented yet"
+```
+
+### Notes:
+- The dataset file path `creditcard.csv` should be correctly provided in the scripts.
+- `requirements.txt` should include all dependencies like `scikit-learn`, `pandas`, `numpy`, `mlflow`, and `pytest`.
+- Concept drift detection logic is not implemented in the above workflow; you should add your own logic in the "Check for concept drift" step.
+- Ensure that MLflow is correctly configured to log experiments in your MLflow server or local setup.

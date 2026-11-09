@@ -1,0 +1,598 @@
+# Fraud Detection Model CI/CD Pipeline - Structure
+
+## File Layout
+
+```
+fraud-detection-mlops/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+├── src/
+│   ├── __init__.py
+│   ├── pipeline.py
+│   └── config.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py
+│   └── fixtures/
+│       ├── __init__.py
+│       └── sample_data.py
+├── models/
+│   └── .gitkeep
+├── data/
+│   ├── raw/
+│   └── processed/
+├── requirements.txt
+├── requirements-dev.txt
+├── setup.py
+├── .dvcignore
+├── .gitignore
+└── README.md
+```
+
+## Pipeline Module (`src/pipeline.py`)
+
+```python
+"""Fraud detection model training and deployment pipeline."""
+
+from typing import Tuple, Dict, Any, Optional
+import pandas as pd
+from pathlib import Path
+
+
+def load_data(data_path: Path, version: Optional[str] = None) -> pd.DataFrame:
+    """Load fraud detection dataset from specified path."""
+    ...
+
+
+def validate_data(df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
+    """Validate data schema, quality, and detect data drift."""
+    ...
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Apply feature engineering and preprocessing transformations."""
+    ...
+
+
+def split_data(
+    df: pd.DataFrame, 
+    test_size: float = 0.2, 
+    stratify_column: str = "is_fraud"
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split data into train and test sets with stratification."""
+    ...
+
+
+def train_model(
+    X_train: pd.DataFrame, 
+    y_train: pd.DataFrame, 
+    hyperparameters: Dict[str, Any]
+) -> Any:
+    """Train fraud detection model with given hyperparameters."""
+    ...
+
+
+def evaluate_model(
+    model: Any, 
+    X_test: pd.DataFrame, 
+    y_test: pd.DataFrame
+) -> Dict[str, float]:
+    """Evaluate model performance with fraud-specific metrics."""
+    ...
+
+
+def validate_model_performance(
+    metrics: Dict[str, float], 
+    thresholds: Dict[str, float]
+) -> Tuple[bool, str]:
+    """Validate model meets minimum performance thresholds."""
+    ...
+
+
+def compare_with_baseline(
+    current_metrics: Dict[str, float], 
+    baseline_model_path: Path
+) -> Tuple[bool, Dict[str, float]]:
+    """Compare current model performance against baseline/production model."""
+    ...
+
+
+def save_model(
+    model: Any, 
+    model_path: Path, 
+    metadata: Dict[str, Any]
+) -> None:
+    """Save trained model with metadata and versioning."""
+    ...
+
+
+def load_model(model_path: Path) -> Tuple[Any, Dict[str, Any]]:
+    """Load trained model and associated metadata."""
+    ...
+
+
+def generate_model_card(
+    model: Any, 
+    metrics: Dict[str, float], 
+    metadata: Dict[str, Any]
+) -> str:
+    """Generate model card documentation with performance and fairness metrics."""
+    ...
+
+
+def register_model(
+    model_path: Path, 
+    model_name: str, 
+    registry_uri: str
+) -> str:
+    """Register model to MLflow or model registry."""
+    ...
+
+
+def create_docker_image(
+    model_path: Path, 
+    image_name: str, 
+    tag: str
+) -> str:
+    """Build Docker image for model serving."""
+    ...
+
+
+def deploy_model(
+    model_uri: str, 
+    deployment_target: str, 
+    config: Dict[str, Any]
+) -> Dict[str, str]:
+    """Deploy model to specified target environment."""
+    ...
+
+
+def run_smoke_tests(endpoint_url: str) -> Tuple[bool, Dict[str, Any]]:
+    """Run smoke tests against deployed model endpoint."""
+    ...
+
+
+def monitor_model_drift(
+    reference_data: pd.DataFrame, 
+    current_data: pd.DataFrame
+) -> Dict[str, Any]:
+    """Monitor for data and prediction drift."""
+    ...
+
+
+def run_pipeline(
+    config_path: Path, 
+    mode: str = "train"
+) -> Dict[str, Any]:
+    """Execute end-to-end ML pipeline orchestration."""
+    ...
+```
+
+## Configuration Module (`src/config.py`)
+
+```python
+"""Configuration management for fraud detection pipeline."""
+
+from dataclasses import dataclass
+from typing import Dict, Any
+from pathlib import Path
+
+
+@dataclass
+class DataConfig:
+    """Data-related configuration parameters."""
+    ...
+
+
+@dataclass
+class ModelConfig:
+    """Model training and hyperparameter configuration."""
+    ...
+
+
+@dataclass
+class ValidationConfig:
+    """Model validation and performance threshold configuration."""
+    ...
+
+
+@dataclass
+class DeploymentConfig:
+    """Deployment target and infrastructure configuration."""
+    ...
+
+
+@dataclass
+class PipelineConfig:
+    """Overall pipeline configuration aggregator."""
+    ...
+
+
+def load_config(config_path: Path) -> PipelineConfig:
+    """Load pipeline configuration from YAML file."""
+    ...
+
+
+def get_default_config() -> PipelineConfig:
+    """Return default pipeline configuration."""
+    ...
+```
+
+## Test File (`tests/test_pipeline.py`)
+
+```python
+"""Comprehensive tests for fraud detection pipeline."""
+
+import pytest
+import pandas as pd
+from pathlib import Path
+
+
+# Data Loading Tests
+def test_load_data_success():
+    """Test successful data loading from valid path."""
+    ...
+
+
+def test_load_data_invalid_path():
+    """Test data loading fails gracefully with invalid path."""
+    ...
+
+
+def test_load_data_with_version():
+    """Test data loading with specific version parameter."""
+    ...
+
+
+# Data Validation Tests
+def test_validate_data_schema_correct():
+    """Test data validation passes with correct schema."""
+    ...
+
+
+def test_validate_data_schema_missing_columns():
+    """Test data validation fails when required columns are missing."""
+    ...
+
+
+def test_validate_data_detects_null_values():
+    """Test data validation detects excessive null values."""
+    ...
+
+
+def test_validate_data_drift_detection():
+    """Test data drift detection identifies distribution changes."""
+    ...
+
+
+# Preprocessing Tests
+def test_preprocess_data_feature_engineering():
+    """Test feature engineering creates expected features."""
+    ...
+
+
+def test_preprocess_data_handles_missing_values():
+    """Test preprocessing handles missing values correctly."""
+    ...
+
+
+def test_preprocess_data_encoding():
+    """Test categorical encoding works as expected."""
+    ...
+
+
+# Data Splitting Tests
+def test_split_data_proportions():
+    """Test data split maintains correct train/test proportions."""
+    ...
+
+
+def test_split_data_stratification():
+    """Test stratification maintains class balance in splits."""
+    ...
+
+
+def test_split_data_no_leakage():
+    """Test no data leakage between train and test sets."""
+    ...
+
+
+# Model Training Tests
+def test_train_model_success():
+    """Test model training completes successfully."""
+    ...
+
+
+def test_train_model_with_hyperparameters():
+    """Test model training respects provided hyperparameters."""
+    ...
+
+
+def test_train_model_handles_imbalanced_data():
+    """Test model training handles class imbalance properly."""
+    ...
+
+
+# Model Evaluation Tests
+def test_evaluate_model_metrics():
+    """Test model evaluation returns all required metrics."""
+    ...
+
+
+def test_evaluate_model_precision_recall():
+    """Test precision and recall calculation for fraud detection."""
+    ...
+
+
+def test_evaluate_model_auc_roc():
+    """Test AUC-ROC metric calculation."""
+    ...
+
+
+# Model Validation Tests
+def test_validate_model_performance_passes():
+    """Test performance validation passes when thresholds met."""
+    ...
+
+
+def test_validate_model_performance_fails():
+    """Test performance validation fails when thresholds not met."""
+    ...
+
+
+def test_compare_with_baseline_improvement():
+    """Test baseline comparison detects model improvement."""
+    ...
+
+
+def test_compare_with_baseline_regression():
+    """Test baseline comparison detects model regression."""
+    ...
+
+
+# Model Persistence Tests
+def test_save_model_creates_artifacts():
+    """Test model saving creates all required artifacts."""
+    ...
+
+
+def test_save_model_with_metadata():
+    """Test model metadata is saved correctly."""
+    ...
+
+
+def test_load_model_success():
+    """Test model loading retrieves model and metadata."""
+    ...
+
+
+def test_load_model_version_compatibility():
+    """Test model loading handles version compatibility."""
+    ...
+
+
+# Model Card Tests
+def test_generate_model_card_completeness():
+    """Test model card contains all required sections."""
+    ...
+
+
+def test_generate_model_card_metrics():
+    """Test model card includes performance metrics."""
+    ...
+
+
+# Model Registry Tests
+def test_register_model_success():
+    """Test model registration to registry succeeds."""
+    ...
+
+
+def test_register_model_versioning():
+    """Test model registry handles versioning correctly."""
+    ...
+
+
+# Docker Image Tests
+def test_create_docker_image_builds():
+    """Test Docker image creation completes successfully."""
+    ...
+
+
+def test_create_docker_image_tagging():
+    """Test Docker image is tagged correctly."""
+    ...
+
+
+# Deployment Tests
+def test_deploy_model_success():
+    """Test model deployment completes successfully."""
+    ...
+
+
+def test_deploy_model_rollback():
+    """Test deployment rollback on failure."""
+    ...
+
+
+# Smoke Tests
+def test_run_smoke_tests_healthy_endpoint():
+    """Test smoke tests pass for healthy endpoint."""
+    ...
+
+
+def test_run_smoke_tests_prediction_format():
+    """Test smoke tests validate prediction response format."""
+    ...
+
+
+def test_run_smoke_tests_latency():
+    """Test smoke tests check prediction latency requirements."""
+    ...
+
+
+# Drift Monitoring Tests
+def test_monitor_model_drift_no_drift():
+    """Test drift monitoring detects no drift in stable data."""
+    ...
+
+
+def test_monitor_model_drift_detects_drift():
+    """Test drift monitoring detects significant drift."""
+    ...
+
+
+# Integration Tests
+def test_run_pipeline_train_mode():
+    """Test full pipeline execution in training mode."""
+    ...
+
+
+def test_run_pipeline_deploy_mode():
+    """Test full pipeline execution in deployment mode."""
+    ...
+
+
+def test_run_pipeline_end_to_end():
+    """Test complete end-to-end pipeline execution."""
+    ...
+```
+
+## GitHub Actions Workflow (`..github/workflows/ci-cd.yml`)
+
+```yaml
+name: Fraud Detection Model CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.10"
+  MODEL_NAME: fraud-detection-model
+
+jobs:
+  # Job 1: Code Quality and Linting
+  code-quality:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run black formatter check
+      - Run flake8 linting
+      - Run mypy type checking
+      - Run bandit security scan
+
+  # Job 2: Unit and Integration Tests
+  test:
+    steps:
+      - Checkout code
+      - Setup Python
+      - Install dependencies
+      - Run pytest with coverage
+      - Generate coverage report
+      - Upload coverage to Codecov
+
+  # Job 3: Data Validation
+  data-validation:
+    steps:
+      - Checkout code
+      - Setup Python and DVC
+      - Pull data from DVC
+      - Run data validation tests
+      - Check for data drift
+      - Generate data quality report
+
+  # Job 4: Model Training
+  train-model:
+    needs: [code-quality, test, data-validation]
+    steps:
+      - Checkout code
+      - Setup Python and dependencies
+      - Configure MLflow tracking
+      - Pull training data
+      - Train model with hyperparameters
+      - Log metrics to MLflow
+      - Save model artifacts
+
+  # Job 5: Model Evaluation
+  evaluate-model:
+    needs: train-model
+    steps:
+      - Checkout code
+      - Load trained model
+      - Run model evaluation
+      - Compare with baseline model
+      - Validate performance thresholds
+      - Generate model card
+      - Upload evaluation artifacts
+
+  # Job 6: Model Registration
+  register-model:
+    needs: evaluate-model
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Load model artifacts
+      - Register model to MLflow registry
+      - Tag model version
+      - Transition model stage
+
+  # Job 7: Build Docker Image
+  build-image:
+    needs: register-model
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Checkout code
+      - Setup Docker Buildx
+      - Login to container registry
+      - Build model serving image
+      - Run container security scan
+      - Push image to registry
+
+  # Job 8: Deploy to Staging
+  deploy-staging:
+    needs: build-image
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - Checkout code
+      - Configure cloud credentials
+      - Deploy model to staging
+      - Run smoke tests
+      - Run integration tests
+      - Monitor deployment health
+
+  # Job 9: Deploy to Production
+  deploy-production:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - Checkout code
+      - Configure cloud credentials
+      - Deploy with blue-green strategy
+      - Run smoke tests
+      - Run canary deployment
+      - Monitor metrics
+      - Complete rollout or rollback
+
+  # Job 10: Post-Deployment Monitoring
+  post-deployment:
+    needs: deploy-production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - Setup monitoring dashboards
+      - Configure alerting rules
+      - Run drift detection
+      - Generate deployment report
+      - Notify team via Slack
+```
+
+---
+
+**Structure complete.** Ready for Step 2 implementation upon your approval.
