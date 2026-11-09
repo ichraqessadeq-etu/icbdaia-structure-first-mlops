@@ -1,5 +1,7 @@
 # Structure-first generation of MLOps pipelines
 
+[![DOI](https://zenodo.org/badge/1451885468.svg)](https://doi.org/10.5281/zenodo.24093463)
+
 Code and data for **"Structure-First Generation of MLOps Pipelines: Does Engineering-Style Staging Reduce
 Operational Hallucinations in LLM-Generated CI/CD Artifacts?"** (I. Essadeq, S. Nouh, K. Kandali),
 submitted to ICBDAIA 2027 (Springer LNNS).
@@ -88,5 +90,5 @@ All folders are scored by the same `detectors.py`.
 
 ## Citation and license
 
-See `CITATION.cff`. Code: MIT (see `LICENSE`). The generated artifacts in `results/` are model outputs released
+Archived on Zenodo: [10.5281/zenodo.24093463](https://doi.org/10.5281/zenodo.24093463) (this DOI always resolves to the latest version). See `CITATION.cff`. Code: MIT (see `LICENSE`). The generated artifacts in `results/` are model outputs released
 for research reproducibility.
