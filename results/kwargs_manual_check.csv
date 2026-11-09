@@ -1,0 +1,28 @@
+case,artifact,block,line,dictionary,verdict,where random_state is set
+1,runs_claude/one_shot__specified/run_05,0,331,hyperparameters,OK,default dict in train_model (line 327)
+2,runs_claude/one_shot__specified/run_06,0,233,hyperparameters,OK,default dict in build_model; the dict without random_state (line 498) is only logged to MLflow
+3,runs_claude/one_shot__specified/run_08,0,237,hyperparameters,OK,default dict in build_model; the empty dict (line 599) is only logged to MLflow
+4,runs_claude/one_shot__specified/run_09,0,279,hyperparameters,OK,default dict in train_model (line 264)
+5,runs_claude/one_shot__under_specified/run_02,0,162,hyperparameters,OK,default dict in train_model (line 146)
+6,runs_claude/one_shot__under_specified/run_03,0,212,params,OK,default_params['random_forest'] (line 195)
+7,runs_claude/one_shot__under_specified/run_03,0,214,params,OK,default_params['gradient_boosting'] (line 204)
+8,runs_claude/one_shot__under_specified/run_04,0,140,self.model_config,OK,default model_config in ModelTrainer.__init__
+9,runs_claude/one_shot__under_specified/run_06,0,142,hyperparameters,OK,default dict in train_model (line 127)
+10,runs_claude/one_shot__under_specified/run_08,0,210,model_params,OK,default_config['model_params'] of the config loader
+11,runs_claude/one_shot__under_specified/run_08,0,212,model_params,OK,default_config['model_params'] of the config loader
+12,runs_claude/one_shot__under_specified/run_09,0,219,self.config.rf_params,OK,rf_params set in __post_init__ of the config dataclass (line 88)
+13,runs_claude/one_shot__under_specified/run_09,0,221,self.config.gb_params,OK,gb_params set in __post_init__ of the config dataclass (line 99)
+14,runs_claude/one_shot__under_specified/run_10,0,139,default_params,OK,default dict (line 129); update() only adds user params
+15,runs_claude/one_shot__under_specified/run_10,0,151,default_params,OK,default dict (line 142); update() only adds user params
+16,runs_claude/structure_first__specified/run_01,0,186,hyperparameters,OK,caller run_pipeline fills the default dict (line 329)
+17,runs_claude/structure_first__specified/run_01,1,107,sample_hyperparameters,OK,pytest fixture sample_hyperparameters
+18,runs_claude/structure_first__specified/run_01,1,480,sample_hyperparameters,OK,pytest fixture sample_hyperparameters
+19,runs_claude/structure_first__specified/run_03,0,412,default_params,OK,default dict (line 392); update() only adds user params
+20,runs_claude/structure_first__specified/run_04,0,248,hyperparameters,UNDETERMINED,config.get('hyperparameters') from src.config.get_default_config(): module imported but not generated
+21,runs_claude/structure_first__specified/run_07,0,287,params,OK,"{**default_params, **hyperparameters}; default_params has random_state"
+22,runs_claude/structure_first__specified/run_08,0,236,default_params,OK,default dict (line 219); update() only adds user params
+23,runs_claude/structure_first__specified/run_09,0,224,hyperparameters,UNDETERMINED,config.get('hyperparameters') from src.config.get_default_config(): module imported but not generated
+24,runs_claude/structure_first__specified/run_10,0,185,hyperparameters,OK,caller fills the default dict (line 384)
+25,runs_claude/structure_first__under_specified/run_01,0,288,model_params,OK,model_params built with random_state (line 275)
+26,runs_claude/structure_first__under_specified/run_06,0,352,model_params,OK,"{**default_params, **hyperparameters}; default_params has random_state"
+27,runs_claude/structure_first__under_specified/run_10,0,375,default_params,OK,default dict (line 357); update() only adds user params

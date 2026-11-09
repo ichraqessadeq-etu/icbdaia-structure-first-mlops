@@ -36,6 +36,8 @@ results/runs_claude/               Claude Sonnet 4.5: 10 artifacts per cell (10 
 results/statistics.json            statistics, detector as published (primary analysis)
 results/statistics_strict.json     statistics, sensitivity analysis (see below)
 results/kwargs_cases.txt           the estimator calls removed by the sensitivity analysis, for manual checking
+results/kwargs_review.md           review sheet: each removed call shown inside its function (scripts/make_kwargs_review.py)
+results/kwargs_manual_check.csv    verdict of the manual check of the 27 Claude cases (25 false positives, 2 undetermined)
 figures/fig1.pdf, fig1.png         Figure 1
 ```
 
