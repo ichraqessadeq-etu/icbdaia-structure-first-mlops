@@ -19,7 +19,7 @@ INK, MUTED = "#222222", "#6b6b6b"
 
 plt.rcParams.update({"font.family": "serif", "font.size": 8, "axes.edgecolor": MUTED,
                      "axes.labelcolor": INK, "xtick.color": INK, "ytick.color": MUTED})
-fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.0))
+fig, axes = plt.subplots(2, 2, figsize=(6.4, 3.3))
 w = 0.36
 
 
