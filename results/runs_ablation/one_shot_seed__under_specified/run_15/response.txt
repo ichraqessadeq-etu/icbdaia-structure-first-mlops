@@ -1,0 +1,122 @@
+To create a reproducible CI/CD pipeline for a fraud detection model using Python, pytest, and GitHub Actions, we'll set up a simple example with a mock model training and testing process. This example will use synthetic data, and we will seed all sources of randomness to ensure reproducibility. 
+
+### Python Pipeline Module
+
+Here's a simple pipeline module that includes data generation, model training, and evaluation:
+
+```python
+# fraud_detection_pipeline.py
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def generate_synthetic_data(n_samples=1000):
+    # Generate synthetic data for fraud detection
+    X = np.random.rand(n_samples, 10)
+    y = (np.sum(X, axis=1) > 5).astype(int)  # Arbitrary condition for label
+    return X, y
+
+def train_model(X_train, y_train):
+    model = LogisticRegression(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    return accuracy
+
+def run_pipeline():
+    X, y = generate_synthetic_data()
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    return accuracy
+
+if __name__ == "__main__":
+    accuracy = run_pipeline()
+    print(f"Model accuracy: {accuracy:.2f}")
+```
+
+### Pytest Test File
+
+Below is the test file using pytest. We will test the key functions in the pipeline module:
+
+```python
+# test_fraud_detection_pipeline.py
+import pytest
+from fraud_detection_pipeline import generate_synthetic_data, train_model, evaluate_model, run_pipeline
+
+RANDOM_SEED = 42
+
+@pytest.fixture
+def synthetic_data():
+    return generate_synthetic_data()
+
+def test_generate_synthetic_data(synthetic_data):
+    X, y = synthetic_data
+    assert X.shape[0] == 1000
+    assert y.shape[0] == 1000
+    assert X.shape[1] == 10
+    assert all([label in [0, 1] for label in y])
+
+def test_train_model(synthetic_data):
+    X, y = synthetic_data
+    model = train_model(X, y)
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model(synthetic_data):
+    X, y = synthetic_data
+    model = train_model(X, y)
+    accuracy = evaluate_model(model, X, y)
+    assert 0 <= accuracy <= 1
+
+def test_run_pipeline():
+    accuracy = run_pipeline()
+    assert 0 <= accuracy <= 1
+```
+
+### GitHub Actions Workflow
+
+Here is a basic GitHub Actions workflow file to automate the execution of the tests:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn
+
+    - name: Run tests
+      run: |
+        pytest
+```
+
+This setup ensures that every run is reproducible by seeding the random number generators. The GitHub Actions workflow will automatically run the tests whenever code is pushed to the main branch or a pull request is opened targeting the main branch.

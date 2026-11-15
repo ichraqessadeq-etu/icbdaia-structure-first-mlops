@@ -1,0 +1,112 @@
+Certainly! Below is a complete `pytest` test file to test the `FraudDetectionPipeline` class, along with a GitHub Actions workflow YAML file to automate the testing process.
+
+### (a) `pytest` Test File
+
+Create a file named `test_fraud_detection_pipeline.py` with the following content:
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+@pytest.fixture
+def sample_data():
+    # Create a small sample dataset for testing
+    data = {
+        'feature1': [0.5, 0.3, 0.9, 0.1],
+        'feature2': [1, 0, 1, 0],
+        'Fraud': [0, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+@pytest.fixture
+def pipeline():
+    # Initialize the pipeline
+    return FraudDetectionPipeline()
+
+def test_load_data(pipeline, sample_data, mocker):
+    # Mock the `pd.read_csv` method
+    mocker.patch('pandas.read_csv', return_value=sample_data)
+    pipeline.load_data('dummy_path.csv')
+    pd.testing.assert_frame_equal(pipeline.data, sample_data)
+    print("test_load_data passed.")
+
+def test_preprocess_data(pipeline, sample_data):
+    pipeline.data = sample_data
+    pipeline.preprocess_data()
+    assert 'feature1' in pipeline.data.columns
+    assert 'feature2_0' in pipeline.data.columns
+    print("test_preprocess_data passed.")
+
+def test_split_data(pipeline, sample_data):
+    pipeline.data = sample_data
+    pipeline.split_data()
+    assert len(pipeline.X_train) > 0
+    assert len(pipeline.X_test) > 0
+    print("test_split_data passed.")
+
+def test_train_model(pipeline, sample_data):
+    pipeline.data = sample_data
+    pipeline.split_data()
+    pipeline.train_model()
+    assert isinstance(pipeline.model, RandomForestClassifier)
+    print("test_train_model passed.")
+
+def test_evaluate_model(pipeline, sample_data):
+    pipeline.data = sample_data
+    pipeline.split_data()
+    pipeline.train_model()
+    accuracy, precision, recall = pipeline.evaluate_model()
+    assert 0 <= accuracy <= 1
+    assert 0 <= precision <= 1
+    assert 0 <= recall <= 1
+    print("test_evaluate_model passed.")
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/python-app.yml` with the following content:
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest pytest-mock
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+```
+
+**Explanation:**
+
+- The `pytest` test file contains several tests that cover the main functionality of the `FraudDetectionPipeline` class. It uses `pytest` fixtures to provide sample data and initialize the pipeline.
+- The GitHub Actions workflow file is configured to run on pushes and pull requests to the `main` branch. It sets up Python, installs the necessary dependencies, and runs the `pytest` command to execute the test suite.
+
+Make sure to adjust the file paths and any other project-specific details as needed.

@@ -1,0 +1,7 @@
+case,artifact,block_kind,line_in_block,dictionary,verdict,evidence (line in final_artifact.txt)
+1,runs_gpt4o_batch1/structure_first__under_specified/run_09,pipeline,36,model_params,OK,fixture model_params returns {'n_estimators': 10, 'random_state': 42} (line 122)
+2,runs_gpt4o_batch1/structure_first__under_specified/run_19,pipeline,42,model_params,VIOLATION,tests call train_model(train_data, model_params={}) (lines 128-149)
+3,runs_gpt4o_batch1/structure_first__under_specified/run_20,pipeline,33,model_params,VIOLATION,tests pass MODEL_PARAMS = {'n_estimators': 10, 'max_depth': 3} (lines 93-130)
+4,runs_gpt4o_batch1/structure_first__under_specified/run_20,test,55,MODEL_PARAMS,VIOLATION,MODEL_PARAMS literal without random_state (line 93); resolved automatically by v2 (R4 literal)
+5,runs_gpt4o_batch1/structure_first__under_specified/run_20,test,67,MODEL_PARAMS,VIOLATION,same literal (line 93); resolved automatically by v2 (R4 literal)
+6,runs_gpt4o_batch2/structure_first__under_specified/run_12,pipeline,40,params,OK,callers pass {'n_estimators': 10, 'random_state': 42} (lines 122 and 142)

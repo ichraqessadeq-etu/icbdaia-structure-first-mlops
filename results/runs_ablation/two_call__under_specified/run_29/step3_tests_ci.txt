@@ -1,0 +1,109 @@
+Certainly! Below are two complete code blocks: one for the pytest test file and another for the GitHub Actions workflow.
+
+### (a) Pytest Test File
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.datasets import make_classification
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+@pytest.fixture
+def mock_data():
+    # Generate a mock dataset
+    X, y = make_classification(n_samples=1000, n_features=20, n_classes=2, random_state=42)
+    data = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(20)])
+    data['is_fraud'] = y
+    return data
+
+def test_load_data(mocker, mock_data):
+    # Mock the pd.read_csv method to return the mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    pipeline = FraudDetectionPipeline(data_path='dummy_path.csv')
+    pipeline.load_data()
+    assert not pipeline.data.empty
+    assert list(pipeline.data.columns) == [f'feature_{i}' for i in range(20)] + ['is_fraud']
+
+def test_preprocess_data(mocker, mock_data):
+    # Mock the pd.read_csv method to return the mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    pipeline = FraudDetectionPipeline(data_path='dummy_path.csv')
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert pipeline.X_train.shape[1] == 20
+    assert pipeline.X_test.shape[1] == 20
+    assert pipeline.y_train.shape[0] == 800  # 80% of 1000
+    assert pipeline.y_test.shape[0] == 200  # 20% of 1000
+
+def test_train_model(mocker, mock_data):
+    # Mock the pd.read_csv method to return the mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    pipeline = FraudDetectionPipeline(data_path='dummy_path.csv')
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    assert isinstance(pipeline.model, RandomForestClassifier)
+
+def test_evaluate_model(mocker, mock_data):
+    # Mock the pd.read_csv method to return the mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    pipeline = FraudDetectionPipeline(data_path='dummy_path.csv')
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    y_pred = pipeline.model.predict(pipeline.X_test)
+    accuracy = accuracy_score(pipeline.y_test, y_pred)
+    assert accuracy > 0.5  # Assuming a dummy threshold for test to pass
+
+def test_save_model(mocker, mock_data, tmpdir):
+    # Mock the pd.read_csv method to return the mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    pipeline = FraudDetectionPipeline(data_path='dummy_path.csv', model_path=str(tmpdir.join('model.pkl')))
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    pipeline.save_model()
+    assert pipeline.model_path.exists()
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python 3.x
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-mock scikit-learn pandas joblib
+
+    - name: Test with pytest
+      run: |
+        pytest
+```
+
+These code blocks set up a testing environment using `pytest` and integrate the tests into a CI/CD pipeline using GitHub Actions. The test file includes fixtures and test cases for various components of the pipeline, while the GitHub Actions workflow automates the testing process every time a change is pushed to the main branch or a pull request is made.

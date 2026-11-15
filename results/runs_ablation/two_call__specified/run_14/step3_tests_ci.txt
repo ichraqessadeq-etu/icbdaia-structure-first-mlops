@@ -1,0 +1,107 @@
+Certainly! Below is a complete pytest test file and a GitHub Actions workflow to automate testing and other CI/CD processes for your pipeline module.
+
+### (a) Complete pytest test file
+
+```python
+# test_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model
+
+# Constants
+DATA_PATH = 'creditcard.csv'
+
+def test_load_data():
+    """Test data loading function."""
+    data = load_data(DATA_PATH)
+    assert isinstance(data, pd.DataFrame), "Loaded data should be a DataFrame"
+    assert not data.empty, "Loaded data should not be empty"
+
+def test_preprocess_data():
+    """Test data preprocessing function."""
+    data = load_data(DATA_PATH)
+    data_balanced = preprocess_data(data)
+    
+    class_counts = data_balanced['Class'].value_counts()
+    assert class_counts[0] == class_counts[1], "Classes should be balanced after preprocessing"
+
+def test_train_model():
+    """Test model training function."""
+    data = load_data(DATA_PATH)
+    data_balanced = preprocess_data(data)
+    X_train = data_balanced.drop(columns=['Class'])
+    y_train = data_balanced['Class']
+    
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier instance"
+    assert hasattr(model, "predict"), "Model should have a predict method"
+
+def test_evaluate_model():
+    """Test model evaluation function."""
+    data = load_data(DATA_PATH)
+    data_balanced = preprocess_data(data)
+    X_train = data_balanced.drop(columns=['Class'])
+    y_train = data_balanced['Class']
+    X_test = X_train.copy()
+    y_test = y_train.copy()
+    
+    model = train_model(X_train, y_train)
+    roc_auc, report = evaluate_model(model, X_test, y_test)
+    
+    assert isinstance(roc_auc, float), "ROC AUC should be a float"
+    assert isinstance(report, str), "Classification report should be a string"
+    assert roc_auc >= 0.0 and roc_auc <= 1.0, "ROC AUC should be between 0 and 1"
+
+```
+
+### (b) Complete GitHub Actions workflow
+
+```yaml
+# .github/workflows/pipeline-test.yml
+
+name: Pipeline Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+```
+
+### Explanation
+
+1. **Test File (`test_pipeline.py`):**
+   - Tests each function of the pipeline module.
+   - Ensures the data loading, preprocessing, model training, and evaluation functions work as expected with assertions.
+
+2. **GitHub Actions Workflow (`pipeline-test.yml`):**
+   - Triggers on pushes and pull requests to the `main` branch.
+   - Sets up Python environment and installs necessary dependencies.
+   - Runs the defined tests using `pytest`.
+
+The combination of these tests and the CI workflow ensures that any changes to your pipeline module are properly tested and validated, enhancing reliability and maintainability.

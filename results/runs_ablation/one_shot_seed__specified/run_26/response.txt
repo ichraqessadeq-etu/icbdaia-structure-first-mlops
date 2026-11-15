@@ -1,0 +1,171 @@
+Below are the required files for setting up a CI/CD pipeline for a fraud detection model using RandomForestClassifier. This solution includes a Python pipeline module for training and logging, a pytest test file, and a GitHub Actions workflow file.
+
+### Python Pipeline Module: `pipeline.py`
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import shuffle
+import mlflow
+import mlflow.sklearn
+from mlflow.exceptions import MlflowException
+
+# Set random seed for reproducibility
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise RuntimeError(f"Failed to load data: {e}")
+
+def preprocess_data(data):
+    try:
+        # Shuffle data
+        data = shuffle(data, random_state=RANDOM_SEED)
+        # Split data into features and target
+        X = data.drop("Class", axis=1)
+        y = data["Class"]
+        return X, y
+    except Exception as e:
+        raise RuntimeError(f"Failed to preprocess data: {e}")
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=RANDOM_SEED)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise RuntimeError(f"Failed to train model: {e}")
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+        report = classification_report(y_test, y_pred, output_dict=True)
+        roc_auc = roc_auc_score(y_test, y_proba)
+        return report, roc_auc
+    except Exception as e:
+        raise RuntimeError(f"Failed to evaluate model: {e}")
+
+def log_to_mlflow(model, report, roc_auc):
+    try:
+        mlflow.set_experiment("Fraud Detection Experiment")
+        with mlflow.start_run():
+            mlflow.log_metrics({
+                "precision": report["1"]["precision"],
+                "recall": report["1"]["recall"],
+                "f1-score": report["1"]["f1-score"],
+                "roc_auc": roc_auc
+            })
+            mlflow.sklearn.log_model(model, "random_forest_model")
+    except MlflowException as e:
+        raise RuntimeError(f"Failed to log to MLflow: {e}")
+
+def main(file_path):
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+    model = train_model(X_train, y_train)
+    report, roc_auc = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, report, roc_auc)
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### Pytest Test File: `test_pipeline.py`
+
+```python
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+
+@pytest.fixture
+def sample_data():
+    # Generate synthetic data for testing
+    np.random.seed(42)
+    X = np.random.randn(100, 30)
+    y = np.random.choice([0, 1], size=(100,), p=[0.9983, 0.0017])
+    return pd.DataFrame(X, columns=[f"V{i}" for i in range(1, 31)]), y
+
+def test_load_data():
+    with pytest.raises(RuntimeError):
+        load_data("non_existent_file.csv")
+
+def test_preprocess_data(sample_data):
+    X, y = sample_data
+    data = pd.concat([X, y.rename("Class")], axis=1)
+    X_preprocessed, y_preprocessed = preprocess_data(data)
+    assert X_preprocessed.shape[1] == 30
+    assert y_preprocessed.value_counts().sum() == 100
+
+def test_train_model(sample_data):
+    X, y = sample_data
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_classes_ == 2
+
+def test_evaluate_model(sample_data):
+    X, y = sample_data
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X, y)
+    report, roc_auc = evaluate_model(model, X, y)
+    assert "1" in report
+    assert 0 <= roc_auc <= 1
+```
+
+### GitHub Actions Workflow: `.github/workflows/ci-cd.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install scikit-learn pandas mlflow pytest
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+      env:
+        MLFLOW_TRACKING_URI: http://localhost:5000
+        MLFLOW_S3_ENDPOINT_URL: http://localhost:9000
+```
+
+### Important Notes:
+1. **Environment Setup**: Ensure you have MLflow tracking server and an appropriate S3-compatible endpoint setup for the MLflow artifact store.
+2. **Dataset Path**: Update `"creditcard.csv"` with the actual path to your dataset.
+3. **Concept Drift Detection**: You should have an external mechanism to trigger this workflow when concept drift is detected. This example does not cover concept drift detection.
+4. **Environment Variables**: Ensure you have the environment variables for MLflow correctly set in your CI environment.

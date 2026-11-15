@@ -1,0 +1,114 @@
+Certainly! Below is a complete `pytest` test file and a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+from fraud_detection_pipeline import FraudDetectionPipeline
+import pandas as pd
+import numpy as np
+import os
+
+# Generate some fake data for testing
+@pytest.fixture
+def fake_data():
+    np.random.seed(42)
+    data = pd.DataFrame({
+        'feature1': np.random.rand(100),
+        'feature2': np.random.rand(100),
+        'feature3': np.random.rand(100),
+        'label': np.random.randint(0, 2, 100)
+    })
+    return data
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    filepath = tmp_path / "temp_data.csv"
+    fake_data().to_csv(filepath, index=False)
+
+    pipeline = FraudDetectionPipeline()
+    data = pipeline.load_data(filepath)
+    
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data(fake_data):
+    pipeline = FraudDetectionPipeline()
+    X, y = pipeline.preprocess_data(fake_data)
+    
+    assert isinstance(X, pd.DataFrame)
+    assert isinstance(y, pd.Series)
+    assert 'label' not in X.columns
+
+def test_train(fake_data):
+    pipeline = FraudDetectionPipeline()
+    X, y = pipeline.preprocess_data(fake_data)
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    pipeline.train(X_train, y_train)
+    assert pipeline.model is not None
+
+def test_evaluate(fake_data):
+    pipeline = FraudDetectionPipeline()
+    X, y = pipeline.preprocess_data(fake_data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    pipeline.train(X_train, y_train)
+    accuracy = pipeline.evaluate(X_test, y_test)
+    
+    assert 0 <= accuracy <= 1
+
+def test_save_model(tmp_path):
+    pipeline = FraudDetectionPipeline()
+    model_filepath = tmp_path / "model.joblib"
+    
+    pipeline.save_model(model_filepath)
+    
+    assert os.path.exists(model_filepath)
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/test.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py --maxfail=5 --disable-warnings
+```
+
+### Explanation
+
+- **Test File**: The test file `test_fraud_detection_pipeline.py` includes tests for loading data, preprocessing data, training the model, evaluating the model, and saving the model. Each test uses either a fixture for generating fake data or temporary file paths for testing file operations.
+
+- **GitHub Actions Workflow**: The workflow is configured to run on pushes and pull requests to the `main` branch. It sets up Python, installs dependencies, and runs the tests using `pytest`.

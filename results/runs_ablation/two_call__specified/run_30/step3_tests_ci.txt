@@ -1,0 +1,106 @@
+Certainly! Below, I'll provide a complete `pytest` test file and a GitHub Actions workflow file to automate the testing process.
+
+### (a) Complete `pytest` Test File
+
+Create a new file named `test_pipeline.py` and include the following code:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model
+
+# Sample test data
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'Feature1': [1, 2, 3, 4, 5, 6],
+        'Feature2': [10, 20, 30, 40, 50, 60],
+        'Class': [0, 1, 0, 1, 0, 1]
+    })
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    temp_file = tmp_path / "temp_data.csv"
+    data = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4], 'Class': [0, 1]})
+    data.to_csv(temp_file, index=False)
+    
+    # Test load_data function
+    loaded_data = load_data(temp_file)
+    pd.testing.assert_frame_equal(data, loaded_data)
+
+def test_preprocess_data(sample_data):
+    X, y = preprocess_data(sample_data)
+    
+    # Check if the data is balanced
+    assert X.shape[0] == 6
+    assert y.value_counts()[0] == y.value_counts()[1]
+
+def test_train_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    model = train_model(X_train, y_train)
+    
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_estimators == 100
+
+def test_evaluate_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    model = train_model(X_train, y_train)
+    report, matrix = evaluate_model(model, X_test, y_test)
+    
+    assert isinstance(report, str)
+    assert isinstance(matrix, np.ndarray)
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Create a new file in your repository under `.github/workflows/test.yml` and include the following code:
+
+```yaml
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.7, 3.8, 3.9, 3.10]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+```
+
+### Explanation
+
+- **Test File**: This `pytest` test file includes tests for loading data, preprocessing, training a model, and evaluating it. It uses fixtures and assertions to ensure the pipeline works as expected.
+
+- **GitHub Actions Workflow**: The workflow is triggered by pushes and pull requests to the `main` branch. It sets up a matrix to test against multiple Python versions, checks out the code, installs dependencies, and runs the tests using `pytest`. This setup ensures continuous integration and immediate feedback on the code's reliability.

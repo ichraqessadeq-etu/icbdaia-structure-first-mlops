@@ -1,0 +1,121 @@
+Certainly! Below is the complete implementation of the pytest test file and the GitHub Actions workflow according to the given structure.
+
+### (a) Complete Pytest Test File
+
+**`tests/test_pipeline.py`**
+```python
+import pytest
+from pipeline.data_loader import load_data
+from pipeline.train import train_model
+from pipeline.evaluate import evaluate_model
+
+def test_load_data():
+    """Test if data loading function properly loads the dataset."""
+    X_train, X_test, y_train, y_test = load_data()
+    assert X_train is not None
+    assert X_test is not None
+    assert y_train is not None
+    assert y_test is not None
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+    assert len(y_train) > 0
+    assert len(y_test) > 0
+
+def test_train_model():
+    """Test if the train_model function returns a trained model."""
+    X_train, X_test, y_train, y_test = load_data()
+    model = train_model(X_train, y_train)
+    assert model is not None
+    assert hasattr(model, 'predict')
+    assert model.n_estimators == 100  # Verify parameter setting
+
+def test_evaluate_model():
+    """Test if evaluate_model function returns correct evaluation metrics."""
+    X_train, X_test, y_train, y_test = load_data()
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'classification_report' in metrics
+    assert isinstance(metrics['accuracy'], float)
+    assert isinstance(metrics['classification_report'], dict)
+```
+
+### (b) Complete GitHub Actions Workflow
+
+**`.github/workflows/ci-cd.yml`**
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0' # Weekly schedule for Sunday at midnight
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+  detect_drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run drift detection
+        run: python detect_drift.py
+
+  retrain:
+    needs: detect_drift
+    if: needs.detect_drift.outputs.drift_detected == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Retrain model
+        run: python retrain_model.py
+```
+
+These sections complete the pytest test file and the GitHub Actions workflow based on the planned jobs and steps. The test file ensures that each part of the pipeline is functioning as expected, while the GitHub Actions workflow automates testing, drift detection, and retraining processes.

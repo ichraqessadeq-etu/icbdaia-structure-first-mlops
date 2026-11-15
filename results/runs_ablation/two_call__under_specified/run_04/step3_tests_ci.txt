@@ -1,0 +1,137 @@
+Certainly! Below is a complete `pytest` test file for the `FraudDetectionPipeline` module, along with a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+Create a file named `test_fraud_detection_pipeline.py`:
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+from fraud_detection_pipeline import FraudDetectionPipeline
+import pandas as pd
+import numpy as np
+from sklearn.exceptions import NotFittedError
+
+@pytest.fixture
+def sample_data(tmp_path):
+    # Create sample data
+    data = {
+        'feature1': np.random.rand(100),
+        'feature2': np.random.rand(100),
+        'feature3': np.random.rand(100),
+        'target': np.random.randint(0, 2, size=100)
+    }
+    df = pd.DataFrame(data)
+    
+    # Save to a temporary CSV file
+    data_path = tmp_path / "sample_data.csv"
+    df.to_csv(data_path, index=False)
+    
+    return str(data_path)
+
+@pytest.fixture
+def pipeline(sample_data):
+    return FraudDetectionPipeline(data_path=sample_data)
+
+def test_load_data(pipeline):
+    pipeline.load_data()
+    assert hasattr(pipeline, 'data')
+    assert not pipeline.data.empty
+
+def test_preprocess_data(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert hasattr(pipeline, 'X_train')
+    assert hasattr(pipeline, 'X_test')
+    assert hasattr(pipeline, 'y_train')
+    assert hasattr(pipeline, 'y_test')
+
+def test_train_model(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    try:
+        pipeline.model.predict(pipeline.X_test)
+    except NotFittedError:
+        pytest.fail("Model is not fitted yet.")
+
+def test_evaluate_model(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    accuracy, precision, recall, f1 = pipeline.evaluate_model()
+    assert 0 <= accuracy <= 1
+    assert 0 <= precision <= 1
+    assert 0 <= recall <= 1
+    assert 0 <= f1 <= 1
+
+def test_save_and_load_model(pipeline, tmp_path):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    
+    model_path = tmp_path / "test_model.pkl"
+    pipeline.model_path = str(model_path)
+    pipeline.save_model()
+    
+    new_pipeline = FraudDetectionPipeline(data_path=pipeline.data_path, model_path=str(model_path))
+    new_pipeline.load_model()
+    
+    # Try predicting with loaded model
+    new_pipeline.preprocess_data()
+    try:
+        new_pipeline.model.predict(new_pipeline.X_test)
+    except NotFittedError:
+        pytest.fail("Loaded model is not fitted.")
+
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/test_pipeline.yml`:
+
+```yaml
+name: Python Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn joblib
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py --junitxml=reports/results.xml
+
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: reports/results.xml
+```
+
+### Explanation
+- **Pytest Test File**: This file uses `pytest` to test various components of the `FraudDetectionPipeline` class. It includes fixtures for sample data and the pipeline instance, and tests for data loading, preprocessing, training, evaluation, and model saving/loading.
+
+- **GitHub Actions Workflow**: This workflow triggers on pushes and pull requests to the `main` branch. It sets up Python, installs necessary dependencies, runs the tests, and uploads the test results as an artifact.
+
+This setup ensures that the `FraudDetectionPipeline` module is thoroughly tested and the results are automatically checked with every change to the codebase in a continuous integration manner.

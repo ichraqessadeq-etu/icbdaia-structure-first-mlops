@@ -1,0 +1,124 @@
+To create a robust testing and CI/CD setup for your pipeline, we'll write a `pytest` test file and a GitHub Actions workflow file. These will ensure your code is both functionally correct and continuously integrated.
+
+### (a) Pytest Test File
+
+Here's a basic `pytest` test file to test the functionalities of the pipeline:
+
+```python
+# test_pipeline.py
+
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from pipeline import load_data, preprocess_data, train_model, evaluate_model, log_model_to_mlflow
+
+def test_load_data():
+    test_file_path = "test_data.csv"
+    # Create a mock dataframe
+    data = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4], 'Class': [0, 1]})
+    data.to_csv(test_file_path, index=False)
+
+    result = load_data(test_file_path)
+    assert not result.empty, "Data should not be empty after loading"
+    assert 'Class' in result.columns, "Data should have 'Class' column"
+
+def test_preprocess_data():
+    data = pd.DataFrame({
+        'Feature1': [1, 2, 3, 4],
+        'Feature2': [5, 6, 7, 8],
+        'Class': [0, 0, 1, 1]
+    })
+
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) > 0, "X_train should not be empty"
+    assert len(X_test) > 0, "X_test should not be empty"
+    assert len(y_train) > 0, "y_train should not be empty"
+    assert len(y_test) > 0, "y_test should not be empty"
+
+def test_train_model():
+    X_train = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4]})
+    y_train = pd.Series([0, 1])
+
+    model = train_model(X_train, y_train)
+    assert model is not None, "Model should be trained and not be None"
+
+def test_evaluate_model():
+    model = MagicMock()
+    model.predict.return_value = [0, 1]
+    X_test = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4]})
+    y_test = pd.Series([0, 1])
+
+    auc_score, report = evaluate_model(model, X_test, y_test)
+    assert auc_score is not None, "AUC score should be calculated"
+    assert isinstance(report, str), "Classification report should be a string"
+
+@patch('mlflow.start_run')
+@patch('mlflow.sklearn.log_model')
+@patch('mlflow.log_metric')
+@patch('mlflow.log_param')
+@patch('mlflow.end_run')
+def test_log_model_to_mlflow(mock_end_run, mock_log_param, mock_log_metric, mock_log_model, mock_start_run):
+    model = MagicMock()
+    auc_score = 0.95
+    report = "Classification Report"
+
+    log_model_to_mlflow(model, auc_score, report)
+
+    mock_start_run.assert_called_once()
+    mock_log_metric.assert_called_with("AUC", auc_score)
+    mock_log_param.assert_called_with("Model Type", "RandomForestClassifier")
+    mock_log_model.assert_called_once()
+    mock_end_run.assert_called_once()
+```
+
+### (b) GitHub Actions Workflow File
+
+Here's a GitHub Actions workflow file for running the `pytest` tests:
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn mlflow
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py --junitxml=test-results.xml
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: test-results.xml
+```
+
+### Explanation
+
+- **Pytest Test File (`test_pipeline.py`)**: This file includes tests for each function of the pipeline using `pytest`. It uses assertions to check the expected outcomes and `unittest.mock` to mock external dependencies like MLflow.
+
+- **GitHub Actions Workflow (`python-package.yml`)**: This file describes the CI/CD pipeline that runs on every push and pull request to the `main` branch. It tests the code using `pytest` in a virtual environment set up with the necessary dependencies. The test results are uploaded as artifacts for further inspection.
+
+This setup ensures that your code is regularly tested and integrated, maintaining its quality and reliability.

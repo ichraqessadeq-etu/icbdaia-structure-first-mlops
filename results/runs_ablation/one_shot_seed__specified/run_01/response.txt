@@ -1,0 +1,197 @@
+### Python Pipeline Script
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from sklearn.metrics import roc_auc_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+RANDOM_SEED = 42
+TEST_SIZE = 0.2
+N_ESTIMATORS = 100
+
+# Load data
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+# Preprocess data
+def preprocess_data(df):
+    # Separate the majority and minority classes
+    df_majority = df[df['Class'] == 0]
+    df_minority = df[df['Class'] == 1]
+
+    # Upsample minority class
+    df_minority_upsampled = resample(df_minority, 
+                                     replace=True, 
+                                     n_samples=len(df_majority), 
+                                     random_state=RANDOM_SEED)
+
+    # Combine majority class with upsampled minority class
+    df_upsampled = pd.concat([df_majority, df_minority_upsampled])
+
+    X = df_upsampled.drop('Class', axis=1)
+    y = df_upsampled['Class']
+
+    return train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+
+# Train model
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=N_ESTIMATORS, random_state=RANDOM_SEED)
+        model.fit(X_train, y_train)
+        logger.info("Model trained successfully.")
+        return model
+    except Exception as e:
+        logger.error(f"Error training model: {e}")
+        raise
+
+# Evaluate model
+def evaluate_model(model, X_test, y_test):
+    try:
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
+        auc_score = roc_auc_score(y_test, y_prob)
+        report = classification_report(y_test, y_pred)
+        logger.info(f"Model evaluated successfully. AUC: {auc_score}")
+        return auc_score, report
+    except Exception as e:
+        logger.error(f"Error evaluating model: {e}")
+        raise
+
+# Log to MLflow
+def log_to_mlflow(model, auc_score, report):
+    try:
+        mlflow.log_metric("AUC", auc_score)
+        mlflow.log_text(report, "classification_report.txt")
+        mlflow.sklearn.log_model(model, "random_forest_model")
+        logger.info("Model logged to MLflow successfully.")
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+# Main execution
+def main(file_path):
+    mlflow.start_run()
+    try:
+        data = load_data(file_path)
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        model = train_model(X_train, y_train)
+        auc_score, report = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, auc_score, report)
+    finally:
+        mlflow.end_run()
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### Pytest Test File
+
+```python
+import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+import pandas as pd
+import numpy as np
+from pipeline import preprocess_data, train_model, evaluate_model
+
+RANDOM_SEED = 42
+
+@pytest.fixture
+def synthetic_data():
+    np.random.seed(RANDOM_SEED)
+    data_size = 1000
+    fraud_rate = 0.0017
+    n_fraud = int(data_size * fraud_rate)
+    n_non_fraud = data_size - n_fraud
+
+    fraud_data = np.random.rand(n_fraud, 30)
+    non_fraud_data = np.random.rand(n_non_fraud, 30)
+    
+    fraud_labels = np.ones(n_fraud)
+    non_fraud_labels = np.zeros(n_non_fraud)
+
+    X = np.vstack((fraud_data, non_fraud_data))
+    y = np.hstack((fraud_labels, non_fraud_labels))
+
+    return train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+
+def test_preprocess_data(synthetic_data):
+    X_train, X_test, y_train, y_test = synthetic_data
+    X_train_upsampled, X_test_upsampled, y_train_upsampled, y_test_upsampled = preprocess_data(
+        pd.DataFrame(np.column_stack((X_train, y_train)), columns=[f"V{i}" for i in range(X_train.shape[1])] + ["Class"])
+    )
+    assert len(y_train_upsampled[y_train_upsampled == 1]) == len(y_train_upsampled[y_train_upsampled == 0])
+
+def test_train_model(synthetic_data):
+    X_train, _, y_train, _ = synthetic_data
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(synthetic_data):
+    X_train, X_test, y_train, y_test = synthetic_data
+    model = RandomForestClassifier(n_estimators=100, random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    auc_score, _ = evaluate_model(model, X_test, y_test)
+    assert auc_score >= 0.5  # Expect AUC to be at least random guessing
+```
+
+### GitHub Actions Workflow
+
+```yaml
+name: CI/CD Pipeline for Fraud Detection Model
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0' # Weekly run
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn mlflow pytest
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+    - name: Run pipeline
+      env:
+        MLFLOW_TRACKING_URI: http://your-mlflow-server:5000
+      run: |
+        python pipeline.py
+```

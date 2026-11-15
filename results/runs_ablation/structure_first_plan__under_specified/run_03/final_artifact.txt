@@ -1,0 +1,254 @@
+Certainly! Below is a complete implementation of the pipeline module following the provided structure and function signatures.
+
+```python
+# fraud_detection/pipeline/data_preprocessing.py
+import pandas as pd
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load data from a specified file path."""
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise ValueError(f"Failed to load data from {file_path}: {e}")
+
+def clean_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Clean the input data."""
+    try:
+        # Example cleaning steps
+        data = data.dropna()  # Remove missing values
+        data = data.drop_duplicates()  # Remove duplicate rows
+        return data
+    except Exception as e:
+        raise ValueError(f"Failed to clean data: {e}")
+
+def feature_engineering(data: pd.DataFrame) -> pd.DataFrame:
+    """Perform feature engineering on the data."""
+    try:
+        # Example feature engineering steps
+        data['new_feature'] = data['existing_feature'] ** 2  # Create a new feature
+        return data
+    except Exception as e:
+        raise ValueError(f"Failed to perform feature engineering: {e}")
+
+# fraud_detection/pipeline/model_training.py
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+
+def split_data(data: pd.DataFrame, test_size: float) -> tuple:
+    """Split the data into training and testing sets."""
+    try:
+        X = data.drop('target', axis=1)
+        y = data['target']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        raise ValueError(f"Failed to split data: {e}")
+
+def train_model(train_data: tuple) -> RandomForestClassifier:
+    """Train the fraud detection model."""
+    try:
+        X_train, _, y_train, _ = train_data
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise ValueError(f"Failed to train model: {e}")
+
+def save_model(model: RandomForestClassifier, model_path: str) -> None:
+    """Save the trained model to the specified path."""
+    try:
+        joblib.dump(model, model_path)
+    except Exception as e:
+        raise ValueError(f"Failed to save model: {e}")
+
+# fraud_detection/pipeline/evaluation.py
+from sklearn.metrics import classification_report
+import joblib
+
+def load_model(model_path: str) -> RandomForestClassifier:
+    """Load a trained model from the specified path."""
+    try:
+        model = joblib.load(model_path)
+        return model
+    except Exception as e:
+        raise ValueError(f"Failed to load model from {model_path}: {e}")
+
+def evaluate_model(model: RandomForestClassifier, test_data: tuple) -> dict:
+    """Evaluate the model on the test data and return metrics."""
+    try:
+        _, X_test, _, y_test = test_data
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions, output_dict=True)
+        return report
+    except Exception as e:
+        raise ValueError(f"Failed to evaluate model: {e}")
+```
+
+This module includes basic implementations for loading, cleaning, and preprocessing data, as well as training and evaluating a fraud detection model. The functions are error-handled to raise informative exceptions if anything goes wrong, enabling easier debugging and maintenance.
+
+Certainly! Let's take a closer look at the implementation of the `pytest` test files and the GitHub Actions workflow for the described CI/CD pipeline.
+
+### Pytest Test Files
+
+Here's the implementation of the test files for each module.
+
+#### `tests/test_data_preprocessing.py`
+```python
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.data_preprocessing import load_data, clean_data, feature_engineering
+
+def test_load_data():
+    """Test the data loading function."""
+    # Assuming a sample valid CSV file path.
+    sample_data_path = 'sample_data.csv'
+    data = load_data(sample_data_path)
+    assert isinstance(data, pd.DataFrame)
+    # Add more assertions as needed
+
+def test_clean_data():
+    """Test the data cleaning function."""
+    # Sample data with missing values and duplicates
+    sample_data = pd.DataFrame({
+        'feature1': [1, 2, None, 4, 4],
+        'feature2': ['A', 'B', 'B', 'C', 'C']
+    })
+    cleaned_data = clean_data(sample_data)
+    assert cleaned_data.isnull().sum().sum() == 0
+    assert cleaned_data.duplicated().sum() == 0
+    # Add more assertions as needed
+
+def test_feature_engineering():
+    """Test the feature engineering function."""
+    sample_data = pd.DataFrame({
+        'existing_feature': [1, 2, 3]
+    })
+    engineered_data = feature_engineering(sample_data)
+    assert 'new_feature' in engineered_data.columns
+    assert (engineered_data['new_feature'] == sample_data['existing_feature'] ** 2).all()
+    # Add more assertions as needed
+```
+
+#### `tests/test_model_training.py`
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.model_training import split_data, train_model, save_model
+
+def test_split_data():
+    """Test the data splitting function."""
+    sample_data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4, 5],
+        'target': [0, 1, 0, 1, 0]
+    })
+    X_train, X_test, y_train, y_test = split_data(sample_data, test_size=0.2)
+    assert len(X_train) == 4
+    assert len(X_test) == 1
+    assert len(y_train) == 4
+    assert len(y_test) == 1
+    # Add more assertions as needed
+
+def test_train_model():
+    """Test the model training function."""
+    sample_train_data = (pd.DataFrame({'feature1': [1, 2, 3, 4]}),
+                         pd.DataFrame({'feature1': [5]}),
+                         pd.Series([0, 1, 0, 1]),
+                         pd.Series([0]))
+    model = train_model(sample_train_data)
+    assert isinstance(model, RandomForestClassifier)
+    # Add more assertions as needed
+
+@pytest.mark.parametrize("model, path", [
+    (RandomForestClassifier(), 'test_model.joblib')
+])
+def test_save_model(model, path):
+    """Test the model saving function."""
+    save_model(model, path)
+    # Check if file exists
+    import os
+    assert os.path.isfile(path)
+    # Cleanup
+    os.remove(path)
+```
+
+#### `tests/test_evaluation.py`
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.evaluation import load_model, evaluate_model
+
+def test_load_model():
+    """Test the model loading function."""
+    # Assuming a test model path
+    model_path = 'test_model.joblib'
+    # Create a dummy model and save it for testing
+    model = RandomForestClassifier()
+    from sklearn.externals import joblib
+    joblib.dump(model, model_path)
+    loaded_model = load_model(model_path)
+    assert isinstance(loaded_model, RandomForestClassifier)
+    # Cleanup
+    import os
+    os.remove(model_path)
+
+def test_evaluate_model():
+    """Test the model evaluation function."""
+    model = RandomForestClassifier()
+    model.fit(pd.DataFrame({'feature1': [1, 2, 3, 4]}), pd.Series([0, 1, 0, 1]))
+    test_data = (pd.DataFrame({'feature1': [5]}), pd.DataFrame({'feature1': [6]}),
+                 pd.Series([0]), pd.Series([1]))
+    report = evaluate_model(model, test_data)
+    assert 'accuracy' in report
+    # Add more assertions as needed
+```
+
+### GitHub Actions Workflow
+
+Here's the implementation of the GitHub Actions workflow file.
+
+#### `.github/workflows/ci_cd_pipeline.yml`
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas scikit-learn joblib pytest
+
+      - name: Run tests
+        run: |
+          pytest tests/
+          
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy Application
+        run: echo "Deploying application..."
+```
+
+This workflow will automatically trigger upon pushes or pull requests to the `main` branch. It checks out the code, sets up Python, installs necessary dependencies, runs the tests using `pytest`, and if successful, proceeds to a deployment step. Adjust paths, dependencies, and test cases according to your specific application requirements.

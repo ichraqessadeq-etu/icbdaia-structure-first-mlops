@@ -1,0 +1,141 @@
+Certainly! Below is the complete implementation of the pytest test file and the GitHub Actions workflow as specified in the structure.
+
+### (a) Pytest Test File: `test_fraud_detection_pipeline.py`
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.fraud_detection_pipeline import (
+    load_data,
+    preprocess_data,
+    train_model,
+    evaluate_model,
+    save_model
+)
+
+def test_load_data():
+    """Test loading data from a file."""
+    # Create a mock CSV for testing
+    test_data = pd.DataFrame({
+        'feature1': [1, 2, 3],
+        'feature2': [4, 5, 6],
+        'target': [0, 1, 0]
+    })
+    test_data.to_csv('test_data.csv', index=False)
+    
+    # Load the data using the function
+    loaded_data = load_data('test_data.csv')
+    
+    # Assert that the data was loaded correctly
+    pd.testing.assert_frame_equal(loaded_data, test_data)
+
+def test_preprocess_data():
+    """Test the preprocessing of data."""
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3],
+        'feature2': ['A', 'B', 'A'],
+        'target': [0, 1, 0]
+    })
+    processed_data = preprocess_data(data)
+    
+    # Check that NaN values were dropped
+    assert processed_data.isnull().sum().sum() == 0
+    
+    # Check that categorical features are one-hot encoded
+    assert 'feature2_B' in processed_data.columns
+
+def test_train_model():
+    """Test training of the fraud detection model."""
+    processed_data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4],
+        'feature2_B': [0, 1, 0, 1],
+        'target': [0, 1, 0, 1]
+    })
+    model_params = {'n_estimators': 10, 'random_state': 42}
+    model, X_test, y_test = train_model(processed_data, model_params)
+    
+    # Check that the model is an instance of RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+    
+    # Check that the test data is not empty
+    assert not X_test.empty and not y_test.empty
+
+def test_evaluate_model():
+    """Test the evaluation of the trained model."""
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_test = pd.DataFrame({'feature1': [1, 2], 'feature2_B': [0, 1]})
+    y_test = pd.Series([0, 1])
+    
+    # Train the model for testing purposes
+    model.fit(X_test, y_test)
+    
+    evaluation_results = evaluate_model(model, X_test, y_test)
+    
+    # Check that the evaluation results contain accuracy and report
+    assert 'accuracy' in evaluation_results
+    assert 'report' in evaluation_results
+
+def test_save_model():
+    """Test saving the trained model to a file."""
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    model_file_path = 'test_model.pkl'
+    
+    save_model(model, model_file_path)
+    
+    # Check that the model file exists
+    assert os.path.exists(model_file_path)
+```
+
+### (b) GitHub Actions Workflow: `ci_cd_pipeline.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/
+```
+
+This setup ensures that your CI/CD pipeline is robust, with automated testing of each component of the fraud detection pipeline and integration into GitHub Actions for continuous integration and delivery.

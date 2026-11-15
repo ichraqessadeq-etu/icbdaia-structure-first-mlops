@@ -1,0 +1,200 @@
+To create a CI/CD pipeline for a fraud detection model, we need to ensure that the model can be built, tested, and deployed efficiently. This involves writing a Python script for the pipeline, creating tests using `pytest`, and setting up a GitHub Actions workflow for automation. Below is a sample Python module that represents a simplified version of a fraud detection pipeline.
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+import joblib
+
+class FraudDetectionPipeline:
+    def __init__(self, data_path, model_path='fraud_detection_model.pkl'):
+        self.data_path = data_path
+        self.model_path = model_path
+        self.model = None
+
+    def load_data(self):
+        """Loads the data from the specified CSV file."""
+        try:
+            data = pd.read_csv(self.data_path)
+            print(f"Data loaded successfully from {self.data_path}.")
+            return data
+        except Exception as e:
+            print(f"Failed to load data from {self.data_path}: {e}")
+            raise
+
+    def preprocess_data(self, data):
+        """Preprocesses the data by splitting into features and target."""
+        try:
+            X = data.drop('is_fraud', axis=1)
+            y = data['is_fraud']
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            print("Data preprocessing completed.")
+            return X_train, X_test, y_train, y_test
+        except Exception as e:
+            print(f"Failed to preprocess data: {e}")
+            raise
+
+    def train_model(self, X_train, y_train):
+        """Trains the RandomForest model on the training data."""
+        try:
+            self.model = RandomForestClassifier(n_estimators=100, random_state=42)
+            self.model.fit(X_train, y_train)
+            print("Model training completed.")
+        except Exception as e:
+            print(f"Failed to train model: {e}")
+            raise
+
+    def evaluate_model(self, X_test, y_test):
+        """Evaluates the model using accuracy, precision, and recall."""
+        try:
+            predictions = self.model.predict(X_test)
+            accuracy = accuracy_score(y_test, predictions)
+            precision = precision_score(y_test, predictions)
+            recall = recall_score(y_test, predictions)
+            print(f"Model evaluation completed. Accuracy: {accuracy}, Precision: {precision}, Recall: {recall}")
+            return accuracy, precision, recall
+        except Exception as e:
+            print(f"Failed to evaluate model: {e}")
+            raise
+
+    def save_model(self):
+        """Saves the trained model to a file."""
+        try:
+            joblib.dump(self.model, self.model_path)
+            print(f"Model saved to {self.model_path}.")
+        except Exception as e:
+            print(f"Failed to save model: {e}")
+            raise
+
+    def load_model(self):
+        """Loads a model from a file."""
+        try:
+            self.model = joblib.load(self.model_path)
+            print(f"Model loaded from {self.model_path}.")
+        except Exception as e:
+            print(f"Failed to load model from {self.model_path}: {e}")
+            raise
+
+    def run_pipeline(self):
+        """Executes the full pipeline: load data, preprocess, train, evaluate, and save model."""
+        data = self.load_data()
+        X_train, X_test, y_train, y_test = self.preprocess_data(data)
+        self.train_model(X_train, y_train)
+        self.evaluate_model(X_test, y_test)
+        self.save_model()
+
+if __name__ == "__main__":
+    pipeline = FraudDetectionPipeline(data_path='fraud_data.csv')
+    pipeline.run_pipeline()
+```
+
+This Python module covers the basic steps of a machine learning pipeline: loading data, preprocessing, training a model, evaluating the model, and saving the model. The `FraudDetectionPipeline` class encapsulates these functionalities, providing a straightforward way to execute the pipeline with the `run_pipeline` method.
+
+To implement the tests using `pytest` and set up a GitHub Actions workflow for continuous integration, we need to structure both the test file and the CI configuration. Below, I'll provide the complete `pytest` test file and the GitHub Actions workflow file.
+
+### (a) `pytest` Test File
+
+We'll create a test file named `test_fraud_detection_pipeline.py`. This file will contain tests for each method in the `FraudDetectionPipeline` class. Note that for the sake of this demonstration, some tests will use mock data.
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+@pytest.fixture
+def mock_data():
+    # Generate some mock data
+    data = {
+        'feature1': [0.1, 0.2, 0.3, 0.4, 0.5],
+        'feature2': [1, 2, 3, 4, 5],
+        'is_fraud': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+@pytest.fixture
+def pipeline():
+    return FraudDetectionPipeline(data_path='dummy_path.csv')
+
+def test_load_data(mocker, pipeline, mock_data):
+    # Mock the pd.read_csv function to return mock_data
+    mocker.patch('pandas.read_csv', return_value=mock_data)
+    data = pipeline.load_data()
+    assert not data.empty
+    assert 'is_fraud' in data.columns
+
+def test_preprocess_data(pipeline, mock_data):
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(mock_data)
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+    assert 'is_fraud' not in X_train.columns
+
+def test_train_model(pipeline, mock_data):
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(mock_data)
+    pipeline.train_model(X_train, y_train)
+    assert isinstance(pipeline.model, RandomForestClassifier)
+
+def test_evaluate_model(pipeline, mock_data):
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(mock_data)
+    pipeline.train_model(X_train, y_train)
+    accuracy, precision, recall = pipeline.evaluate_model(X_test, y_test)
+    assert 0 <= accuracy <= 1
+    assert 0 <= precision <= 1
+    assert 0 <= recall <= 1
+
+def test_save_and_load_model(pipeline, mocker, tmpdir):
+    model_path = tmpdir.join('test_model.pkl')
+    pipeline.model_path = str(model_path)
+    
+    # Train a model
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(mock_data)
+    pipeline.train_model(X_train, y_train)
+    
+    # Save the model
+    pipeline.save_model()
+    assert model_path.exists()
+
+    # Load the model
+    pipeline.model = None
+    pipeline.load_model()
+    assert pipeline.model is not None
+```
+
+### (b) GitHub Actions Workflow File
+
+We'll create a GitHub Actions workflow file named `ci.yml` in the `.github/workflows/` directory. This workflow will set up Python, install dependencies, and run the tests.
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn pytest pytest-mock
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+```
+
+These configurations set up a basic continuous integration pipeline with GitHub Actions that will automatically run the tests whenever changes are pushed to the repository or a pull request is opened against the main branch. The tests will ensure that the pipeline behaves as expected across different methods.

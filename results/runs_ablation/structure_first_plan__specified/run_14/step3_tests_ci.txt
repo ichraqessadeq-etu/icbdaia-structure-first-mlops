@@ -1,0 +1,136 @@
+Certainly! Below is the implementation of the `pytest` test file and the GitHub Actions workflow as per the structure you provided:
+
+### (a) Pytest Test File
+
+```python
+# tests/test_pipeline.py
+
+import pytest
+from fraud_detection_pipeline.data_loader import load_data, preprocess_data
+from fraud_detection_pipeline.train import train_model
+from fraud_detection_pipeline.evaluate import evaluate_model
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+
+@pytest.fixture
+def sample_data():
+    # Create a small sample dataset for testing
+    data = {
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'label': [0, 1, 0, 1, 0]
+    }
+    df = pd.DataFrame(data)
+    return df
+
+def test_load_data(sample_data, tmp_path):
+    # Save sample data to a temporary CSV file
+    file_path = tmp_path / "sample_data.csv"
+    sample_data.to_csv(file_path, index=False)
+
+    # Load data using the load_data function
+    features, labels = load_data(file_path)
+
+    # Assert that the features and labels are correctly loaded
+    assert not features.empty
+    assert not labels.empty
+    assert len(features) == len(labels)
+
+def test_preprocess_data(sample_data):
+    # Extract features and labels
+    features = sample_data.drop('label', axis=1)
+    labels = sample_data['label']
+
+    # Preprocess data
+    X_train, X_test, y_train, y_test = preprocess_data(features, labels)
+
+    # Assert that the data is split correctly
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+
+def test_train_model(sample_data):
+    # Extract features and labels
+    features = sample_data.drop('label', axis=1)
+    labels = sample_data['label']
+
+    # Preprocess data
+    X_train, _, y_train, _ = preprocess_data(features, labels)
+
+    # Train model
+    model = train_model(X_train, y_train)
+
+    # Assert that the model is an instance of RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    # Extract features and labels
+    features = sample_data.drop('label', axis=1)
+    labels = sample_data['label']
+
+    # Preprocess data
+    X_train, X_test, y_train, y_test = preprocess_data(features, labels)
+
+    # Train model
+    model = train_model(X_train, y_train)
+
+    # Evaluate model
+    evaluation_metrics = evaluate_model(model, X_test, y_test)
+
+    # Assert that evaluation metrics are returned
+    assert isinstance(evaluation_metrics, dict)
+    assert 'accuracy' in evaluation_metrics
+```
+
+### (b) GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly schedule, adjust as needed
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+  install-dependencies:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+  run-tests:
+    runs-on: ubuntu-latest
+    needs: install-dependencies
+    steps:
+      - name: Run Pytest
+        run: pytest tests/
+
+  run-pipeline:
+    runs-on: ubuntu-latest
+    needs: run-tests
+    steps:
+      - name: Run Pipeline
+        run: python fraud_detection_pipeline/main.py
+```
+
+In the `pytest` test file, I have created a sample dataset using a fixture to test the data loading, preprocessing, training, and evaluation functions. The GitHub Actions workflow is structured to set up the environment, install dependencies, run tests, and finally execute the pipeline if the tests pass.

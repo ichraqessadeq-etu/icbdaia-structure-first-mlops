@@ -1,0 +1,260 @@
+Certainly! Below is the complete implementation of the `pipeline.py` module following the defined structure and function signatures.
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.utils import resample
+import mlflow
+import sys
+import argparse
+
+def load_data(filepath: str) -> tuple:
+    """Load the dataset from the specified filepath."""
+    try:
+        data = pd.read_csv(filepath)
+        return data, None
+    except Exception as e:
+        return None, str(e)
+
+def preprocess_data(data: pd.DataFrame) -> tuple:
+    """Preprocess the data and handle imbalanced classes."""
+    try:
+        # Assuming 'Class' is the target variable and it's highly imbalanced
+        majority = data[data.Class == 0]
+        minority = data[data.Class == 1]
+
+        # Upsample minority class
+        minority_upsampled = resample(minority, 
+                                      replace=True,     # sample with replacement
+                                      n_samples=len(majority),    # to match majority class
+                                      random_state=42) # reproducible results
+
+        # Combine majority and upsampled minority
+        data_upsampled = pd.concat([majority, minority_upsampled])
+
+        # Splitting features and labels
+        X = data_upsampled.drop('Class', axis=1)
+        y = data_upsampled['Class']
+
+        # Splitting into train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+        return (X_train, X_test, y_train, y_test), None
+    except Exception as e:
+        return None, str(e)
+
+def detect_concept_drift(reference_data: pd.DataFrame, new_data: pd.DataFrame) -> bool:
+    """Detect if concept drift has occurred between reference and new data."""
+    # For simplicity, we'll use basic statistics comparison
+    drift_detected = False
+    for column in reference_data.columns:
+        if column in new_data.columns:
+            ref_mean = reference_data[column].mean()
+            new_mean = new_data[column].mean()
+            if abs(ref_mean - new_mean) > 0.1 * ref_mean:  # arbitrary threshold for drift
+                drift_detected = True
+                break
+    return drift_detected
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
+    """Train a RandomForestClassifier model using the training data."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model: RandomForestClassifier, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
+    """Evaluate the trained model on the test data and return metrics."""
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+
+def log_to_mlflow(model: RandomForestClassifier, metrics: dict, run_name: str) -> None:
+    """Log the model and metrics to MLflow."""
+    mlflow.start_run(run_name=run_name)
+    mlflow.log_metrics(metrics)
+    mlflow.sklearn.log_model(model, "model")
+    mlflow.end_run()
+
+def main(filepath: str, reference_data_path: str) -> None:
+    """Main execution function for the pipeline."""
+    # Load new data
+    new_data, error = load_data(filepath)
+    if error:
+        print(f"Error loading new data: {error}")
+        return
+
+    # Load reference data
+    reference_data, error = load_data(reference_data_path)
+    if error:
+        print(f"Error loading reference data: {error}")
+        return
+
+    # Detect concept drift
+    if detect_concept_drift(reference_data, new_data):
+        print("Concept drift detected. Proceeding with retraining.")
+    else:
+        print("No significant concept drift detected.")
+
+    # Preprocess data
+    processed_data, error = preprocess_data(new_data)
+    if error:
+        print(f"Error in preprocessing data: {error}")
+        return
+    X_train, X_test, y_train, y_test = processed_data
+
+    # Train model
+    model = train_model(X_train, y_train)
+
+    # Evaluate model
+    metrics = evaluate_model(model, X_test, y_test)
+    print("Model evaluation metrics:", metrics)
+
+    # Log to MLflow
+    log_to_mlflow(model, metrics, run_name="Fraud Detection Model Run")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fraud Detection Pipeline")
+    parser.add_argument('--filepath', type=str, required=True, help="Path to the new data file")
+    parser.add_argument('--reference_data', type=str, required=True, help="Path to the reference data file")
+    args = parser.parse_args()
+
+    main(args.filepath, args.reference_data)
+```
+
+This module includes all the necessary components: data loading, preprocessing, concept drift detection, model training, evaluation, and logging to MLflow. The main function coordinates these steps, and command-line arguments are used to specify the file paths for the new and reference datasets.
+
+Certainly! Below are the implementations for the `pytest` test file and the GitHub Actions workflow based on the given structure.
+
+### `tests/test_pipeline.py` (Pytest Test File)
+```python
+import pytest
+import pandas as pd
+from fraud_detection_pipeline.pipeline import load_data, preprocess_data, detect_concept_drift, train_model, evaluate_model
+
+# Sample data for testing
+SAMPLE_DATA = {
+    'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    'feature2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    'Class': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+}
+REFERENCE_DATA = pd.DataFrame(SAMPLE_DATA)
+
+def test_load_data():
+    """Test loading of data from a file."""
+    # Create a dummy CSV file for testing
+    test_filepath = "test_data.csv"
+    REFERENCE_DATA.to_csv(test_filepath, index=False)
+
+    data, error = load_data(test_filepath)
+    assert error is None
+    assert not data.empty
+    assert set(data.columns) == set(SAMPLE_DATA.keys())
+
+def test_preprocess_data():
+    """Test preprocessing of the loaded data."""
+    processed_data, error = preprocess_data(REFERENCE_DATA)
+    assert error is None
+    X_train, X_test, y_train, y_test = processed_data
+    assert not X_train.empty and not X_test.empty
+    assert not y_train.empty and not y_test.empty
+    assert X_train.shape[1] == len(SAMPLE_DATA) - 1
+
+def test_detect_concept_drift():
+    """Test the detection of concept drift between datasets."""
+    # Simulate new data with drift
+    NEW_DATA = REFERENCE_DATA.copy()
+    NEW_DATA['feature1'] += 10  # Introduce change to simulate drift
+
+    drift_detected = detect_concept_drift(REFERENCE_DATA, NEW_DATA)
+    assert drift_detected
+
+    # Simulate no drift
+    NO_DRIFT_DATA = REFERENCE_DATA.copy()
+    drift_not_detected = detect_concept_drift(REFERENCE_DATA, NO_DRIFT_DATA)
+    assert not drift_not_detected
+
+def test_train_model():
+    """Test training of the model."""
+    processed_data, _ = preprocess_data(REFERENCE_DATA)
+    X_train, _, y_train, _ = processed_data
+
+    model = train_model(X_train, y_train)
+    assert model is not None
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model():
+    """Test evaluation of the model."""
+    processed_data, _ = preprocess_data(REFERENCE_DATA)
+    X_train, X_test, y_train, y_test = processed_data
+
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+```
+
+### `.github/workflows/ci_cd_pipeline.yml` (GitHub Actions YAML Workflow)
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/
+
+  retrain:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ success() }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: |
+          python fraud_detection_pipeline/pipeline.py --filepath data/new_data.csv --reference_data data/reference_data.csv
+```
+
+These implementations provide a comprehensive test suite and CI/CD workflow to ensure the fraud detection pipeline is robust and reliable.

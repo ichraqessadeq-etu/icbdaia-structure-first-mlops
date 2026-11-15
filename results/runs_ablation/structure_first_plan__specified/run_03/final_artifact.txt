@@ -1,0 +1,278 @@
+Certainly! Below is the complete implementation of the `pipeline.py` module according to the specified structure:
+
+```python
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from sklearn.utils import resample
+import mlflow
+import numpy as np
+
+def load_data(filepath: str) -> tuple:
+    """Load the dataset from the specified filepath."""
+    data = pd.read_csv(filepath)
+    X = data.drop('target', axis=1)
+    y = data['target']
+    return X, y
+
+def preprocess_data(X: pd.DataFrame, y: pd.Series) -> tuple:
+    """Preprocess the data, handling imbalances and preparing for training."""
+    # Handle class imbalance through upsampling
+    X['target'] = y
+    majority_class = X[X['target'] == 0]
+    minority_class = X[X['target'] == 1]
+    
+    minority_upsampled = resample(minority_class, 
+                                  replace=True, 
+                                  n_samples=len(majority_class), 
+                                  random_state=42)
+    upsampled = pd.concat([majority_class, minority_upsampled])
+    
+    X = upsampled.drop('target', axis=1)
+    y = upsampled['target']
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
+    """Train the RandomForestClassifier model."""
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model: RandomForestClassifier, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
+    """Evaluate the model performance on the test set."""
+    predictions = model.predict(X_test)
+    report = classification_report(y_test, predictions, output_dict=True)
+    return report
+
+def log_to_mlflow(model: RandomForestClassifier, metrics: dict) -> None:
+    """Log the model and metrics to MLflow."""
+    mlflow.start_run()
+    mlflow.log_params(model.get_params())
+    mlflow.log_metrics(metrics['accuracy'])
+    mlflow.sklearn.log_model(model, "model")
+    mlflow.end_run()
+
+def detect_concept_drift(previous_data: pd.DataFrame, current_data: pd.DataFrame) -> bool:
+    """Detect concept drift between previous and current datasets."""
+    previous_mean = previous_data.mean()
+    current_mean = current_data.mean()
+    drift_detected = np.any(np.abs(previous_mean - current_mean) > 0.1)
+    return drift_detected
+
+def main() -> None:
+    """Execute the complete pipeline from data loading to MLflow logging."""
+    X, y = load_data('data/fraud_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, metrics)
+    # Assuming previous_data.csv and current_data.csv are available for drift detection
+    previous_data = pd.read_csv('data/previous_data.csv')
+    current_data = pd.read_csv('data/current_data.csv')
+    drift_detected = detect_concept_drift(previous_data, current_data)
+    if drift_detected:
+        print("Concept drift detected!")
+    else:
+        print("No concept drift detected.")
+
+if __name__ == "__main__":
+    main()
+```
+
+This implementation follows the specified function signatures and includes basic logic for each step of the pipeline. Make sure to adjust the file paths and any specific data handling according to your actual dataset and requirements.
+
+Certainly! Below, you'll find the complete `pytest` test file that implements the planned tests, and the complete GitHub Actions workflow YAML file. Each is provided in a separate code block as requested.
+
+### test_pipeline.py
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from pipeline import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow, detect_concept_drift
+
+def test_load_data():
+    """Test loading of the dataset."""
+    X, y = load_data('data/fraud_data.csv')
+    assert isinstance(X, pd.DataFrame)
+    assert isinstance(y, pd.Series)
+    assert not X.empty
+    assert not y.empty
+
+def test_preprocess_data():
+    """Test data preprocessing and imbalance handling."""
+    X, y = load_data('data/fraud_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    assert isinstance(X_train, pd.DataFrame)
+    assert isinstance(X_test, pd.DataFrame)
+    assert isinstance(y_train, pd.Series)
+    assert isinstance(y_test, pd.Series)
+    # Check for class balance
+    assert y_train.value_counts().iloc[0] == y_train.value_counts().iloc[1]
+
+def test_train_model():
+    """Test model training and output type."""
+    X, y = load_data('data/fraud_data.csv')
+    X_train, _, y_train, _ = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_estimators == 100  # Default value
+
+def test_evaluate_model():
+    """Test model evaluation metrics."""
+    X, y = load_data('data/fraud_data.csv')
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert isinstance(metrics, dict)
+    assert 'accuracy' in metrics
+
+def test_log_to_mlflow(monkeypatch):
+    """Test logging of model and metrics to MLflow."""
+    def mock_start_run():
+        pass
+
+    def mock_log_params(params):
+        assert isinstance(params, dict)
+    
+    def mock_log_metrics(metrics):
+        assert isinstance(metrics, dict)
+    
+    def mock_log_model(model, artifact_path):
+        assert isinstance(model, RandomForestClassifier)
+        assert artifact_path == "model"
+
+    def mock_end_run():
+        pass
+
+    monkeypatch.setattr(mlflow, "start_run", mock_start_run)
+    monkeypatch.setattr(mlflow, "log_params", mock_log_params)
+    monkeypatch.setattr(mlflow, "log_metrics", mock_log_metrics)
+    monkeypatch.setattr(mlflow.sklearn, "log_model", mock_log_model)
+    monkeypatch.setattr(mlflow, "end_run", mock_end_run)
+
+    X, y = load_data('data/fraud_data.csv')
+    X_train, _, y_train, _ = preprocess_data(X, y)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_train, y_train)
+    log_to_mlflow(model, metrics)
+
+def test_detect_concept_drift():
+    """Test concept drift detection logic."""
+    previous_data = pd.DataFrame(np.random.rand(100, 5))
+    current_data = previous_data + 0.15  # Introduce drift
+    drift_detected = detect_concept_drift(previous_data, current_data)
+    assert drift_detected is True
+
+    current_data = previous_data  # No drift
+    drift_detected = detect_concept_drift(previous_data, current_data)
+    assert drift_detected is False
+```
+
+### .github/workflows/ci_cd_workflow.yml
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest test_pipeline.py --disable-warnings
+
+  train_and_evaluate:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run training and evaluation pipeline
+        run: python pipeline.py
+
+  detect_concept_drift:
+    runs-on: ubuntu-latest
+    needs: train_and_evaluate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for concept drift
+        run: python -c "from pipeline import detect_concept_drift; detect_concept_drift()"
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: detect_concept_drift
+    steps:
+      - name: Notify stakeholders
+        run: echo "Pipeline execution completed."
+```
+
+These scripts provide a comprehensive testing and CI/CD setup for your fraud detection model pipeline using `pytest` and GitHub Actions.

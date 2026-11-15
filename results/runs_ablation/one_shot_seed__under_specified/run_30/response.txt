@@ -1,0 +1,138 @@
+Creating a CI/CD pipeline for a fraud detection model involves several components. Below, I'll provide you with a Python script for the pipeline, a `pytest` test file, and a GitHub Actions workflow. Each component will be in its own fenced code block. We'll ensure that every run is reproducible by seeding every source of randomness.
+
+### Python Pipeline Module (pipeline.py)
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+
+# Reproducibility
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def load_data():
+    # Simulate loading a dataset
+    data = pd.DataFrame({
+        'feature1': np.random.rand(1000),
+        'feature2': np.random.rand(1000),
+        'feature3': np.random.rand(1000),
+        'label': np.random.randint(0, 2, 1000)
+    })
+    return data
+
+def preprocess_data(data):
+    # Simple preprocessing: split features and target
+    X = data.drop('label', axis=1)
+    y = data['label']
+    return X, y
+
+def train_model(X_train, y_train):
+    # Train a RandomForest model
+    model = RandomForestClassifier(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    # Evaluate the model
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    return accuracy
+
+def main():
+    data = load_data()
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+    
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    
+    print(f'Model accuracy: {accuracy:.2f}')
+    
+    # Save the model
+    joblib.dump(model, 'fraud_detection_model.pkl')
+
+if __name__ == "__main__":
+    main()
+```
+
+### Pytest Test File (test_pipeline.py)
+
+```python
+import pytest
+import numpy as np
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def test_load_data():
+    data = load_data()
+    assert data is not None
+    assert len(data) == 1000
+
+def test_preprocess_data():
+    data = load_data()
+    X, y = preprocess_data(data)
+    assert X.shape == (1000, 3)
+    assert y.shape == (1000,)
+
+def test_train_model():
+    data = load_data()
+    X, y = preprocess_data(data)
+    model = train_model(X, y)
+    assert model is not None
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    data = load_data()
+    X, y = preprocess_data(data)
+    model = train_model(X, y)
+    accuracy = evaluate_model(model, X, y)
+    assert 0 <= accuracy <= 1
+```
+
+### GitHub Actions Workflow (ci.yml)
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install numpy pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+```
+
+This setup provides a complete CI/CD pipeline for your fraud detection model. The Python pipeline script runs the data loading, preprocessing, model training, and evaluation, with all randomness seeded. The `pytest` test file includes tests for each function in the pipeline. Finally, the GitHub Actions workflow automates the process, running tests and executing the pipeline on every push and pull request to the `main` branch.

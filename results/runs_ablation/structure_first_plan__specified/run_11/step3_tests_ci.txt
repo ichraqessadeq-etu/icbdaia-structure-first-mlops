@@ -1,0 +1,135 @@
+Certainly! Below is the implementation of the `test_pipeline.py` file using `pytest` to test the pipeline components, and the complete GitHub Actions workflow configuration in `ci-cd.yml`.
+
+### Pytest Test File
+
+#### `tests/test_pipeline.py`
+
+```python
+import pytest
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+import pandas as pd
+from pipeline.data_loader import load_data
+from pipeline.trainer import train_model, detect_concept_drift
+from pipeline.evaluator import evaluate_model
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        'feature2': [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+    }
+    df = pd.DataFrame(data)
+    return df
+
+def test_data_loading(sample_data):
+    """Test if data loading function works correctly."""
+    sample_data.to_csv('test_data.csv', index=False)
+    X_train, X_test, y_train, y_test = load_data('test_data.csv')
+    assert len(X_train) == 8
+    assert len(X_test) == 2
+    assert len(y_train) == 8
+    assert len(y_test) == 2
+
+def test_model_training(sample_data):
+    """Test if the model training function works correctly."""
+    X = sample_data.drop('target', axis=1)
+    y = sample_data['target']
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_estimators == 100
+
+def test_evaluation_metrics(sample_data):
+    """Test if the model evaluation metrics are computed correctly."""
+    X = sample_data.drop('target', axis=1)
+    y = sample_data['target']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    report = evaluate_model(model, X_test, y_test)
+    assert '0' in report
+    assert '1' in report
+
+def test_concept_drift_detection(sample_data):
+    """Test if concept drift detection works correctly."""
+    X = sample_data.drop('target', axis=1)
+    y = sample_data['target']
+    model = train_model(X, y)
+    drift_detected = detect_concept_drift(X, y, model)
+    assert isinstance(drift_detected, bool)
+```
+
+### GitHub Actions Workflow
+
+#### `.github/workflows/ci-cd.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Run tests
+        run: pytest tests/
+
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline script
+        run: python pipeline/main.py
+      
+      - name: Deploy model
+        run: echo "Deploying model..."
+```
+
+This setup ensures that the pipeline is tested rigorously and any changes to the code are automatically verified through the CI/CD pipeline. Each component of the pipeline is tested for correctness, and the workflow is structured to run these tests on every push or pull request to the main branch.

@@ -1,0 +1,145 @@
+Certainly! Below is the complete implementation of the `pytest` test file and the GitHub Actions workflow as per your specified structure.
+
+### (a) Complete `pytest` Test File: `tests/test_pipeline.py`
+
+```python
+import pytest
+import pandas as pd
+from fraud_detection_pipeline.pipeline import load_data, preprocess_data, train_model
+
+@pytest.fixture
+def sample_data():
+    """Fixture for creating a sample dataset for testing."""
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4],
+        'feature2': [5, 6, 7, 8],
+        'Class': [0, 1, 0, 1]
+    })
+    return data
+
+def test_load_data(monkeypatch, sample_data):
+    """Test loading of the dataset."""
+    def mock_read_csv(file_path):
+        return sample_data
+    
+    monkeypatch.setattr(pd, "read_csv", mock_read_csv)
+    X, y = load_data("dummy_path.csv")
+    
+    assert not X.empty, "Features should not be empty"
+    assert not y.empty, "Labels should not be empty"
+    assert X.shape[0] == y.shape[0], "Features and labels should have the same number of rows"
+
+def test_preprocess_data(sample_data):
+    """Test preprocessing of the dataset."""
+    X = sample_data.drop('Class', axis=1)
+    processed_data = preprocess_data(X)
+    
+    assert processed_data.isnull().sum().sum() == 0, "There should be no missing values after preprocessing"
+    # Additional checks for scaling or other preprocessing steps can be added here
+
+def test_train_model(sample_data):
+    """Test that the model training completes successfully."""
+    X = sample_data.drop('Class', axis=1)
+    y = sample_data['Class']
+    model = train_model(X, y)
+    
+    assert model is not None, "Model should not be None"
+    assert hasattr(model, "predict"), "Model should have a predict method"
+```
+
+### (b) Complete GitHub Actions Workflow: `.github/workflows/ci_cd_pipeline.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0' # Weekly schedule
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+  install_dependencies:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: install_dependencies
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: |
+          pytest tests/
+
+  run_pipeline:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute pipeline
+        run: |
+          python fraud_detection_pipeline/pipeline.py --file_path data/creditcard.csv
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: run_pipeline
+    steps:
+      - name: Notify stakeholders
+        run: echo "Pipeline execution complete."
+```
+
+This setup ensures that your tests are run every time code is pushed to the `main` branch or a pull request is made, and the entire pipeline is executed if the tests pass. The workflow also includes a notification step to confirm the successful execution of the pipeline.

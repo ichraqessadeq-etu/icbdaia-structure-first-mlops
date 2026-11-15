@@ -13,3 +13,6 @@ __pycache__/
 
 # backups
 *.bak*
+
+# data sample used for execution (not redistributed)
+results/data/

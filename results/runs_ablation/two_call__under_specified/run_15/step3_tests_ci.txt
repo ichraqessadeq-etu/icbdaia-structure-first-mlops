@@ -1,0 +1,109 @@
+Certainly! Below is a complete pytest test file to test the `FraudDetectionPipeline` module, along with a GitHub Actions workflow file to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+@pytest.fixture
+def sample_data():
+    """Fixture to provide sample data for testing."""
+    data = {
+        'feature1': [0.1, 0.2, 0.2, 0.3],
+        'feature2': [1, 2, 3, 4],
+        'label': [0, 1, 0, 1]
+    }
+    return pd.DataFrame(data)
+
+@pytest.fixture
+def pipeline():
+    """Fixture to create a FraudDetectionPipeline instance."""
+    return FraudDetectionPipeline(data_path="fake_path.csv")
+
+def test_load_data(sample_data, pipeline, monkeypatch):
+    """Tests the load_data method."""
+    def mock_read_csv(path):
+        return sample_data
+    
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    data = pipeline.load_data()
+    assert not data.empty
+    assert list(data.columns) == ['feature1', 'feature2', 'label']
+
+def test_preprocess_data(sample_data, pipeline):
+    """Tests the preprocess_data method."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+    assert len(y_train) > 0
+    assert len(y_test) > 0
+
+def test_train_model(sample_data, pipeline):
+    """Tests the train_model method."""
+    X_train, _, y_train, _ = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_train, y_train)
+    assert hasattr(pipeline.model, "coef_")
+
+def test_evaluate_model(sample_data, pipeline):
+    """Tests the evaluate_model method."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_train, y_train)
+    metrics = pipeline.evaluate_model(X_test, y_test)
+    assert "accuracy" in metrics
+    assert "precision" in metrics
+    assert "recall" in metrics
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn pytest
+
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 fraud_detection_pipeline.py --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 fraud_detection_pipeline.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Test with pytest
+      run: |
+        pytest
+```
+
+### Explanation
+
+- **Pytest Test File**: This file includes tests for each method in the `FraudDetectionPipeline` class. It uses fixtures to set up sample data and mock the `read_csv` function to return this data. Each test checks whether the pipeline components work correctly.
+
+- **GitHub Actions Workflow**: This workflow is triggered on pushes and pull requests to the `main` branch. It checks out the repository, sets up Python, installs dependencies, runs linting with `flake8`, and tests with `pytest`.

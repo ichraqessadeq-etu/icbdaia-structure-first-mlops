@@ -1,0 +1,117 @@
+{
+  "n_python_blocks": 5,
+  "n_parse_ok": 5,
+  "n_yaml_blocks": 1,
+  "is_invalid": false,
+  "is_rvh": true,
+  "is_iih": false,
+  "n_tests": 8,
+  "complete": true,
+  "uses_mlflow": false,
+  "has_error_handling": true,
+  "blocks": [
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_estimator",
+            "detail": "RandomForestClassifier(...) called without random_state",
+            "lineno": 40
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_estimator",
+            "detail": "RandomForestClassifier(...) called without random_state",
+            "lineno": 21
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": true,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": [
+          {
+            "kind": "RVH",
+            "rule": "unseeded_estimator",
+            "detail": "RandomForestClassifier(...) called without random_state",
+            "lineno": 9
+          }
+        ]
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    },
+    {
+      "parses": true,
+      "rvh": {
+        "is_rvh": false,
+        "parse_error": null,
+        "has_global_seed": false,
+        "violations": []
+      },
+      "iih": {
+        "is_iih": false,
+        "parse_error": null,
+        "violations": []
+      }
+    }
+  ],
+  "run": 18,
+  "cost": {
+    "calls": 3,
+    "prompt_tokens": 2843,
+    "completion_tokens": 3162,
+    "errors": [],
+    "truncated_calls": 0,
+    "model_snapshots": [
+      "gpt-4o-2024-08-06"
+    ],
+    "seconds": 15.57
+  }
+}

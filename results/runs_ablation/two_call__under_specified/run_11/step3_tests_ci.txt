@@ -1,0 +1,112 @@
+Certainly! Below is a complete `pytest` test file for the `FraudDetectionPipeline` along with a GitHub Actions workflow configuration to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+import numpy as np
+import os
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+# Create a mock CSV file for testing
+@pytest.fixture(scope='module')
+def mock_data_file(tmpdir_factory):
+    # Create mock data
+    data = {
+        'feature1': np.random.rand(100),
+        'feature2': np.random.rand(100),
+        'feature3': np.random.rand(100),
+        'is_fraud': np.random.randint(0, 2, 100)
+    }
+    df = pd.DataFrame(data)
+    file_path = tmpdir_factory.mktemp('data').join('mock_fraud_data.csv')
+    df.to_csv(file_path, index=False)
+    return str(file_path)
+
+def test_load_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    assert not pipeline.data.empty
+
+def test_preprocess_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert pipeline.X.shape[1] == 3  # Three features
+    assert len(pipeline.y) == 100  # 100 samples
+
+def test_split_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.split_data(test_size=0.2)
+    assert len(pipeline.X_train) == 80
+    assert len(pipeline.X_test) == 20
+
+def test_train_model(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.run_pipeline(model_path='temp_model.pkl')
+    assert os.path.exists('temp_model.pkl')
+    os.remove('temp_model.pkl')
+
+def test_evaluate_model(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.split_data(test_size=0.2)
+    pipeline.train_model()
+    accuracy = pipeline.evaluate_model()
+    assert 0 <= accuracy <= 1
+
+```
+
+### (b) GitHub Actions Workflow File
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: |
+        pytest --tb=short --disable-warnings
+
+```
+
+### Explanation:
+
+1. **Pytest test file**:
+   - `mock_data_file`: A fixture that generates a temporary CSV file with mock data for testing.
+   - `test_load_data`, `test_preprocess_data`, `test_split_data`, `test_train_model`, `test_evaluate_model`: Test functions to verify each step of the pipeline.
+
+2. **GitHub Actions Workflow**:
+   - Triggers on pushes and pull requests to the `main` branch.
+   - Sets up the environment using Python 3.8.
+   - Installs necessary dependencies including `pandas`, `scikit-learn`, `joblib`, and `pytest`.
+   - Executes the tests using `pytest`.

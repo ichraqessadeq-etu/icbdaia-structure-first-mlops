@@ -1,0 +1,99 @@
+Sure! Below is a complete pytest test file for testing the `fraud_detection_pipeline.py` module, followed by a GitHub Actions workflow configuration to automate the testing process.
+
+### Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import os
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline import (
+    load_data, preprocess_data, train_model, evaluate_model, save_model
+)
+
+# Mock data for testing
+MOCK_DATA = pd.DataFrame({
+    'feature1': [0.1, 0.2, 0.3, 0.4, 0.5],
+    'feature2': [1, 2, 3, 4, 5],
+    'is_fraud': [0, 0, 1, 0, 1]
+})
+
+@pytest.fixture
+def mock_data():
+    return MOCK_DATA
+
+def test_load_data(mock_data, tmp_path):
+    # Test loading data
+    test_file = tmp_path / "test_data.csv"
+    mock_data.to_csv(test_file, index=False)
+    df = load_data(test_file)
+    pd.testing.assert_frame_equal(df, mock_data)
+
+def test_preprocess_data(mock_data):
+    # Test data preprocessing
+    X_train, X_test, y_train, y_test = preprocess_data(mock_data)
+    assert X_train.shape[1] == mock_data.shape[1] - 1
+    assert len(y_train) == len(X_train)
+    assert len(y_test) == len(X_test)
+
+def test_train_model(mock_data):
+    # Test model training
+    X_train, X_test, y_train, y_test = preprocess_data(mock_data)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(mock_data):
+    # Test model evaluation
+    X_train, X_test, y_train, y_test = preprocess_data(mock_data)
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    assert 0 <= accuracy <= 1
+
+def test_save_model(mock_data, tmp_path):
+    # Test saving the model
+    X_train, X_test, y_train, y_test = preprocess_data(mock_data)
+    model = train_model(X_train, y_train)
+    model_path = tmp_path / "test_model.pkl"
+    save_model(model, model_path)
+    assert os.path.exists(model_path)
+```
+
+### GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, 3.10]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn
+    - name: Test with pytest
+      run: |
+        pytest
+```
+
+This setup includes a pytest test file containing tests for each function in the pipeline module. The GitHub Actions workflow is configured to run these tests on multiple Python versions to ensure compatibility.

@@ -1,0 +1,198 @@
+### Python Pipeline Script
+
+Below is a Python pipeline script that loads a credit card fraud dataset, trains a `RandomForestClassifier` model, evaluates it, and logs the results to MLflow. The script also includes error handling and seeding for reproducibility.
+
+```python
+import pandas as pd
+import numpy as np
+import mlflow
+import mlflow.sklearn
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Seed for reproducibility
+SEED = 42
+np.random.seed(SEED)
+
+def load_data():
+    try:
+        # Replace with actual data loading logic
+        url = 'https://example.com/creditcard.csv'
+        data = pd.read_csv(url)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Failed to load data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        # Split the data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=SEED)
+        logger.info("Data preprocessed successfully.")
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        logger.error(f"Failed to preprocess data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        # Create a pipeline with scaling and the classifier
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', RandomForestClassifier(random_state=SEED))
+        ])
+        model = pipeline.fit(X_train, y_train)
+        logger.info("Model trained successfully.")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to train model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions)
+        roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+        logger.info("Model evaluated successfully.")
+        return report, roc_auc
+    except Exception as e:
+        logger.error(f"Failed to evaluate model: {e}")
+        raise
+
+def log_to_mlflow(model, report, roc_auc):
+    try:
+        mlflow.start_run()
+        mlflow.log_param("random_state", SEED)
+        mlflow.log_metric("roc_auc", roc_auc)
+        mlflow.log_text(report, "classification_report.txt")
+        mlflow.sklearn.log_model(model, "model")
+        mlflow.end_run()
+        logger.info("Results logged to MLflow successfully.")
+    except Exception as e:
+        logger.error(f"Failed to log to MLflow: {e}")
+        raise
+
+def main():
+    try:
+        data = load_data()
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        model = train_model(X_train, y_train)
+        report, roc_auc = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, report, roc_auc)
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Pytest Test File
+
+Below is a test file using `pytest` to test various components of the pipeline. The tests include data loading, training, and evaluation.
+
+```python
+import pytest
+import pandas as pd
+from sklearn.utils import shuffle
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+SEED = 42
+
+@pytest.fixture
+def synthetic_data():
+    # Generate synthetic data
+    fraud = pd.DataFrame({
+        'feature1': np.random.normal(0, 1, 100),
+        'feature2': np.random.normal(0, 1, 100),
+        'Class': [1]*100
+    })
+    non_fraud = pd.DataFrame({
+        'feature1': np.random.normal(0, 1, 10000),
+        'feature2': np.random.normal(0, 1, 10000),
+        'Class': [0]*10000
+    })
+    data = pd.concat([fraud, non_fraud], axis=0)
+    data = shuffle(data, random_state=SEED)
+    return data
+
+def test_load_data():
+    data = load_data()
+    assert data is not None, "Data should not be None"
+    assert 'Class' in data.columns, "Data should have a 'Class' column"
+
+def test_preprocess_data(synthetic_data):
+    X_train, X_test, y_train, y_test = preprocess_data(synthetic_data)
+    assert X_train.shape[0] > 0, "Training data should not be empty"
+    assert X_test.shape[0] > 0, "Test data should not be empty"
+    assert y_train.shape[0] > 0, "Training labels should not be empty"
+    assert y_test.shape[0] > 0, "Test labels should not be empty"
+
+def test_train_model(synthetic_data):
+    X_train, _, y_train, _ = preprocess_data(synthetic_data)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier), "Model should be an instance of RandomForestClassifier"
+    assert hasattr(model, "predict"), "Model should have a predict method"
+```
+
+### GitHub Actions Workflow
+
+Below is the YAML configuration for a GitHub Actions workflow that includes testing and running the pipeline. It triggers on any push to the repository.
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests --disable-warnings
+
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+
+    - name: Upload MLflow artifacts
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: mlflow-artifacts
+        path: mlruns
+```
+
+This setup provides a comprehensive CI/CD pipeline for a fraud detection model using scikit-learn, MLflow, pytest, and GitHub Actions, ensuring reproducibility and error handling at each stage.

@@ -1,0 +1,108 @@
+To implement testing for your pipeline module using `pytest`, you need to create a test file that will import the module and execute tests. Following that, you can set up a GitHub Actions workflow to automatically run these tests. Below are the implementations for both the pytest test file and the GitHub Actions workflow.
+
+### (a) Pytest Test File
+
+Create a file named `test_pipeline.py` in the same directory as your pipeline module:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+# Sample data for testing
+TEST_DATA_PATH = 'test_creditcard.csv'
+SAMPLE_DATA = {
+    'V1': [0.1, 0.2, 0.3],
+    'V2': [0.1, 0.2, 0.3],
+    'V3': [0.1, 0.2, 0.3],
+    # Add other features as needed
+    'Class': [0, 1, 0]
+}
+
+@pytest.fixture
+def data_frame():
+    """Fixture for creating a sample dataframe."""
+    return pd.DataFrame(SAMPLE_DATA)
+
+def test_load_data():
+    """Test loading of data."""
+    data = load_data(TEST_DATA_PATH)
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data(data_frame):
+    """Test data preprocessing function."""
+    X_train, X_test, y_train, y_test = preprocess_data(data_frame)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert len(y_train) == X_train.shape[0]
+    assert len(y_test) == X_test.shape[0]
+
+def test_train_model(data_frame):
+    """Test model training."""
+    X_train, X_test, y_train, y_test = preprocess_data(data_frame)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_classes_ > 1
+
+def test_evaluate_model(data_frame):
+    """Test model evaluation."""
+    X_train, X_test, y_train, y_test = preprocess_data(data_frame)
+    model = train_model(X_train, y_train)
+    report, auc_score, cm = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str)
+    assert auc_score >= 0.0
+    assert len(cm) == 2
+
+def test_log_to_mlflow(data_frame):
+    """Test logging to MLflow."""
+    X_train, X_test, y_train, y_test = preprocess_data(data_frame)
+    model = train_model(X_train, y_train)
+    report, auc_score, cm = evaluate_model(model, X_test, y_test)
+    # The function does not return anything, just ensure no error is raised
+    log_to_mlflow(model, report, auc_score)
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/python-app.yml` in your repository:
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scikit-learn pytest mlflow
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+```
+
+### Explanation
+
+- **Pytest Test File**: The `test_pipeline.py` file includes fixture data and test functions for each component of your pipeline. Each test function checks the expected outcome or behavior of the respective pipeline function.
+  
+- **GitHub Actions Workflow**: The workflow file defines a CI pipeline that runs on each push or pull request to the `main` branch. It sets up a Python environment, installs necessary dependencies, and runs your pytest tests. Ensure the paths and file names match those of your repository.

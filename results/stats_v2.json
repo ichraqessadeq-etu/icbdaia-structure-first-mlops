@@ -1,0 +1,1134 @@
+{
+ "claude-sonnet-4-5": {
+  "n": 40,
+  "pooled": {
+   "rvh_v1": {
+    "sf": "11/20",
+    "os": "15/20",
+    "risk_diff": -0.2,
+    "rd_ci95": [
+     -0.45,
+     0.091
+    ],
+    "odds_ratio": 0.43,
+    "or_ci95": [
+     0.12,
+     1.57
+    ],
+    "fisher_p": 0.32
+   },
+   "rvh_v2": {
+    "sf": "2/20",
+    "os": "6/20",
+    "risk_diff": -0.2,
+    "rd_ci95": [
+     -0.431,
+     0.054
+    ],
+    "odds_ratio": 0.3,
+    "or_ci95": [
+     0.06,
+     1.51
+    ],
+    "fisher_p": 0.235
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "4/20",
+    "os": "6/20",
+    "risk_diff": -0.1,
+    "rd_ci95": [
+     -0.349,
+     0.166
+    ],
+    "odds_ratio": 0.61,
+    "or_ci95": [
+     0.15,
+     2.45
+    ],
+    "fisher_p": 0.716
+   },
+   "tests": {
+    "sf_mean": 64.3,
+    "os_mean": 33.3,
+    "ratio": 1.93,
+    "ratio_ci95": [
+     1.76,
+     2.12
+    ],
+    "cliffs_delta": 1.0,
+    "U": 399.5,
+    "mw_p": 7e-08
+   },
+   "tests_with_assert": {
+    "sf_mean": 62.7,
+    "os_mean": 33.3,
+    "ratio": 1.88,
+    "ratio_ci95": [
+     1.72,
+     2.07
+    ],
+    "cliffs_delta": 1.0,
+    "U": 399.5,
+    "mw_p": 7e-08
+   },
+   "asserts": {
+    "sf_mean": 128.15,
+    "os_mean": 77.3,
+    "ratio": 1.66,
+    "ratio_ci95": [
+     1.49,
+     1.85
+    ],
+    "cliffs_delta": 1.0,
+    "U": 399.0,
+    "mw_p": 7.8e-08
+   },
+   "loc": {
+    "sf_mean": 1430.6,
+    "os_mean": 864.55,
+    "ratio": 1.65,
+    "ratio_ci95": [
+     1.44,
+     1.89
+    ],
+    "cliffs_delta": 0.94,
+    "U": 387.0,
+    "mw_p": 4.5e-07
+   },
+   "iih_ext": {
+    "sf": "13/20",
+    "os": "18/20",
+    "risk_diff": -0.25,
+    "rd_ci95": [
+     -0.479,
+     0.013
+    ],
+    "odds_ratio": 0.24,
+    "or_ci95": [
+     0.05,
+     1.2
+    ],
+    "fisher_p": 0.127
+   },
+   "iih_X1": {
+    "sf": "0/20",
+    "os": "0/20",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.161,
+     0.161
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.02,
+     52.85
+    ],
+    "fisher_p": 1.0
+   },
+   "iih_X2": {
+    "sf": "13/20",
+    "os": "18/20",
+    "risk_diff": -0.25,
+    "rd_ci95": [
+     -0.479,
+     0.013
+    ],
+    "odds_ratio": 0.24,
+    "or_ci95": [
+     0.05,
+     1.2
+    ],
+    "fisher_p": 0.127
+   }
+  },
+  "specified": {
+   "rvh_v1": {
+    "sf": "8/10",
+    "os": "8/10",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.341,
+     0.341
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.14,
+     7.35
+    ],
+    "fisher_p": 1.0
+   },
+   "rvh_v2": {
+    "sf": "1/10",
+    "os": "5/10",
+    "risk_diff": -0.4,
+    "rd_ci95": [
+     -0.676,
+     0.002
+    ],
+    "odds_ratio": 0.16,
+    "or_ci95": [
+     0.02,
+     1.27
+    ],
+    "fisher_p": 0.141
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "3/10",
+    "os": "5/10",
+    "risk_diff": -0.2,
+    "rd_ci95": [
+     -0.526,
+     0.202
+    ],
+    "odds_ratio": 0.47,
+    "or_ci95": [
+     0.08,
+     2.64
+    ],
+    "fisher_p": 0.65
+   },
+   "tests": {
+    "sf_mean": 62.7,
+    "os_mean": 31.3,
+    "ratio": 2.0,
+    "ratio_ci95": [
+     1.79,
+     2.25
+    ],
+    "cliffs_delta": 1.0,
+    "U": 100.0,
+    "mw_p": 0.00018
+   },
+   "tests_with_assert": {
+    "sf_mean": 60.1,
+    "os_mean": 31.3,
+    "ratio": 1.92,
+    "ratio_ci95": [
+     1.73,
+     2.15
+    ],
+    "cliffs_delta": 1.0,
+    "U": 100.0,
+    "mw_p": 0.00018
+   },
+   "asserts": {
+    "sf_mean": 116.8,
+    "os_mean": 73.6,
+    "ratio": 1.59,
+    "ratio_ci95": [
+     1.4,
+     1.81
+    ],
+    "cliffs_delta": 0.98,
+    "U": 99.0,
+    "mw_p": 0.00024
+   },
+   "loc": {
+    "sf_mean": 1191.6,
+    "os_mean": 886.4,
+    "ratio": 1.34,
+    "ratio_ci95": [
+     1.19,
+     1.51
+    ],
+    "cliffs_delta": 0.86,
+    "U": 93.0,
+    "mw_p": 0.0013
+   },
+   "iih_ext": {
+    "sf": "8/10",
+    "os": "10/10",
+    "risk_diff": -0.2,
+    "rd_ci95": [
+     -0.51,
+     0.112
+    ],
+    "odds_ratio": 0.16,
+    "or_ci95": [
+     0.01,
+     3.85
+    ],
+    "fisher_p": 0.474
+   },
+   "iih_X1": {
+    "sf": "0/10",
+    "os": "0/10",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.278,
+     0.278
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.02,
+     55.27
+    ],
+    "fisher_p": 1.0
+   },
+   "iih_X2": {
+    "sf": "8/10",
+    "os": "10/10",
+    "risk_diff": -0.2,
+    "rd_ci95": [
+     -0.51,
+     0.112
+    ],
+    "odds_ratio": 0.16,
+    "or_ci95": [
+     0.01,
+     3.85
+    ],
+    "fisher_p": 0.474
+   }
+  },
+  "under_specified": {
+   "rvh_v1": {
+    "sf": "3/10",
+    "os": "7/10",
+    "risk_diff": -0.4,
+    "rd_ci95": [
+     -0.672,
+     0.029
+    ],
+    "odds_ratio": 0.22,
+    "or_ci95": [
+     0.04,
+     1.31
+    ],
+    "fisher_p": 0.179
+   },
+   "rvh_v2": {
+    "sf": "1/10",
+    "os": "1/10",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.315,
+     0.315
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.09,
+     11.42
+    ],
+    "fisher_p": 1.0
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "1/10",
+    "os": "1/10",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.315,
+     0.315
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.09,
+     11.42
+    ],
+    "fisher_p": 1.0
+   },
+   "tests": {
+    "sf_mean": 65.9,
+    "os_mean": 35.3,
+    "ratio": 1.87,
+    "ratio_ci95": [
+     1.61,
+     2.13
+    ],
+    "cliffs_delta": 0.99,
+    "U": 99.5,
+    "mw_p": 0.00021
+   },
+   "tests_with_assert": {
+    "sf_mean": 65.3,
+    "os_mean": 35.3,
+    "ratio": 1.85,
+    "ratio_ci95": [
+     1.6,
+     2.11
+    ],
+    "cliffs_delta": 0.99,
+    "U": 99.5,
+    "mw_p": 0.00021
+   },
+   "asserts": {
+    "sf_mean": 139.5,
+    "os_mean": 81.0,
+    "ratio": 1.72,
+    "ratio_ci95": [
+     1.49,
+     1.96
+    ],
+    "cliffs_delta": 1.0,
+    "U": 100.0,
+    "mw_p": 0.00018
+   },
+   "loc": {
+    "sf_mean": 1669.6,
+    "os_mean": 842.7,
+    "ratio": 1.98,
+    "ratio_ci95": [
+     1.65,
+     2.36
+    ],
+    "cliffs_delta": 1.0,
+    "U": 100.0,
+    "mw_p": 0.00018
+   },
+   "iih_ext": {
+    "sf": "5/10",
+    "os": "8/10",
+    "risk_diff": -0.3,
+    "rd_ci95": [
+     -0.6,
+     0.107
+    ],
+    "odds_ratio": 0.29,
+    "or_ci95": [
+     0.05,
+     1.85
+    ],
+    "fisher_p": 0.35
+   },
+   "iih_X1": {
+    "sf": "0/10",
+    "os": "0/10",
+    "risk_diff": 0.0,
+    "rd_ci95": [
+     -0.278,
+     0.278
+    ],
+    "odds_ratio": 1.0,
+    "or_ci95": [
+     0.02,
+     55.27
+    ],
+    "fisher_p": 1.0
+   },
+   "iih_X2": {
+    "sf": "5/10",
+    "os": "8/10",
+    "risk_diff": -0.3,
+    "rd_ci95": [
+     -0.6,
+     0.107
+    ],
+    "odds_ratio": 0.29,
+    "or_ci95": [
+     0.05,
+     1.85
+    ],
+    "fisher_p": 0.35
+   }
+  },
+  "logit": {
+   "sf": {
+    "OR": 0.11,
+    "ci95": [
+     0.01,
+     1.24
+    ],
+    "p": 0.074
+   },
+   "under": {
+    "OR": 0.11,
+    "ci95": [
+     0.01,
+     1.24
+    ],
+    "p": 0.074
+   },
+   "sf:under": {
+    "OR": 9.0,
+    "ci95": [
+     0.2,
+     397.12
+    ],
+    "p": 0.255
+   }
+  },
+  "negbin_v2": {
+   "rate_ratio_sf": 0.9,
+   "ci95": [
+    0.34,
+    2.39
+   ],
+   "p": 0.825,
+   "rate_ratio_under": 0.06,
+   "p_under": 0.0
+  },
+  "prompt_effect": {
+   "rvh_v1": {
+    "under": "10/20",
+    "specified": "16/20",
+    "fisher_p": 0.096
+   },
+   "rvh": {
+    "under": "2/20",
+    "specified": "6/20",
+    "fisher_p": 0.235
+   }
+  },
+  "location_v2": {
+   "one_shot": {
+    "viol_pipeline": 1,
+    "viol_test": 20,
+    "artifacts_pipeline_viol": 1,
+    "artifacts_test_viol": 5,
+    "n": 20,
+    "loc_test_share": 0.5,
+    "viol_per_kloc_pipeline": 0.12,
+    "viol_per_kloc_test": 2.32
+   },
+   "structure_first": {
+    "viol_pipeline": 0,
+    "viol_test": 30,
+    "artifacts_pipeline_viol": 0,
+    "artifacts_test_viol": 2,
+    "n": 20,
+    "loc_test_share": 0.58,
+    "viol_per_kloc_pipeline": 0.0,
+    "viol_per_kloc_test": 1.82
+   }
+  },
+  "plan": {
+   "planned_tests_mean": 34.1,
+   "planned_written_share": 0.173,
+   "unplanned_written_mean": 58.2,
+   "skeleton_mentions_seed": "19/20",
+   "rvh_if_skeleton_seed": "2/19",
+   "rvh_if_no_skeleton_seed": "0/1"
+  },
+  "cost": {
+   "one_shot": {
+    "usd_mean": 0.2611,
+    "tokens_in_mean": 121,
+    "tokens_out_mean": 17379,
+    "seconds_mean": 188.8,
+    "usd_per_rvh_free_artifact": 0.3729
+   },
+   "structure_first": {
+    "usd_mean": 0.5069,
+    "tokens_in_mean": 13657,
+    "tokens_out_mean": 31060,
+    "seconds_mean": 339.7,
+    "usd_per_rvh_free_artifact": 0.5632
+   }
+  },
+  "yaml": {
+   "one_shot": {
+    "artifacts_with_yaml": 20,
+    "all_parse": 20,
+    "runs_pytest": 20,
+    "installs_deps": 20,
+    "sha_pinned_actions": 0,
+    "tag_pinned_actions": 610,
+    "unpinned_actions": 0
+   },
+   "structure_first": {
+    "artifacts_with_yaml": 20,
+    "all_parse": 20,
+    "runs_pytest": 20,
+    "installs_deps": 20,
+    "sha_pinned_actions": 0,
+    "tag_pinned_actions": 752,
+    "unpinned_actions": 0
+   }
+  }
+ },
+ "gpt-4o": {
+  "n": 160,
+  "pooled": {
+   "rvh_v1": {
+    "sf": "20/80",
+    "os": "12/80",
+    "risk_diff": 0.1,
+    "rd_ci95": [
+     -0.025,
+     0.222
+    ],
+    "odds_ratio": 1.86,
+    "or_ci95": [
+     0.85,
+     4.07
+    ],
+    "fisher_p": 0.166
+   },
+   "rvh_v2": {
+    "sf": "18/80",
+    "os": "12/80",
+    "risk_diff": 0.075,
+    "rd_ci95": [
+     -0.047,
+     0.195
+    ],
+    "odds_ratio": 1.62,
+    "or_ci95": [
+     0.73,
+     3.59
+    ],
+    "fisher_p": 0.311
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "20/80",
+    "os": "12/80",
+    "risk_diff": 0.1,
+    "rd_ci95": [
+     -0.025,
+     0.222
+    ],
+    "odds_ratio": 1.86,
+    "or_ci95": [
+     0.85,
+     4.07
+    ],
+    "fisher_p": 0.166
+   },
+   "tests": {
+    "sf_mean": 5.91,
+    "os_mean": 3.31,
+    "ratio": 1.78,
+    "ratio_ci95": [
+     1.64,
+     1.94
+    ],
+    "cliffs_delta": 0.84,
+    "U": 5880.5,
+    "mw_p": 5.1e-21
+   },
+   "tests_with_assert": {
+    "sf_mean": 5.65,
+    "os_mean": 3.25,
+    "ratio": 1.74,
+    "ratio_ci95": [
+     1.59,
+     1.89
+    ],
+    "cliffs_delta": 0.79,
+    "U": 5743.5,
+    "mw_p": 3.7e-19
+   },
+   "asserts": {
+    "sf_mean": 10.74,
+    "os_mean": 5.32,
+    "ratio": 2.02,
+    "ratio_ci95": [
+     1.83,
+     2.23
+    ],
+    "cliffs_delta": 0.9,
+    "U": 6068.0,
+    "mw_p": 8.8e-23
+   },
+   "loc": {
+    "sf_mean": 102.68,
+    "os_mean": 72.29,
+    "ratio": 1.42,
+    "ratio_ci95": [
+     1.32,
+     1.53
+    ],
+    "cliffs_delta": 0.71,
+    "U": 5486.0,
+    "mw_p": 6.2e-15
+   },
+   "iih_ext": {
+    "sf": "29/80",
+    "os": "1/80",
+    "risk_diff": 0.35,
+    "rd_ci95": [
+     0.239,
+     0.46
+    ],
+    "odds_ratio": 30.36,
+    "or_ci95": [
+     5.67,
+     162.5
+    ],
+    "fisher_p": 0.0
+   },
+   "iih_X1": {
+    "sf": "23/80",
+    "os": "1/80",
+    "risk_diff": 0.275,
+    "rd_ci95": [
+     0.172,
+     0.383
+    ],
+    "odds_ratio": 21.66,
+    "or_ci95": [
+     4.02,
+     116.82
+    ],
+    "fisher_p": 0.0
+   },
+   "iih_X2": {
+    "sf": "6/80",
+    "os": "0/80",
+    "risk_diff": 0.075,
+    "rd_ci95": [
+     0.014,
+     0.154
+    ],
+    "odds_ratio": 14.05,
+    "or_ci95": [
+     0.78,
+     253.69
+    ],
+    "fisher_p": 0.028
+   }
+  },
+  "specified": {
+   "rvh_v1": {
+    "sf": "8/40",
+    "os": "3/40",
+    "risk_diff": 0.125,
+    "rd_ci95": [
+     -0.031,
+     0.281
+    ],
+    "odds_ratio": 2.8,
+    "or_ci95": [
+     0.74,
+     10.6
+    ],
+    "fisher_p": 0.193
+   },
+   "rvh_v2": {
+    "sf": "8/40",
+    "os": "3/40",
+    "risk_diff": 0.125,
+    "rd_ci95": [
+     -0.031,
+     0.281
+    ],
+    "odds_ratio": 2.8,
+    "or_ci95": [
+     0.74,
+     10.6
+    ],
+    "fisher_p": 0.193
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "8/40",
+    "os": "3/40",
+    "risk_diff": 0.125,
+    "rd_ci95": [
+     -0.031,
+     0.281
+    ],
+    "odds_ratio": 2.8,
+    "or_ci95": [
+     0.74,
+     10.6
+    ],
+    "fisher_p": 0.193
+   },
+   "tests": {
+    "sf_mean": 5.2,
+    "os_mean": 3.12,
+    "ratio": 1.66,
+    "ratio_ci95": [
+     1.45,
+     1.9
+    ],
+    "cliffs_delta": 0.77,
+    "U": 1412.5,
+    "mw_p": 3.1e-10
+   },
+   "tests_with_assert": {
+    "sf_mean": 4.7,
+    "os_mean": 3.1,
+    "ratio": 1.52,
+    "ratio_ci95": [
+     1.35,
+     1.69
+    ],
+    "cliffs_delta": 0.69,
+    "U": 1348.5,
+    "mw_p": 1.2e-08
+   },
+   "asserts": {
+    "sf_mean": 11.0,
+    "os_mean": 5.78,
+    "ratio": 1.9,
+    "ratio_ci95": [
+     1.68,
+     2.15
+    ],
+    "cliffs_delta": 0.89,
+    "U": 1515.0,
+    "mw_p": 4.8e-12
+   },
+   "loc": {
+    "sf_mean": 98.72,
+    "os_mean": 91.18,
+    "ratio": 1.08,
+    "ratio_ci95": [
+     1.01,
+     1.16
+    ],
+    "cliffs_delta": 0.37,
+    "U": 1097.0,
+    "mw_p": 0.0043
+   },
+   "iih_ext": {
+    "sf": "14/40",
+    "os": "1/40",
+    "risk_diff": 0.325,
+    "rd_ci95": [
+     0.16,
+     0.481
+    ],
+    "odds_ratio": 14.41,
+    "or_ci95": [
+     2.5,
+     83.05
+    ],
+    "fisher_p": 0.0
+   },
+   "iih_X1": {
+    "sf": "12/40",
+    "os": "1/40",
+    "risk_diff": 0.275,
+    "rd_ci95": [
+     0.117,
+     0.431
+    ],
+    "odds_ratio": 11.55,
+    "or_ci95": [
+     1.99,
+     67.19
+    ],
+    "fisher_p": 0.001
+   },
+   "iih_X2": {
+    "sf": "2/40",
+    "os": "0/40",
+    "risk_diff": 0.05,
+    "rd_ci95": [
+     -0.045,
+     0.165
+    ],
+    "odds_ratio": 5.26,
+    "or_ci95": [
+     0.24,
+     113.11
+    ],
+    "fisher_p": 0.494
+   }
+  },
+  "under_specified": {
+   "rvh_v1": {
+    "sf": "12/40",
+    "os": "9/40",
+    "risk_diff": 0.075,
+    "rd_ci95": [
+     -0.117,
+     0.26
+    ],
+    "odds_ratio": 1.45,
+    "or_ci95": [
+     0.54,
+     3.89
+    ],
+    "fisher_p": 0.612
+   },
+   "rvh_v2": {
+    "sf": "10/40",
+    "os": "9/40",
+    "risk_diff": 0.025,
+    "rd_ci95": [
+     -0.16,
+     0.208
+    ],
+    "odds_ratio": 1.14,
+    "or_ci95": [
+     0.42,
+     3.13
+    ],
+    "fisher_p": 1.0
+   },
+   "rvh_v2_undet_as_viol": {
+    "sf": "12/40",
+    "os": "9/40",
+    "risk_diff": 0.075,
+    "rd_ci95": [
+     -0.117,
+     0.26
+    ],
+    "odds_ratio": 1.45,
+    "or_ci95": [
+     0.54,
+     3.89
+    ],
+    "fisher_p": 0.612
+   },
+   "tests": {
+    "sf_mean": 6.62,
+    "os_mean": 3.5,
+    "ratio": 1.89,
+    "ratio_ci95": [
+     1.72,
+     2.08
+    ],
+    "cliffs_delta": 0.97,
+    "U": 1576.5,
+    "mw_p": 3.4e-14
+   },
+   "tests_with_assert": {
+    "sf_mean": 6.6,
+    "os_mean": 3.4,
+    "ratio": 1.94,
+    "ratio_ci95": [
+     1.75,
+     2.17
+    ],
+    "cliffs_delta": 0.97,
+    "U": 1576.5,
+    "mw_p": 3.5e-14
+   },
+   "asserts": {
+    "sf_mean": 10.48,
+    "os_mean": 4.88,
+    "ratio": 2.15,
+    "ratio_ci95": [
+     1.86,
+     2.52
+    ],
+    "cliffs_delta": 0.9,
+    "U": 1518.5,
+    "mw_p": 3.9e-12
+   },
+   "loc": {
+    "sf_mean": 106.62,
+    "os_mean": 53.4,
+    "ratio": 2.0,
+    "ratio_ci95": [
+     1.84,
+     2.16
+    ],
+    "cliffs_delta": 1.0,
+    "U": 1600.0,
+    "mw_p": 1.4e-14
+   },
+   "iih_ext": {
+    "sf": "15/40",
+    "os": "0/40",
+    "risk_diff": 0.375,
+    "rd_ci95": [
+     0.216,
+     0.53
+    ],
+    "odds_ratio": 49.24,
+    "or_ci95": [
+     2.82,
+     859.27
+    ],
+    "fisher_p": 0.0
+   },
+   "iih_X1": {
+    "sf": "11/40",
+    "os": "0/40",
+    "risk_diff": 0.275,
+    "rd_ci95": [
+     0.131,
+     0.428
+    ],
+    "odds_ratio": 31.58,
+    "or_ci95": [
+     1.79,
+     557.44
+    ],
+    "fisher_p": 0.0
+   },
+   "iih_X2": {
+    "sf": "4/40",
+    "os": "0/40",
+    "risk_diff": 0.1,
+    "rd_ci95": [
+     -0.006,
+     0.231
+    ],
+    "odds_ratio": 9.99,
+    "or_ci95": [
+     0.52,
+     191.92
+    ],
+    "fisher_p": 0.116
+   }
+  },
+  "logit": {
+   "C(batch)[T.b2]": {
+    "OR": 0.5,
+    "ci95": [
+     0.22,
+     1.15
+    ],
+    "p": 0.104
+   },
+   "sf": {
+    "OR": 3.13,
+    "ci95": [
+     0.76,
+     12.9
+    ],
+    "p": 0.115
+   },
+   "under": {
+    "OR": 3.64,
+    "ci95": [
+     0.9,
+     14.77
+    ],
+    "p": 0.07
+   },
+   "sf:under": {
+    "OR": 0.37,
+    "ci95": [
+     0.06,
+     2.14
+    ],
+    "p": 0.265
+   }
+  },
+  "negbin_v2": {
+   "rate_ratio_sf": 0.6,
+   "ci95": [
+    0.35,
+    1.05
+   ],
+   "p": 0.076,
+   "rate_ratio_under": 2.14,
+   "p_under": 0.009
+  },
+  "prompt_effect": {
+   "rvh_v1": {
+    "under": "21/80",
+    "specified": "11/80",
+    "fisher_p": 0.074
+   },
+   "rvh": {
+    "under": "19/80",
+    "specified": "11/80",
+    "fisher_p": 0.155
+   }
+  },
+  "location_v2": {
+   "one_shot": {
+    "viol_pipeline": 10,
+    "viol_test": 29,
+    "artifacts_pipeline_viol": 8,
+    "artifacts_test_viol": 7,
+    "n": 80,
+    "loc_test_share": 0.32,
+    "viol_per_kloc_pipeline": 2.56,
+    "viol_per_kloc_test": 15.45
+   },
+   "structure_first": {
+    "viol_pipeline": 11,
+    "viol_test": 24,
+    "artifacts_pipeline_viol": 9,
+    "artifacts_test_viol": 12,
+    "n": 80,
+    "loc_test_share": 0.52,
+    "viol_per_kloc_pipeline": 2.78,
+    "viol_per_kloc_test": 5.64
+   }
+  },
+  "plan": {
+   "planned_tests_mean": 5.54,
+   "planned_written_share": 0.828,
+   "unplanned_written_mean": 1.01,
+   "skeleton_mentions_seed": "1/80",
+   "rvh_if_skeleton_seed": "0/1",
+   "rvh_if_no_skeleton_seed": "18/79"
+  },
+  "cost": {
+   "one_shot": {
+    "usd_mean": 0.0116,
+    "tokens_in_mean": 116,
+    "tokens_out_mean": 1130,
+    "seconds_mean": 6.2,
+    "usd_per_rvh_free_artifact": 0.0136
+   },
+   "structure_first": {
+    "usd_mean": 0.0284,
+    "tokens_in_mean": 1770,
+    "tokens_out_mean": 2399,
+    "seconds_mean": 14.4,
+    "usd_per_rvh_free_artifact": 0.0367
+   }
+  },
+  "yaml": {
+   "one_shot": {
+    "artifacts_with_yaml": 80,
+    "all_parse": 80,
+    "runs_pytest": 80,
+    "installs_deps": 80,
+    "sha_pinned_actions": 0,
+    "tag_pinned_actions": 200,
+    "unpinned_actions": 0
+   },
+   "structure_first": {
+    "artifacts_with_yaml": 80,
+    "all_parse": 80,
+    "runs_pytest": 80,
+    "installs_deps": 80,
+    "sha_pinned_actions": 0,
+    "tag_pinned_actions": 178,
+    "unpinned_actions": 0
+   }
+  },
+  "batch_effect": {
+   "one_shot": {
+    "rvh_b1": "8/40",
+    "rvh_b2": "4/40",
+    "rvh_p": 0.348,
+    "tests_b1": 3.25,
+    "tests_b2": 3.38,
+    "tests_p": 0.46
+   },
+   "structure_first": {
+    "rvh_b1": "11/40",
+    "rvh_b2": "7/40",
+    "rvh_p": 0.422,
+    "tests_b1": 5.55,
+    "tests_b2": 6.28,
+    "tests_p": 0.23
+   }
+  }
+ },
+ "power_a_priori": {
+  "gpt4o_pooled": {
+   "baseline": 0.2,
+   "n_per_group": 80,
+   "min_detectable_p1": 0.04,
+   "power": 0.922
+  },
+  "gpt4o_per_prompt": {
+   "baseline": 0.2,
+   "n_per_group": 40,
+   "min_detectable_p1": 0.0,
+   "power": 0.927
+  },
+  "claude_pooled": {
+   "baseline": 0.2,
+   "n_per_group": 20,
+   "min_detectable_p1": null,
+   "power_at_zero": {
+    "0.18": 0.034,
+    "0.16": 0.038,
+    "0.14": 0.059,
+    "0.12": 0.077,
+    "0.1": 0.115,
+    "0.08": 0.14,
+    "0.06": 0.183,
+    "0.04": 0.239,
+    "0.02": 0.298,
+    "0.0": 0.373
+   }
+  },
+  "note": "baseline 20% = specified prompt, T=1.0, GPT-4o, in the earlier detection study (2 of 10)"
+ }
+}

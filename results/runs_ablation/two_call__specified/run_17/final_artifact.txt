@@ -1,0 +1,228 @@
+Here's a complete Python pipeline script for a fraud detection model using `scikit-learn`, `MLflow`, and appropriate error handling:
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    """Load the dataset from a given file path."""
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Failed to load data: {e}")
+        raise
+
+def preprocess_data(data):
+    """Preprocess the data."""
+    try:
+        # Assuming the target column is named 'Class'
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+
+        # Handle imbalance using resampling
+        fraud = data[data.Class == 1]
+        non_fraud = data[data.Class == 0]
+        non_fraud_downsampled = resample(non_fraud, replace=False, n_samples=len(fraud), random_state=42)
+        data_balanced = pd.concat([fraud, non_fraud_downsampled])
+
+        X_balanced = data_balanced.drop('Class', axis=1)
+        y_balanced = data_balanced['Class']
+
+        X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=42)
+        logger.info("Data preprocessed successfully.")
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        logger.error(f"Failed to preprocess data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    """Train the RandomForest model."""
+    try:
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model trained successfully.")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to train model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the model."""
+    try:
+        predictions = model.predict(X_test)
+        auc_score = roc_auc_score(y_test, predictions)
+        report = classification_report(y_test, predictions)
+        logger.info(f"Model evaluation completed with AUC: {auc_score}")
+        return auc_score, report
+    except Exception as e:
+        logger.error(f"Failed to evaluate model: {e}")
+        raise
+
+def log_model_to_mlflow(model, auc_score, report):
+    """Log the model and metrics to MLflow."""
+    try:
+        mlflow.start_run()
+        mlflow.log_metric("AUC", auc_score)
+        mlflow.log_param("Model Type", "RandomForestClassifier")
+        mlflow.sklearn.log_model(model, "random-forest-model")
+        mlflow.log_artifact(report, "classification_report.txt")
+        mlflow.end_run()
+        logger.info("Model and metrics logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Failed to log model to MLflow: {e}")
+        raise
+
+def main(file_path):
+    """Main function to execute the pipeline."""
+    try:
+        data = load_data(file_path)
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        model = train_model(X_train, y_train)
+        auc_score, report = evaluate_model(model, X_test, y_test)
+        log_model_to_mlflow(model, auc_score, report)
+    except Exception as e:
+        logger.error(f"Pipeline execution failed: {e}")
+
+if __name__ == "__main__":
+    file_path = "creditcard.csv"  # Update with your actual dataset path
+    main(file_path)
+```
+
+This script covers data loading, preprocessing (including handling class imbalance), model training, evaluation, and logging to MLflow. Ensure you replace `"creditcard.csv"` with the actual path to your dataset. Additionally, have MLflow tracking server set up and running when you execute this script.
+
+To create a robust testing and CI/CD setup for your pipeline, we'll write a `pytest` test file and a GitHub Actions workflow file. These will ensure your code is both functionally correct and continuously integrated.
+
+### (a) Pytest Test File
+
+Here's a basic `pytest` test file to test the functionalities of the pipeline:
+
+```python
+# test_pipeline.py
+
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from pipeline import load_data, preprocess_data, train_model, evaluate_model, log_model_to_mlflow
+
+def test_load_data():
+    test_file_path = "test_data.csv"
+    # Create a mock dataframe
+    data = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4], 'Class': [0, 1]})
+    data.to_csv(test_file_path, index=False)
+
+    result = load_data(test_file_path)
+    assert not result.empty, "Data should not be empty after loading"
+    assert 'Class' in result.columns, "Data should have 'Class' column"
+
+def test_preprocess_data():
+    data = pd.DataFrame({
+        'Feature1': [1, 2, 3, 4],
+        'Feature2': [5, 6, 7, 8],
+        'Class': [0, 0, 1, 1]
+    })
+
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) > 0, "X_train should not be empty"
+    assert len(X_test) > 0, "X_test should not be empty"
+    assert len(y_train) > 0, "y_train should not be empty"
+    assert len(y_test) > 0, "y_test should not be empty"
+
+def test_train_model():
+    X_train = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4]})
+    y_train = pd.Series([0, 1])
+
+    model = train_model(X_train, y_train)
+    assert model is not None, "Model should be trained and not be None"
+
+def test_evaluate_model():
+    model = MagicMock()
+    model.predict.return_value = [0, 1]
+    X_test = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4]})
+    y_test = pd.Series([0, 1])
+
+    auc_score, report = evaluate_model(model, X_test, y_test)
+    assert auc_score is not None, "AUC score should be calculated"
+    assert isinstance(report, str), "Classification report should be a string"
+
+@patch('mlflow.start_run')
+@patch('mlflow.sklearn.log_model')
+@patch('mlflow.log_metric')
+@patch('mlflow.log_param')
+@patch('mlflow.end_run')
+def test_log_model_to_mlflow(mock_end_run, mock_log_param, mock_log_metric, mock_log_model, mock_start_run):
+    model = MagicMock()
+    auc_score = 0.95
+    report = "Classification Report"
+
+    log_model_to_mlflow(model, auc_score, report)
+
+    mock_start_run.assert_called_once()
+    mock_log_metric.assert_called_with("AUC", auc_score)
+    mock_log_param.assert_called_with("Model Type", "RandomForestClassifier")
+    mock_log_model.assert_called_once()
+    mock_end_run.assert_called_once()
+```
+
+### (b) GitHub Actions Workflow File
+
+Here's a GitHub Actions workflow file for running the `pytest` tests:
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn mlflow
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py --junitxml=test-results.xml
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: test-results.xml
+```
+
+### Explanation
+
+- **Pytest Test File (`test_pipeline.py`)**: This file includes tests for each function of the pipeline using `pytest`. It uses assertions to check the expected outcomes and `unittest.mock` to mock external dependencies like MLflow.
+
+- **GitHub Actions Workflow (`python-package.yml`)**: This file describes the CI/CD pipeline that runs on every push and pull request to the `main` branch. It tests the code using `pytest` in a virtual environment set up with the necessary dependencies. The test results are uploaded as artifacts for further inspection.
+
+This setup ensures that your code is regularly tested and integrated, maintaining its quality and reliability.

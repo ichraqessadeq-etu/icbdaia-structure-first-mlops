@@ -1,0 +1,190 @@
+Certainly! To create a CI/CD pipeline for your fraud detection model, we'll develop a simple modular setup. This will include a Python module for the pipeline, a test file using `pytest`, and a GitHub Actions workflow file. 
+
+Let's start with the Python pipeline module. This module will include loading data, preprocessing, training a model, and saving the model. We'll use a mock dataset and a simple Logistic Regression model for demonstration.
+
+Here's the full Python module:
+
+```python
+# fraud_detection_pipeline.py
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+import joblib
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+class FraudDetectionPipeline:
+    def __init__(self, data_path):
+        self.data_path = data_path
+        self.model = LogisticRegression()
+
+    def load_data(self):
+        logging.info("Loading data...")
+        # For demonstration, we'll create a mock dataset
+        self.data = pd.read_csv(self.data_path)
+
+    def preprocess_data(self):
+        logging.info("Preprocessing data...")
+        # Mock preprocessing: Assume the last column is the target
+        self.X = self.data.iloc[:, :-1]
+        self.y = self.data.iloc[:, -1]
+
+    def split_data(self, test_size=0.2):
+        logging.info("Splitting data...")
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            self.X, self.y, test_size=test_size, random_state=42
+        )
+
+    def train_model(self):
+        logging.info("Training model...")
+        self.model.fit(self.X_train, self.y_train)
+
+    def evaluate_model(self):
+        logging.info("Evaluating model...")
+        predictions = self.model.predict(self.X_test)
+        accuracy = accuracy_score(self.y_test, predictions)
+        logging.info(f"Model accuracy: {accuracy}")
+        return accuracy
+
+    def save_model(self, model_path):
+        logging.info(f"Saving model to {model_path}...")
+        joblib.dump(self.model, model_path)
+
+    def run_pipeline(self, model_path):
+        self.load_data()
+        self.preprocess_data()
+        self.split_data()
+        self.train_model()
+        accuracy = self.evaluate_model()
+        self.save_model(model_path)
+        return accuracy
+
+if __name__ == "__main__":
+    pipeline = FraudDetectionPipeline(data_path='fraud_data.csv')
+    pipeline.run_pipeline(model_path='fraud_detection_model.pkl')
+```
+
+In this module:
+- We load data from a CSV file.
+- Preprocess it (assume simple split for features and target).
+- Split the data into training and testing sets.
+- Train a Logistic Regression model.
+- Evaluate and save the model.
+
+Next, you'll need to create a `fraud_data.csv` file or use your actual dataset to run this pipeline. This module assumes a simplified version of the pipeline for demonstration purposes. Adjust the preprocessing and model training steps according to your actual use case.
+
+Certainly! Below is a complete `pytest` test file for the `FraudDetectionPipeline` along with a GitHub Actions workflow configuration to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+import numpy as np
+import os
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+# Create a mock CSV file for testing
+@pytest.fixture(scope='module')
+def mock_data_file(tmpdir_factory):
+    # Create mock data
+    data = {
+        'feature1': np.random.rand(100),
+        'feature2': np.random.rand(100),
+        'feature3': np.random.rand(100),
+        'is_fraud': np.random.randint(0, 2, 100)
+    }
+    df = pd.DataFrame(data)
+    file_path = tmpdir_factory.mktemp('data').join('mock_fraud_data.csv')
+    df.to_csv(file_path, index=False)
+    return str(file_path)
+
+def test_load_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    assert not pipeline.data.empty
+
+def test_preprocess_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert pipeline.X.shape[1] == 3  # Three features
+    assert len(pipeline.y) == 100  # 100 samples
+
+def test_split_data(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.split_data(test_size=0.2)
+    assert len(pipeline.X_train) == 80
+    assert len(pipeline.X_test) == 20
+
+def test_train_model(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.run_pipeline(model_path='temp_model.pkl')
+    assert os.path.exists('temp_model.pkl')
+    os.remove('temp_model.pkl')
+
+def test_evaluate_model(mock_data_file):
+    pipeline = FraudDetectionPipeline(data_path=mock_data_file)
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.split_data(test_size=0.2)
+    pipeline.train_model()
+    accuracy = pipeline.evaluate_model()
+    assert 0 <= accuracy <= 1
+
+```
+
+### (b) GitHub Actions Workflow File
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: |
+        pytest --tb=short --disable-warnings
+
+```
+
+### Explanation:
+
+1. **Pytest test file**:
+   - `mock_data_file`: A fixture that generates a temporary CSV file with mock data for testing.
+   - `test_load_data`, `test_preprocess_data`, `test_split_data`, `test_train_model`, `test_evaluate_model`: Test functions to verify each step of the pipeline.
+
+2. **GitHub Actions Workflow**:
+   - Triggers on pushes and pull requests to the `main` branch.
+   - Sets up the environment using Python 3.8.
+   - Installs necessary dependencies including `pandas`, `scikit-learn`, `joblib`, and `pytest`.
+   - Executes the tests using `pytest`.

@@ -1,0 +1,95 @@
+Certainly! Below is a complete `pytest` test file and a GitHub Actions workflow for the `FraudDetectionPipeline`. The test file assumes that you have a small test dataset available for testing purposes. Ensure you replace `'path_to_your_test_data.csv'` with the actual path to your test data.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import FraudDetectionPipeline
+from sklearn.ensemble import RandomForestClassifier
+import os
+
+# Fixture for setting up the pipeline
+@pytest.fixture
+def pipeline():
+    return FraudDetectionPipeline(data_path='path_to_your_test_data.csv')
+
+def test_load_data(pipeline):
+    pipeline.load_data()
+    assert isinstance(pipeline.data, pd.DataFrame), "Data should be loaded into a pandas DataFrame"
+
+def test_preprocess_data(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert hasattr(pipeline, 'X_train') and hasattr(pipeline, 'X_test'), "Data should be split into train and test sets"
+    assert hasattr(pipeline, 'y_train') and hasattr(pipeline, 'y_test'), "Targets should be split into train and test sets"
+
+def test_train_model(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    assert isinstance(pipeline.model, RandomForestClassifier), "Model should be a RandomForestClassifier instance"
+
+def test_evaluate_model(pipeline, capsys):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    pipeline.evaluate_model()
+    captured = capsys.readouterr()
+    assert "Model evaluation metrics:" in captured.out, "Evaluation metrics should be printed"
+
+def test_save_model(pipeline, tmp_path):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    model_path = str(tmp_path) + '/'
+    pipeline.save_model(model_path=model_path)
+    assert os.path.exists(model_path + 'fraud_detection_model.pkl'), "Model file should exist"
+    assert os.path.exists(model_path + 'scaler.pkl'), "Scaler file should exist"
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+```
+
+### Explanation:
+
+- **Test File**: The `pytest` test file includes tests for each method in your `FraudDetectionPipeline` class. It uses fixtures to set up the pipeline and tests each method's functionality and expected behaviors.
+  
+- **GitHub Actions Workflow**: The YAML file sets up a continuous integration workflow that triggers on pushes and pull requests to the main branch. It checks out the code, sets up Python, installs necessary dependencies, and runs the `pytest` tests to ensure everything works correctly. 
+
+Make sure that the paths to the datasets and the test data are correctly specified, and that you have access to the appropriate Python environment and dependencies.

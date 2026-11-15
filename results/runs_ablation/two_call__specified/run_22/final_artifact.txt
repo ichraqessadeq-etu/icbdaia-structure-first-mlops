@@ -1,0 +1,202 @@
+Here's a complete Python pipeline script for a fraud detection model using scikit-learn's `RandomForestClassifier`, leveraging MLflow for experiment tracking. This script handles data loading, model training, evaluation, and logging to MLflow. It also includes basic error handling.
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.utils import shuffle
+from sklearn.utils.class_weight import compute_sample_weight
+import mlflow
+import mlflow.sklearn
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Failed to load data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        logger.info("Data preprocessed successfully.")
+        return X, y
+    except Exception as e:
+        logger.error(f"Failed to preprocess data: {e}")
+        raise
+
+def split_data(X, y, test_size=0.2, random_state=42):
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+        logger.info("Data split into train and test sets.")
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        logger.error(f"Failed to split data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        sample_weights = compute_sample_weight('balanced', y_train)
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train, sample_weight=sample_weights)
+        logger.info("Model trained successfully.")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to train model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred)
+        logger.info("Model evaluated successfully.")
+        logger.info(f"Accuracy: {accuracy}\n")
+        logger.info(f"Classification Report:\n{report}")
+        return accuracy, report
+    except Exception as e:
+        logger.error(f"Failed to evaluate model: {e}")
+        raise
+
+def log_experiment(accuracy, report, model):
+    try:
+        mlflow.set_experiment("Fraud Detection Experiment")
+        with mlflow.start_run():
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_text(report, "classification_report.txt")
+            mlflow.sklearn.log_model(model, "model")
+        logger.info("Experiment logged successfully.")
+    except Exception as e:
+        logger.error(f"Failed to log experiment: {e}")
+        raise
+
+def main(file_path):
+    try:
+        data = load_data(file_path)
+        X, y = preprocess_data(data)
+        X, y = shuffle(X, y, random_state=42)
+        X_train, X_test, y_train, y_test = split_data(X, y)
+        model = train_model(X_train, y_train)
+        accuracy, report = evaluate_model(model, X_test, y_test)
+        log_experiment(accuracy, report, model)
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+This script assumes that your dataset is named `creditcard.csv` and located in the same directory as the script. It handles exceptions at each stage and logs informative messages to facilitate debugging. 
+
+Next, we will prepare the pytest test file.
+
+Certainly! Below is a complete pytest test file for your pipeline module and a GitHub Actions workflow file to automatically run these tests.
+
+### (a) Complete Pytest Test File
+
+```python
+# test_pipeline.py
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from pipeline_module import load_data, preprocess_data, split_data, train_model, evaluate_model, log_experiment
+
+# Mock data
+MOCK_DATA = pd.DataFrame({
+    'feature1': [0.1, 0.2, 0.2, 0.4],
+    'feature2': [0.3, 0.1, 0.4, 0.2],
+    'Class': [0, 1, 0, 1]
+})
+
+def test_load_data(mocker):
+    mocker.patch('pandas.read_csv', return_value=MOCK_DATA)
+    data = load_data('fake_path.csv')
+    pd.testing.assert_frame_equal(data, MOCK_DATA)
+
+def test_preprocess_data():
+    X, y = preprocess_data(MOCK_DATA)
+    assert list(X.columns) == ['feature1', 'feature2']
+    assert list(y) == [0, 1, 0, 1]
+
+def test_split_data():
+    X, y = preprocess_data(MOCK_DATA)
+    X_train, X_test, y_train, y_test = split_data(X, y, test_size=0.5, random_state=42)
+    assert len(X_train) == 2
+    assert len(X_test) == 2
+    assert len(y_train) == 2
+    assert len(y_test) == 2
+
+def test_train_model():
+    X, y = preprocess_data(MOCK_DATA)
+    X_train, X_test, y_train, y_test = split_data(X, y, test_size=0.5, random_state=42)
+    model = train_model(X_train, y_train)
+    assert model is not None
+
+def test_evaluate_model():
+    X, y = preprocess_data(MOCK_DATA)
+    X_train, X_test, y_train, y_test = split_data(X, y, test_size=0.5, random_state=42)
+    model = train_model(X_train, y_train)
+    accuracy, report = evaluate_model(model, X_test, y_test)
+    assert isinstance(accuracy, float)
+    assert isinstance(report, str)
+
+@patch('mlflow.start_run')
+def test_log_experiment(mock_start_run):
+    mock_run = MagicMock()
+    mock_start_run.return_value.__enter__.return_value = mock_run
+    log_experiment(0.95, "some report", MagicMock())
+    mock_run.log_metric.assert_called_with("accuracy", 0.95)
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn mlflow pytest pytest-mock
+
+    - name: Run tests
+      run: |
+        pytest --doctest-modules --junitxml=junit/test-results.xml
+```
+
+### Explanation
+
+- **Test File**: The test file uses `pytest` along with `pytest-mock` for mocking and `unittest.mock.patch` for some specific parts like `mlflow`. It tests each function in the pipeline module to verify functionality.
+
+- **GitHub Actions Workflow**: The workflow is triggered on pushes and pull requests to the main branch. It sets up Python, installs dependencies, and runs the tests using `pytest`. The results are formatted in JUnit XML for better integration with different CI/CD systems.
+
+Make sure to adjust package versions and paths as necessary for your specific setup.

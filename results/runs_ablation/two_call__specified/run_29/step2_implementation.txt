@@ -1,0 +1,94 @@
+Here's the complete Python pipeline module for the fraud detection model using scikit-learn's RandomForestClassifier, along with MLflow for experiment tracking:
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+from datetime import datetime
+
+def load_data(file_path):
+    """Load the credit card fraud dataset."""
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise Exception(f"Error loading data: {e}")
+
+def preprocess_data(data):
+    """Preprocess the data by handling imbalance and splitting."""
+    try:
+        # Separate majority and minority classes
+        df_majority = data[data.Class == 0]
+        df_minority = data[data.Class == 1]
+
+        # Upsample minority class
+        df_minority_upsampled = resample(df_minority, 
+                                         replace=True,     # sample with replacement
+                                         n_samples=len(df_majority),    # to match majority class
+                                         random_state=42) # reproducible results
+
+        # Combine majority class with upsampled minority class
+        data_upsampled = pd.concat([df_majority, df_minority_upsampled])
+
+        # Split data into features and target
+        X = data_upsampled.drop('Class', axis=1)
+        y = data_upsampled['Class']
+
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+        
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        raise Exception(f"Error in data preprocessing: {e}")
+
+def train_model(X_train, y_train):
+    """Train the RandomForestClassifier model."""
+    try:
+        clf = RandomForestClassifier(n_estimators=100, random_state=42)
+        clf.fit(X_train, y_train)
+        return clf
+    except Exception as e:
+        raise Exception(f"Error in model training: {e}")
+
+def evaluate_model(clf, X_test, y_test):
+    """Evaluate the model and return metrics."""
+    try:
+        y_pred = clf.predict(X_test)
+        y_proba = clf.predict_proba(X_test)[:, 1]
+        report = classification_report(y_test, y_pred)
+        roc_auc = roc_auc_score(y_test, y_proba)
+        return report, roc_auc
+    except Exception as e:
+        raise Exception(f"Error in model evaluation: {e}")
+
+def log_to_mlflow(clf, report, roc_auc):
+    """Log the model and metrics to MLflow."""
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.log_param("model_type", "RandomForestClassifier")
+            mlflow.log_metric("roc_auc", roc_auc)
+            mlflow.log_text(report, "classification_report.txt")
+            mlflow.sklearn.log_model(clf, "model")
+    except Exception as e:
+        raise Exception(f"Error in logging to MLflow: {e}")
+
+def main(file_path):
+    """Main pipeline function."""
+    data = load_data(file_path)
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    clf = train_model(X_train, y_train)
+    report, roc_auc = evaluate_model(clf, X_test, y_test)
+    log_to_mlflow(clf, report, roc_auc)
+
+if __name__ == "__main__":
+    FILE_PATH = "creditcard.csv"  # Path to your dataset
+    main(FILE_PATH)
+```
+
+This module includes functions for loading data, preprocessing (including handling class imbalance), training the model, evaluating it, and logging results to MLflow. Each function has basic error handling to raise informative exceptions if any part fails.

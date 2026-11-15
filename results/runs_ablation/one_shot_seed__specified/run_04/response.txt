@@ -1,0 +1,175 @@
+Below you'll find a complete CI/CD pipeline configuration for a fraud detection model using a `RandomForestClassifier` from `scikit-learn`, with MLflow for experiment tracking, and pytest for testing. The pipeline is designed to retrain the model automatically when concept drift is detected.
+
+### Python Pipeline Script
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.utils import shuffle
+import mlflow
+import mlflow.sklearn
+from scipy.stats import ks_2samp
+
+# Set a random seed for reproducibility
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def load_data():
+    """Load and return the credit card fraud dataset."""
+    try:
+        # For demonstration purposes, assume the dataset is stored in a CSV file
+        data = pd.read_csv('creditcard.csv')
+        return data
+    except Exception as e:
+        raise RuntimeError(f"Error loading data: {e}")
+
+def detect_concept_drift(data):
+    """Detect concept drift based on Kolmogorov-Smirnov test."""
+    # Assume we have a way to get the old data distribution
+    # For this example, shuffle the data to simulate concept drift
+    old_data = shuffle(data, random_state=RANDOM_SEED)
+    ks_stat, p_value = ks_2samp(data['Amount'], old_data['Amount'])
+    return p_value < 0.05
+
+def train_model(X_train, y_train):
+    """Train a RandomForest model."""
+    model = RandomForestClassifier(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the model and return metrics."""
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    report = classification_report(y_test, predictions)
+    return accuracy, report
+
+def log_experiment(accuracy, report):
+    """Log the experiment to MLflow."""
+    mlflow.log_metric('accuracy', accuracy)
+    mlflow.log_text(report, 'classification_report.txt')
+
+def main():
+    mlflow.set_experiment('FraudDetection')
+    
+    data = load_data()
+    if detect_concept_drift(data):
+        print("Concept drift detected, retraining model.")
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+
+        model = train_model(X_train, y_train)
+        accuracy, report = evaluate_model(model, X_test, y_test)
+
+        with mlflow.start_run():
+            log_experiment(accuracy, report)
+            mlflow.sklearn.log_model(model, 'model')
+        
+        print(f"Model training completed with accuracy: {accuracy}")
+    else:
+        print("No concept drift detected, no retraining required.")
+
+if __name__ == '__main__':
+    main()
+```
+
+### Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import load_data, train_model, evaluate_model, detect_concept_drift
+
+# Set a random seed for reproducibility
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+def test_load_data():
+    """Test if data loading function works correctly."""
+    try:
+        data = load_data()
+        assert isinstance(data, pd.DataFrame)
+    except RuntimeError:
+        pytest.fail("Data loading failed.")
+
+def test_train_model():
+    """Test if the model training function works correctly."""
+    X = np.random.rand(100, 5)
+    y = np.random.randint(0, 2, 100)
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    """Test if the model evaluation function returns correct metrics."""
+    X = np.random.rand(100, 5)
+    y = np.random.randint(0, 2, 100)
+    model = train_model(X, y)
+    accuracy, report = evaluate_model(model, X, y)
+    assert isinstance(accuracy, float)
+    assert isinstance(report, str)
+
+def test_detect_concept_drift():
+    """Test if concept drift detection works correctly."""
+    data = pd.DataFrame({
+        'Amount': np.random.rand(100),
+        'Class': np.random.randint(0, 2, 100)
+    })
+    drift_detected = detect_concept_drift(data)
+    assert isinstance(drift_detected, bool)
+```
+
+### GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD for Fraud Detection Model
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *' # every day at midnight
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests
+
+    - name: Run pipeline
+      if: success()
+      run: |
+        python pipeline.py
+```
+
+### Note
+- The dataset `creditcard.csv` should be available in the repository.
+- The `requirements.txt` should include necessary dependencies like `scikit-learn`, `pandas`, `numpy`, `mlflow`, and `pytest`.
+- The concept drift detection uses a simple method for demonstration purposes; in a production setting, a more sophisticated approach may be necessary.
+- This workflow includes a scheduled run every midnight to check for concept drift and retrain if necessary.

@@ -1,0 +1,106 @@
+Certainly! Below is the complete pytest test file and the corresponding GitHub Actions workflow file to implement testing and CI/CD for the provided pipeline module.
+
+### (a) pytest Test File
+
+Create a file named `test_pipeline.py` for writing tests for your pipeline module. This test file includes tests for data loading, preprocessing, imbalance handling, model training, and evaluation.
+
+```python
+import pytest
+import pandas as pd
+from unittest.mock import patch
+from pipeline_module import load_data, preprocess_data, handle_imbalance, train_model, evaluate_model
+
+# Sample data used for testing
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'feature1': [0.1, 0.2, 0.3, 0.4],
+        'feature2': [1.0, 2.0, 3.0, 4.0],
+        'Class': [0, 1, 0, 1]
+    })
+
+def test_load_data(sample_data, tmp_path):
+    file_path = tmp_path / "test_data.csv"
+    sample_data.to_csv(file_path, index=False)
+    data = load_data(file_path)
+    pd.testing.assert_frame_equal(data, sample_data)
+
+def test_preprocess_data(sample_data):
+    X, y = preprocess_data(sample_data)
+    assert 'Class' not in X.columns
+    assert y.equals(sample_data['Class'])
+
+def test_handle_imbalance(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_resampled, y_resampled = handle_imbalance(X, y)
+    assert len(X_resampled) > len(X)
+    assert len(y_resampled) > len(y)
+
+def test_train_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_resampled, y_resampled = handle_imbalance(X, y)
+    model = train_model(X_resampled, y_resampled)
+    assert hasattr(model, "predict")
+
+def test_evaluate_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_resampled, y_resampled = handle_imbalance(X, y)
+    X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
+    model = train_model(X_train, y_train)
+    report, cm = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str)
+    assert isinstance(cm, np.ndarray)
+```
+
+### (b) GitHub Actions Workflow
+
+Create a file named `.github/workflows/ci.yml` for setting up GitHub Actions to automate testing.
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'  # Specify the Python version you are using
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest scikit-learn imbalanced-learn mlflow
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+```
+
+### Explanation
+
+1. **pytest Test File**:
+   - The test functions use fixtures to provide sample data.
+   - Tests cover the major functions: data loading, preprocessing, handling imbalances, model training, and evaluation.
+   - Mocking or patching can be used if necessary to isolate tests from external dependencies.
+
+2. **GitHub Actions Workflow**:
+   - The workflow triggers on pushes and pull requests to the `main` branch.
+   - It checks out the code, sets up Python, installs dependencies, and runs the tests.
+   - Ensure that your Python version and required dependencies in `requirements.txt` are consistent with your local development environment.
+
+This setup will allow you to automatically run tests whenever you push changes to your GitHub repository, ensuring code quality and preventing regressions.

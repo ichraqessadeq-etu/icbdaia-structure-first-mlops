@@ -1,0 +1,110 @@
+### (a) Complete Pytest Test File
+
+Here's an example of a complete pytest test file that tests the various components of the pipeline module you've provided. This test file assumes that your pipeline module is saved as `pipeline.py`:
+
+```python
+# test_pipeline.py
+
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+
+def test_load_data():
+    # Test loading data successfully
+    data = load_data('creditcard.csv')
+    assert isinstance(data, pd.DataFrame)
+    
+    # Test loading data failure
+    with pytest.raises(Exception) as e_info:
+        load_data('non_existent_file.csv')
+
+def test_preprocess_data():
+    # Create a sample DataFrame
+    data = pd.DataFrame({
+        'V1': np.random.rand(1000),
+        'V2': np.random.rand(1000),
+        'Class': [0]*900 + [1]*100
+    })
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) + len(X_test) == len(data)
+    assert len(y_train) + len(y_test) == len(data)
+    assert set(y_train).union(set(y_test)) == {0, 1}
+
+def test_train_model():
+    # Create sample training data
+    X_train = pd.DataFrame(np.random.rand(100, 5))
+    y_train = np.random.choice([0, 1], size=100)
+
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    # Create a mock model and test data
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_test = pd.DataFrame(np.random.rand(20, 5))
+    y_test = np.random.choice([0, 1], size=20)
+
+    # Train the model with mock data
+    X_train = pd.DataFrame(np.random.rand(100, 5))
+    y_train = np.random.choice([0, 1], size=100)
+    model.fit(X_train, y_train)
+
+    report, auc_score = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str)
+    assert isinstance(auc_score, float)
+
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Here's a sample GitHub Actions workflow that sets up the environment, installs dependencies, and runs the tests using pytest:
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest mlflow scikit-learn pandas
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+```
+
+### Explanation:
+
+1. **Pytest Test File**: This file contains tests for each function in your pipeline module. It uses `pytest` to check the following:
+   - The `load_data` function correctly loads a file and raises an exception for a non-existent file.
+   - The `preprocess_data` function correctly splits the data into training and testing sets.
+   - The `train_model` function returns a trained `RandomForestClassifier`.
+   - The `evaluate_model` function correctly outputs a classification report and an AUC score.
+
+2. **GitHub Actions Workflow**: This YAML file configures a CI pipeline that:
+   - Triggers on pushes and pull requests to the `main` branch.
+   - Runs on an Ubuntu virtual machine.
+   - Checks out the code, sets up Python, installs necessary dependencies, and runs the tests using pytest.

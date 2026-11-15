@@ -1,0 +1,196 @@
+Here's a complete Python pipeline script for the fraud detection model using scikit-learn's RandomForestClassifier. This script includes data loading, training, evaluation, and logging to MLflow, with error handling implemented.
+
+```python
+import pandas as pd
+import numpy as np
+import mlflow
+import mlflow.sklearn
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except FileNotFoundError as e:
+        raise Exception(f"Data file not found: {e}")
+    except pd.errors.ParserError as e:
+        raise Exception(f"Error parsing data file: {e}")
+
+def preprocess_data(data):
+    try:
+        # Separate majority and minority classes
+        df_majority = data[data.Class == 0]
+        df_minority = data[data.Class == 1]
+
+        # Downsample majority class
+        df_majority_downsampled = resample(df_majority, 
+                                           replace=False,    
+                                           n_samples=len(df_minority),    
+                                           random_state=123)
+
+        # Combine minority class with downsampled majority class
+        df_downsampled = pd.concat([df_majority_downsampled, df_minority])
+
+        X = df_downsampled.drop('Class', axis=1)
+        y = df_downsampled['Class']
+
+        return train_test_split(X, y, test_size=0.2, random_state=42)
+    except Exception as e:
+        raise Exception(f"Error in preprocessing data: {e}")
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise Exception(f"Error training model: {e}")
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        proba_predictions = model.predict_proba(X_test)[:, 1]
+        report = classification_report(y_test, predictions)
+        auc_score = roc_auc_score(y_test, proba_predictions)
+        return report, auc_score
+    except Exception as e:
+        raise Exception(f"Error evaluating model: {e}")
+
+def log_to_mlflow(model, report, auc_score):
+    try:
+        mlflow.set_experiment("Fraud Detection")
+        with mlflow.start_run():
+            mlflow.log_param("model_type", "RandomForestClassifier")
+            mlflow.log_metric("roc_auc", auc_score)
+            mlflow.sklearn.log_model(model, "random_forest_model")
+            mlflow.log_text(report, "classification_report.txt")
+    except Exception as e:
+        raise Exception(f"Error logging to MLflow: {e}")
+
+def main(file_path):
+    data = load_data(file_path)
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    report, auc_score = evaluate_model(model, X_test, y_test)
+    log_to_mlflow(model, report, auc_score)
+    print("Pipeline completed successfully.")
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+This script assumes that your credit card fraud dataset is named "creditcard.csv" and is located in the same directory. The script includes error handling for data loading, preprocessing, model training, evaluation, and MLflow logging. Adjust the file path in the `main()` function call as needed.
+
+### (a) Complete Pytest Test File
+
+Here's an example of a complete pytest test file that tests the various components of the pipeline module you've provided. This test file assumes that your pipeline module is saved as `pipeline.py`:
+
+```python
+# test_pipeline.py
+
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+
+def test_load_data():
+    # Test loading data successfully
+    data = load_data('creditcard.csv')
+    assert isinstance(data, pd.DataFrame)
+    
+    # Test loading data failure
+    with pytest.raises(Exception) as e_info:
+        load_data('non_existent_file.csv')
+
+def test_preprocess_data():
+    # Create a sample DataFrame
+    data = pd.DataFrame({
+        'V1': np.random.rand(1000),
+        'V2': np.random.rand(1000),
+        'Class': [0]*900 + [1]*100
+    })
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) + len(X_test) == len(data)
+    assert len(y_train) + len(y_test) == len(data)
+    assert set(y_train).union(set(y_test)) == {0, 1}
+
+def test_train_model():
+    # Create sample training data
+    X_train = pd.DataFrame(np.random.rand(100, 5))
+    y_train = np.random.choice([0, 1], size=100)
+
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    # Create a mock model and test data
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_test = pd.DataFrame(np.random.rand(20, 5))
+    y_test = np.random.choice([0, 1], size=20)
+
+    # Train the model with mock data
+    X_train = pd.DataFrame(np.random.rand(100, 5))
+    y_train = np.random.choice([0, 1], size=100)
+    model.fit(X_train, y_train)
+
+    report, auc_score = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str)
+    assert isinstance(auc_score, float)
+
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Here's a sample GitHub Actions workflow that sets up the environment, installs dependencies, and runs the tests using pytest:
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest mlflow scikit-learn pandas
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+```
+
+### Explanation:
+
+1. **Pytest Test File**: This file contains tests for each function in your pipeline module. It uses `pytest` to check the following:
+   - The `load_data` function correctly loads a file and raises an exception for a non-existent file.
+   - The `preprocess_data` function correctly splits the data into training and testing sets.
+   - The `train_model` function returns a trained `RandomForestClassifier`.
+   - The `evaluate_model` function correctly outputs a classification report and an AUC score.
+
+2. **GitHub Actions Workflow**: This YAML file configures a CI pipeline that:
+   - Triggers on pushes and pull requests to the `main` branch.
+   - Runs on an Ubuntu virtual machine.
+   - Checks out the code, sets up Python, installs necessary dependencies, and runs the tests using pytest.

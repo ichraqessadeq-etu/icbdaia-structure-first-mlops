@@ -1,0 +1,229 @@
+Here's a complete Python pipeline module that covers data loading, model training, evaluation, and logging to MLflow, with error handling included:
+
+```python
+import os
+import logging
+import mlflow
+import mlflow.sklearn
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+from typing import Tuple
+
+logging.basicConfig(level=logging.INFO)
+
+def load_data(filepath: str) -> pd.DataFrame:
+    """Load the dataset from a CSV file."""
+    try:
+        data = pd.read_csv(filepath)
+        logging.info(f"Loaded data from {filepath}.")
+        return data
+    except Exception as e:
+        logging.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    """Preprocess the data: handle imbalance and split into features and target."""
+    try:
+        # Separate majority and minority classes
+        df_majority = data[data.Class == 0]
+        df_minority = data[data.Class == 1]
+        
+        # Upsample minority class
+        df_minority_upsampled = resample(df_minority, 
+                                         replace=True,     # sample with replacement
+                                         n_samples=len(df_majority),    # to match majority class
+                                         random_state=42) # reproducible results
+        
+        # Combine majority class with upsampled minority class
+        df_upsampled = pd.concat([df_majority, df_minority_upsampled])
+        
+        X = df_upsampled.drop('Class', axis=1).values
+        y = df_upsampled['Class'].values
+        
+        logging.info("Data preprocessing complete.")
+        return X, y
+    except Exception as e:
+        logging.error(f"Error in data preprocessing: {e}")
+        raise
+
+def train_model(X: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
+    """Train the RandomForestClassifier model."""
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        logging.info("Model training complete.")
+        return model, X_test, y_test
+    except Exception as e:
+        logging.error(f"Error in model training: {e}")
+        raise
+
+def evaluate_model(model: RandomForestClassifier, X_test: np.ndarray, y_test: np.ndarray) -> dict:
+    """Evaluate the model and return the results."""
+    try:
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
+        
+        report = classification_report(y_test, y_pred, output_dict=True)
+        roc_auc = roc_auc_score(y_test, y_prob)
+        
+        results = {
+            "classification_report": report,
+            "roc_auc": roc_auc
+        }
+        
+        logging.info(f"Model evaluation complete. ROC AUC: {roc_auc:.4f}")
+        return results
+    except Exception as e:
+        logging.error(f"Error in model evaluation: {e}")
+        raise
+
+def log_to_mlflow(model: RandomForestClassifier, results: dict):
+    """Log the model and results to MLflow."""
+    try:
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, "model")
+            mlflow.log_metrics({
+                "roc_auc": results["roc_auc"],
+                "precision": results["classification_report"]["1"]["precision"],
+                "recall": results["classification_report"]["1"]["recall"],
+                "f1-score": results["classification_report"]["1"]["f1-score"],
+            })
+        logging.info("Logged model and results to MLflow.")
+    except Exception as e:
+        logging.error(f"Error logging to MLflow: {e}")
+        raise
+
+def main():
+    """Main function to execute the pipeline."""
+    try:
+        filepath = os.getenv('DATA_PATH', 'creditcard.csv')
+        data = load_data(filepath)
+        X, y = preprocess_data(data)
+        model, X_test, y_test = train_model(X, y)
+        results = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, results)
+    except Exception as e:
+        logging.error(f"Pipeline execution failed: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+This module includes functionality to load data, preprocess it by handling class imbalance, train a RandomForest model, evaluate it, and log metrics and the model itself to MLflow. Error handling is incorporated to ensure that informative logs are produced if any step fails.
+
+Certainly! Below you'll find a complete pytest test file for the implemented pipeline module, followed by a GitHub Actions workflow file to automate the execution of these tests.
+
+### (a) Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+# Test data
+TEST_DATA = pd.DataFrame({
+    'Feature1': [0, 1, 1, 0, 1],
+    'Feature2': [1, 0, 1, 1, 0],
+    'Class': [0, 1, 1, 0, 1]
+})
+
+def test_load_data(monkeypatch):
+    """Test the load_data function."""
+    monkeypatch.setattr(pd, "read_csv", lambda _: TEST_DATA)
+    data = load_data("dummy_path.csv")
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data():
+    """Test the preprocess_data function."""
+    X, y = preprocess_data(TEST_DATA)
+    assert isinstance(X, np.ndarray)
+    assert isinstance(y, np.ndarray)
+    assert X.shape[0] == y.shape[0]
+    assert len(set(y)) == 2  # Ensure binary classification
+
+def test_train_model():
+    """Test the train_model function."""
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+    assert isinstance(X_test, np.ndarray)
+    assert isinstance(y_test, np.ndarray)
+
+def test_evaluate_model():
+    """Test the evaluate_model function."""
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    results = evaluate_model(model, X_test, y_test)
+    assert isinstance(results, dict)
+    assert "roc_auc" in results
+    assert "classification_report" in results
+
+def test_log_to_mlflow(monkeypatch):
+    """Test the log_to_mlflow function."""
+    # Mock mlflow functions
+    monkeypatch.setattr(mlflow, "start_run", lambda: None)
+    monkeypatch.setattr(mlflow.sklearn, "log_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mlflow, "log_metrics", lambda *args, **kwargs: None)
+    
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    results = evaluate_model(model, X_test, y_test)
+    
+    try:
+        log_to_mlflow(model, results)
+        assert True
+    except Exception:
+        assert False
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest mlflow scikit-learn
+
+    - name: Run tests
+      run: |
+        pytest -v
+```
+
+### Explanation
+
+- **Pytest Test File**: Contains tests for each function in the pipeline. It uses `pytest` fixtures and `monkeypatch` to mock external dependencies like file I/O and MLflow logging.
+
+- **GitHub Actions Workflow**: Automates the testing process on every push or pull request to the main branch. It sets up the Python environment, installs dependencies, and runs the tests using `pytest`.
+
+Make sure to adjust any paths and dependencies according to your project's structure and requirements.

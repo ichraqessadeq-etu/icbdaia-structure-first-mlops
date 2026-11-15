@@ -1,0 +1,155 @@
+```python
+# src/data_loader.py
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data() -> tuple:
+    """Load and preprocess the credit card fraud dataset."""
+    # Load the dataset
+    df = pd.read_csv('creditcard.csv')
+
+    # Preprocess the dataset (e.g., scaling, removing nulls)
+    df.fillna(0, inplace=True)
+    X = df.drop('Class', axis=1)
+    y = df['Class']
+
+    # Split the dataset into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+    return X_train, X_test, y_train, y_test
+
+# src/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train) -> object:
+    """Train a RandomForestClassifier model."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# src/model_evaluator.py
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model, X_test, y_test) -> dict:
+    """Evaluate the trained model and return performance metrics."""
+    y_pred = model.predict(X_test)
+
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred),
+        'recall': recall_score(y_test, y_pred),
+        'f1_score': f1_score(y_test, y_pred),
+    }
+
+    return metrics
+
+# src/mlflow_logger.py
+import mlflow
+
+def log_to_mlflow(params: dict, metrics: dict, model: object) -> None:
+    """Log parameters, metrics, and model to MLflow."""
+    with mlflow.start_run():
+        mlflow.log_params(params)
+        mlflow.log_metrics(metrics)
+
+        # Log the model
+        mlflow.sklearn.log_model(model, "model")
+
+# tests/test_pipeline.py
+import pytest
+from src.data_loader import load_data
+from src.model_trainer import train_model
+from src.model_evaluator import evaluate_model
+
+def test_load_data():
+    """Test the data loading function for correctness."""
+    X_train, X_test, y_train, y_test = load_data()
+    assert X_train is not None
+    assert X_test is not None
+    assert y_train is not None
+    assert y_test is not None
+    assert len(X_train) > 0
+    assert len(X_test) > 0
+
+def test_train_model():
+    """Test the model training function for expected outcomes."""
+    X_train, _, y_train, _ = load_data()
+    model = train_model(X_train, y_train)
+    assert model is not None
+    assert hasattr(model, 'predict')
+
+def test_evaluate_model():
+    """Test the model evaluation function for accuracy and completeness."""
+    X_train, X_test, y_train, y_test = load_data()
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'precision' in metrics
+    assert 'recall' in metrics
+    assert 'f1_score' in metrics
+
+# .github/workflows/ci_cd_pipeline.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+  deploy:
+    if: success()
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Deploy model with MLflow
+        run: python deploy.py
+```
+
+This Python module provides a complete implementation of the fraud detection pipeline. It includes functions for loading data, training a model, evaluating the model, and logging to MLflow. The CI/CD pipeline is designed to run on GitHub Actions, with jobs for setting up the environment, running tests, and deploying the model.

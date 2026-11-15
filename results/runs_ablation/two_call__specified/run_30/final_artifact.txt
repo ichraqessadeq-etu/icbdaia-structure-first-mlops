@@ -1,0 +1,234 @@
+Below is a complete Python pipeline script for training, evaluating, and logging a scikit-learn `RandomForestClassifier` model to MLflow. This script handles data loading, preprocessing, model training, and evaluation. It also includes error handling.
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import logging
+import joblib
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    """Load the dataset from a CSV file."""
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    """Preprocess the dataset."""
+    try:
+        # Separate majority and minority classes
+        df_majority = data[data.Class == 0]
+        df_minority = data[data.Class == 1]
+
+        # Upsample minority class
+        df_minority_upsampled = resample(df_minority, 
+                                         replace=True,     # sample with replacement
+                                         n_samples=len(df_majority),    # to match majority class
+                                         random_state=123) # reproducible results
+
+        # Combine majority class with upsampled minority class
+        df_upsampled = pd.concat([df_majority, df_minority_upsampled])
+
+        # Shuffle the data
+        df_upsampled = df_upsampled.sample(frac=1).reset_index(drop=True)
+
+        X = df_upsampled.drop('Class', axis=1)
+        y = df_upsampled['Class']
+        
+        logger.info("Data preprocessing completed.")
+        return X, y
+    except Exception as e:
+        logger.error(f"Error during data preprocessing: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    """Train the RandomForest model."""
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed.")
+        return model
+    except Exception as e:
+        logger.error(f"Error during model training: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the model."""
+    try:
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions)
+        matrix = confusion_matrix(y_test, predictions)
+        
+        logger.info("Model evaluation completed.")
+        logger.info(f"Classification Report:\n {report}")
+        logger.info(f"Confusion Matrix:\n {matrix}")
+        
+        return report, matrix
+    except Exception as e:
+        logger.error(f"Error during model evaluation: {e}")
+        raise
+
+def log_to_mlflow(model, X_test, y_test):
+    """Log the model and metrics to MLflow."""
+    try:
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, "model")
+            mlflow.log_params(model.get_params())
+            
+            predictions = model.predict(X_test)
+            accuracy = np.mean(predictions == y_test)
+            mlflow.log_metric("accuracy", accuracy)
+            
+            # Save the model locally
+            joblib.dump(model, 'random_forest_model.pkl')
+            
+            logger.info("Model and metrics logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Error during logging to MLflow: {e}")
+        raise
+
+def main():
+    file_path = 'creditcard.csv'
+    
+    # Load and preprocess data
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    
+    # Split data into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    # Train and evaluate model
+    model = train_model(X_train, y_train)
+    evaluate_model(model, X_test, y_test)
+    
+    # Log to MLflow
+    log_to_mlflow(model, X_test, y_test)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"Pipeline execution failed: {e}")
+```
+
+This script includes error handling, logging, and model persistence. It preprocesses the data by upsampling the minority class to handle class imbalance, trains a `RandomForestClassifier`, evaluates it, and logs the results to MLflow.
+
+Certainly! Below, I'll provide a complete `pytest` test file and a GitHub Actions workflow file to automate the testing process.
+
+### (a) Complete `pytest` Test File
+
+Create a new file named `test_pipeline.py` and include the following code:
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model
+
+# Sample test data
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'Feature1': [1, 2, 3, 4, 5, 6],
+        'Feature2': [10, 20, 30, 40, 50, 60],
+        'Class': [0, 1, 0, 1, 0, 1]
+    })
+
+def test_load_data(tmp_path):
+    # Create a temporary CSV file
+    temp_file = tmp_path / "temp_data.csv"
+    data = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [3, 4], 'Class': [0, 1]})
+    data.to_csv(temp_file, index=False)
+    
+    # Test load_data function
+    loaded_data = load_data(temp_file)
+    pd.testing.assert_frame_equal(data, loaded_data)
+
+def test_preprocess_data(sample_data):
+    X, y = preprocess_data(sample_data)
+    
+    # Check if the data is balanced
+    assert X.shape[0] == 6
+    assert y.value_counts()[0] == y.value_counts()[1]
+
+def test_train_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    model = train_model(X_train, y_train)
+    
+    assert isinstance(model, RandomForestClassifier)
+    assert model.n_estimators == 100
+
+def test_evaluate_model(sample_data):
+    X, y = preprocess_data(sample_data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    model = train_model(X_train, y_train)
+    report, matrix = evaluate_model(model, X_test, y_test)
+    
+    assert isinstance(report, str)
+    assert isinstance(matrix, np.ndarray)
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Create a new file in your repository under `.github/workflows/test.yml` and include the following code:
+
+```yaml
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.7, 3.8, 3.9, 3.10]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: pytest test_pipeline.py
+```
+
+### Explanation
+
+- **Test File**: This `pytest` test file includes tests for loading data, preprocessing, training a model, and evaluating it. It uses fixtures and assertions to ensure the pipeline works as expected.
+
+- **GitHub Actions Workflow**: The workflow is triggered by pushes and pull requests to the `main` branch. It sets up a matrix to test against multiple Python versions, checks out the code, installs dependencies, and runs the tests using `pytest`. This setup ensures continuous integration and immediate feedback on the code's reliability.

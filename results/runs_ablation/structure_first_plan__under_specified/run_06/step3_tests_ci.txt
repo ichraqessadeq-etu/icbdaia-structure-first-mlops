@@ -1,0 +1,120 @@
+Certainly! Below is the complete `test_pipeline.py` file that implements the planned tests using `pytest`, and the corresponding GitHub Actions workflow file `ci_cd_pipeline.yml`.
+
+### Test File (`test_pipeline.py`)
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from src.pipeline import load_data, preprocess_data, train_model, evaluate_model, save_model
+
+# Sample data for testing
+@pytest.fixture
+def sample_data():
+    data = {
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'target': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(tmp_path):
+    """Test the data loading functionality."""
+    sample_file = tmp_path / "sample.csv"
+    sample_file.write_text("feature1,feature2,target\n1,5,0\n2,4,1\n3,3,0\n4,2,1\n5,1,0\n")
+    
+    data = load_data(sample_file)
+    assert not data.empty
+    assert list(data.columns) == ["feature1", "feature2", "target"]
+
+def test_preprocess_data(sample_data):
+    """Test the data preprocessing functionality."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+
+def test_train_model(sample_data):
+    """Test the model training process."""
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    """Test the model evaluation process."""
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    accuracy = evaluate_model(model, (preprocessed_data[1], preprocessed_data[3]))
+    assert 0 <= accuracy <= 1
+
+def test_save_model(tmp_path, sample_data):
+    """Test the model saving functionality."""
+    preprocessed_data = preprocess_data(sample_data)
+    model = train_model(preprocessed_data)
+    model_file = tmp_path / "model.joblib"
+    save_model(model, model_file)
+    assert model_file.exists()
+```
+
+### GitHub Actions Workflow (`ci_cd_pipeline.yml`)
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pandas scikit-learn joblib
+      - name: Run tests
+        run: pytest tests/
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pandas scikit-learn joblib
+      - name: Build model
+        run: python src/pipeline.py
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy model
+        run: echo "Deploying the model..."
+```
+
+This setup will ensure that your CI/CD pipeline is properly testing, building, and deploying your fraud detection model using GitHub Actions. The pytest file includes fixtures and assertions to verify the functionality of each part of the pipeline.

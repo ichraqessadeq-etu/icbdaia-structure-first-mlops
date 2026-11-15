@@ -1,0 +1,106 @@
+Certainly! Here is a complete `pytest` test file for the `FraudDetectionPipeline` class, followed by a GitHub Actions workflow configuration.
+
+### a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import FraudDetectionPipeline
+from sklearn.ensemble import RandomForestClassifier
+import os
+
+@pytest.fixture
+def sample_data():
+    """Fixture to provide sample data for testing."""
+    data = {
+        'feature1': [0, 1, 0, 1],
+        'feature2': [1, 0, 1, 0],
+        'label': [0, 1, 0, 1]
+    }
+    return pd.DataFrame(data)
+
+@pytest.fixture
+def pipeline():
+    """Fixture to create a FraudDetectionPipeline instance."""
+    return FraudDetectionPipeline(model_path='temp_model.joblib')
+
+def test_load_data(pipeline, sample_data):
+    """Test loading data."""
+    sample_data.to_csv('temp_data.csv', index=False)
+    loaded_data = pipeline.load_data('temp_data.csv')
+    pd.testing.assert_frame_equal(loaded_data, sample_data)
+    os.remove('temp_data.csv')
+
+def test_preprocess_data(pipeline, sample_data):
+    """Test preprocessing data."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    assert X_train.shape[0] + X_test.shape[0] == sample_data.shape[0]
+    assert y_train.shape[0] + y_test.shape[0] == sample_data.shape[0]
+
+def test_train_model(pipeline, sample_data):
+    """Test model training."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_train, y_train)
+    assert isinstance(pipeline.model, RandomForestClassifier)
+    assert pipeline.model.n_classes_ == 2
+
+def test_evaluate_model(pipeline, sample_data):
+    """Test model evaluation."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_train, y_train)
+    accuracy, report = pipeline.evaluate_model(X_test, y_test)
+    assert 0 <= accuracy <= 1
+    assert 'precision' in report
+
+def test_save_and_load_model(pipeline, sample_data):
+    """Test saving and loading model."""
+    X_train, X_test, y_train, y_test = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_train, y_train)
+    pipeline.save_model()
+    
+    new_pipeline = FraudDetectionPipeline(model_path='temp_model.joblib')
+    new_pipeline.load_model()
+    
+    assert isinstance(new_pipeline.model, RandomForestClassifier)
+    os.remove('temp_model.joblib')
+```
+
+### b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/test.yml
+
+name: Python Package
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn joblib pandas
+
+    - name: Test with pytest
+      run: |
+        pytest --maxfail=1 --disable-warnings -v
+```
+
+This setup ensures that the `FraudDetectionPipeline` is tested using pytest and that the tests are automatically run on GitHub Actions for every push or pull request to the main branch. Adjust the Python version and dependencies as needed for your specific environment.

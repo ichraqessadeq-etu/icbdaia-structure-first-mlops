@@ -1,0 +1,191 @@
+Certainly! Below is a Python module that represents a simple CI/CD pipeline for a fraud detection model. This module includes basic steps you might want in a typical ML pipeline, such as data preparation, model training, evaluation, and saving the model. For illustration purposes, I will use a simple logistic regression model.
+
+```python
+# fraud_detection_pipeline.py
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+import joblib
+
+class FraudDetectionPipeline:
+    def __init__(self, data_path: str, model_path: str):
+        self.data_path = data_path
+        self.model_path = model_path
+        self.model = LogisticRegression()
+
+    def load_data(self):
+        """Load and prepare the data."""
+        self.df = pd.read_csv(self.data_path)
+        self.X = self.df.drop('is_fraud', axis=1)
+        self.y = self.df['is_fraud']
+        return self.X, self.y
+
+    def split_data(self, test_size=0.2, random_state=42):
+        """Split data into train and test sets."""
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            self.X, self.y, test_size=test_size, random_state=random_state)
+        return self.X_train, self.X_test, self.y_train, self.y_test
+
+    def train_model(self):
+        """Train the fraud detection model."""
+        self.model.fit(self.X_train, self.y_train)
+        return self.model
+
+    def evaluate_model(self):
+        """Evaluate the model's performance."""
+        y_pred = self.model.predict(self.X_test)
+        accuracy = accuracy_score(self.y_test, y_pred)
+        precision = precision_score(self.y_test, y_pred)
+        recall = recall_score(self.y_test, y_pred)
+        return accuracy, precision, recall
+
+    def save_model(self):
+        """Save the trained model."""
+        joblib.dump(self.model, self.model_path)
+
+    def run_pipeline(self):
+        """Execute the entire pipeline."""
+        self.load_data()
+        self.split_data()
+        self.train_model()
+        accuracy, precision, recall = self.evaluate_model()
+        self.save_model()
+        return {
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall
+        }
+
+if __name__ == "__main__":
+    pipeline = FraudDetectionPipeline(data_path='data/fraud_data.csv', model_path='models/fraud_model.pkl')
+    metrics = pipeline.run_pipeline()
+    print("Model Evaluation Metrics:")
+    print(f"Accuracy: {metrics['accuracy']}")
+    print(f"Precision: {metrics['precision']}")
+    print(f"Recall: {metrics['recall']}")
+```
+
+### Explanation:
+1. **Loading Data**: Loads a CSV file containing the fraud detection data.
+2. **Splitting Data**: Splits the dataset into training and testing sets.
+3. **Training**: Uses a logistic regression model for training.
+4. **Evaluation**: Calculates accuracy, precision, and recall as evaluation metrics.
+5. **Saving Model**: Saves the trained model using `joblib`.
+
+Please note that this module assumes the existence of a CSV file `data/fraud_data.csv` and a target column `is_fraud`. Adjust these paths and columns according to your dataset.
+
+Certainly! Below is the complete pytest test file to test the `FraudDetectionPipeline` class, and a GitHub Actions workflow to automate running these tests.
+
+### a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.datasets import make_classification
+from fraud_detection_pipeline import FraudDetectionPipeline
+import os
+
+@pytest.fixture
+def sample_data():
+    """Create a sample dataset for testing."""
+    X, y = make_classification(n_samples=100, n_features=5, random_state=42)
+    df = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+    df['is_fraud'] = y
+    file_path = 'test_fraud_data.csv'
+    df.to_csv(file_path, index=False)
+    yield file_path
+    os.remove(file_path)
+
+@pytest.fixture
+def pipeline(sample_data):
+    """Initialize the FraudDetectionPipeline with the sample data."""
+    model_path = 'test_fraud_model.pkl'
+    pipeline = FraudDetectionPipeline(data_path=sample_data, model_path=model_path)
+    yield pipeline
+    if os.path.exists(model_path):
+        os.remove(model_path)
+
+def test_load_data(pipeline):
+    """Test loading of data."""
+    X, y = pipeline.load_data()
+    assert not X.empty, "Feature set should not be empty"
+    assert not y.empty, "Target set should not be empty"
+    assert 'is_fraud' not in X.columns, "'is_fraud' should not be in features"
+
+def test_split_data(pipeline):
+    """Test data splitting."""
+    pipeline.load_data()
+    X_train, X_test, y_train, y_test = pipeline.split_data()
+    assert len(X_train) > 0 and len(X_test) > 0, "Train and test sets should not be empty"
+    assert len(y_train) > 0 and len(y_test) > 0, "Train and test labels should not be empty"
+
+def test_train_model(pipeline):
+    """Test model training."""
+    pipeline.load_data()
+    pipeline.split_data()
+    model = pipeline.train_model()
+    assert model is not None, "Model should not be None after training"
+    assert hasattr(model, 'coef_'), "Trained model should have coefficients"
+
+def test_evaluate_model(pipeline):
+    """Test model evaluation."""
+    pipeline.load_data()
+    pipeline.split_data()
+    pipeline.train_model()
+    accuracy, precision, recall = pipeline.evaluate_model()
+    assert 0 <= accuracy <= 1, "Accuracy should be between 0 and 1"
+    assert 0 <= precision <= 1, "Precision should be between 0 and 1"
+    assert 0 <= recall <= 1, "Recall should be between 0 and 1"
+
+def test_save_model(pipeline):
+    """Test saving of the model."""
+    pipeline.load_data()
+    pipeline.split_data()
+    pipeline.train_model()
+    pipeline.save_model()
+    assert os.path.exists(pipeline.model_path), "Model file should exist after saving"
+```
+
+### b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest scikit-learn pandas
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+```
+
+This setup includes a pytest test file (`test_fraud_detection_pipeline.py`) with several tests for the `FraudDetectionPipeline` class and a GitHub Actions workflow (`.github/workflows/python-app.yml`) that runs these tests automatically on push or pull requests to the main branch.

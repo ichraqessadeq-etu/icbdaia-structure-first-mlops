@@ -1,0 +1,174 @@
+Certainly! Below are the complete implementations for the test file and the GitHub Actions workflow file based on the structure and descriptions provided.
+
+### (a) Complete Pytest Test File
+
+```python
+# project/tests/test_pipeline.py
+
+import pytest
+from project.pipeline.data import load_data, check_imbalance
+from project.pipeline.training import train_model
+from project.pipeline.evaluation import evaluate_model
+
+@pytest.fixture
+def sample_data():
+    """Fixture to load data for testing."""
+    return load_data()
+
+def test_load_data(sample_data):
+    """Test if the data is loaded and preprocessed correctly."""
+    X_train, X_test, y_train, y_test = sample_data
+    assert X_train is not None and X_test is not None
+    assert y_train is not None and y_test is not None
+    assert len(X_train) > 0 and len(X_test) > 0
+    assert len(y_train) > 0 and len(y_test) > 0
+
+def test_check_imbalance(sample_data):
+    """Test if the imbalance check function works correctly."""
+    is_imbalanced = check_imbalance(sample_data)
+    assert isinstance(is_imbalanced, bool)
+
+def test_train_model(sample_data):
+    """Test if the model is trained successfully."""
+    model = train_model(sample_data)
+    assert model is not None
+    assert hasattr(model, "predict")
+
+def test_evaluate_model(sample_data):
+    """Test if the model evaluation metrics are correct."""
+    model = train_model(sample_data)
+    metrics = evaluate_model(model, sample_data)
+    assert isinstance(metrics, dict)
+    assert "accuracy" in metrics
+    assert "precision" in metrics
+    assert "recall" in metrics
+    assert "f1_score" in metrics
+    for metric in metrics.values():
+        assert isinstance(metric, float)
+        assert 0 <= metric <= 1
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci_cd_pipeline.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 1'  # Weekly schedule
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Run tests
+        run: pytest project/tests/
+
+  train:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Execute training script
+        run: python -m project.pipeline.training
+
+  evaluate:
+    runs-on: ubuntu-latest
+    needs: train
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Execute evaluation script
+        run: python -m project.pipeline.evaluation
+
+  log:
+    runs-on: ubuntu-latest
+    needs: evaluate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Log to MLflow
+        run: python -m project.pipeline.logging
+
+  drift-detection:
+    runs-on: ubuntu-latest
+    needs: log
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Detect concept drift
+        run: python -m project.pipeline.drift_detection
+```
+
+These files provide a complete test suite using `pytest` for the pipeline module and a GitHub Actions workflow to automate the CI/CD process.

@@ -152,11 +152,12 @@ class OpenAILLM:
                 u = r.usage
                 return r.choices[0].message.content, {"prompt_tokens": u.prompt_tokens,
                                                       "completion_tokens": u.completion_tokens,
-                                                      "truncated": r.choices[0].finish_reason == "length"}
+                                                      "truncated": r.choices[0].finish_reason == "length",
+                                                      "snapshot": getattr(r, "model", None)}
             except Exception as e:                     # keep the run alive, record the error
                 err = f"{type(e).__name__}: {e}"
                 if type(e).__name__ in ("AuthenticationError", "PermissionDeniedError", "NotFoundError",
-                                        "BadRequestError", "TypeError"):
+                                        "BadRequestError", "TypeError")                         or "insufficient_quota" in err or "no credits" in err.lower()                         or "credit balance is too low" in err.lower():
                     sys.exit(f"Fatal API error, run stopped: {err}")
                 time.sleep(2 * (attempt + 1))
         return f"ERROR: {err}", {"prompt_tokens": 0, "completion_tokens": 0, "error": err}
@@ -202,11 +203,12 @@ class AnthropicLLM:
                 text = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", "") == "text")
                 return text, {"prompt_tokens": r.usage.input_tokens,
                               "completion_tokens": r.usage.output_tokens,
-                              "truncated": r.stop_reason == "max_tokens"}
+                              "truncated": r.stop_reason == "max_tokens",
+                              "snapshot": getattr(r, "model", None)}
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"
                 if type(e).__name__ in ("AuthenticationError", "PermissionDeniedError", "NotFoundError",
-                                        "BadRequestError", "TypeError"):
+                                        "BadRequestError", "TypeError")                         or "insufficient_quota" in err or "no credits" in err.lower()                         or "credit balance is too low" in err.lower():
                     sys.exit(f"Fatal API error, run stopped: {err}")
                 time.sleep(2 * (attempt + 1))
         return f"ERROR: {err}", {"prompt_tokens": 0, "completion_tokens": 0, "error": err}
@@ -276,10 +278,78 @@ def _sum(uses):
     return {"prompt_tokens": sum(u.get("prompt_tokens", 0) for u in uses),
             "completion_tokens": sum(u.get("completion_tokens", 0) for u in uses),
             "errors": [u["error"] for u in uses if "error" in u],
-            "truncated_calls": sum(1 for u in uses if u.get("truncated"))}
+            "truncated_calls": sum(1 for u in uses if u.get("truncated")),
+            "model_snapshots": sorted({u["snapshot"] for u in uses if u.get("snapshot")})}
 
 
-STRATEGIES = {"one_shot": one_shot, "structure_first": structure_first}
+# ---------------------------------------------------------------------------
+# Ablation and baseline conditions added after the pre-submission review (15 Nov. 2026).
+#   two_call            : staging WITHOUT a skeleton (module, then tests + workflow): isolates the
+#                         effect of a dedicated test call from the effect of planning (review 1.1).
+#   structure_first_plan: structure-first in which step 3 ALSO receives the skeleton (test plan and
+#                         file layout); in structure_first, step 3 receives the module only.
+#   one_shot_seed       : one-shot with an explicit reproducibility instruction (review 2.2a).
+# ---------------------------------------------------------------------------
+TWO_CALL_STEP1 = """{task}
+
+The deliverables are: the full Python pipeline module, the complete pytest test file and the
+GitHub Actions workflow.
+Step 1 - implement the pipeline module completely. Return the full Python module in one ```python block."""
+
+STRUCT_STEP3_PLAN = """Here is the agreed structure of the pipeline:
+
+{skeleton}
+
+Here is the implemented pipeline module:
+
+```python
+{implementation}
+```
+
+Step 3 - write (a) the complete pytest test file implementing the planned tests and importing
+from this module under the file name given in the structure, in one ```python block, and (b) the
+complete GitHub Actions workflow in one ```yaml block, following the planned jobs and steps."""
+
+SEED_INSTRUCTION = (" Make every run reproducible: seed every source of randomness, in the pipeline and in "
+                    "the tests, including any synthetic test data.")
+
+
+def two_call(llm, task, temperature, d: Path):
+    t0, uses = time.time(), []
+    s2, u = llm(TWO_CALL_STEP1.format(task=task), temperature); uses.append(u)
+    (d / "step2_implementation.txt").write_text(s2, encoding="utf-8")
+    impl = "\n\n".join(extract_code_blocks(s2, "python")) or s2
+    s3, u = llm(STRUCT_STEP3.format(implementation=impl), temperature); uses.append(u)
+    (d / "step3_tests_ci.txt").write_text(s3, encoding="utf-8")
+    final = s2 + "\n\n" + s3
+    (d / "final_artifact.txt").write_text(final, encoding="utf-8")
+    return final, {"calls": 2, **_sum(uses), "seconds": round(time.time() - t0, 2)}
+
+
+def structure_first_plan(llm, task, temperature, d: Path):
+    t0, uses = time.time(), []
+    s1, u = llm(STRUCT_STEP1.format(task=task), temperature); uses.append(u)
+    (d / "step1_skeleton.txt").write_text(s1, encoding="utf-8")
+    s2, u = llm(STRUCT_STEP2.format(skeleton=s1), temperature); uses.append(u)
+    (d / "step2_implementation.txt").write_text(s2, encoding="utf-8")
+    impl = "\n\n".join(extract_code_blocks(s2, "python")) or s2
+    s3, u = llm(STRUCT_STEP3_PLAN.format(skeleton=s1, implementation=impl), temperature); uses.append(u)
+    (d / "step3_tests_ci.txt").write_text(s3, encoding="utf-8")
+    final = s2 + "\n\n" + s3
+    (d / "final_artifact.txt").write_text(final, encoding="utf-8")
+    return final, {"calls": 3, **_sum(uses), "seconds": round(time.time() - t0, 2)}
+
+
+def one_shot_seed(llm, task, temperature, d: Path):
+    t0 = time.time()
+    text, use = llm(task + ONE_SHOT_DELIVERABLES + SEED_INSTRUCTION, temperature)
+    (d / "response.txt").write_text(text, encoding="utf-8")
+    return text, {"calls": 1, **_sum([use]), "seconds": round(time.time() - t0, 2)}
+
+
+ALL_STRATEGIES = {"one_shot": one_shot, "structure_first": structure_first, "two_call": two_call,
+                  "structure_first_plan": structure_first_plan, "one_shot_seed": one_shot_seed}
+STRATEGIES = {"one_shot": one_shot, "structure_first": structure_first}   # default selection
 PROMPTS = {"specified": TASK_SPECIFIED, "under_specified": TASK_UNDER}
 
 # ---------------------------------------------------------------------------
@@ -316,14 +386,15 @@ def run(args):
     report = {"meta": {"utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                        "provider": "fake" if args.dry_run else args.provider,
                        "model": llm.model, "temperature": args.temperature, "n_per_cell": args.n,
-                       "max_tokens": args.max_tokens,
+                       "max_tokens": args.max_tokens, "strategies": args.strategies,
                        "anthropic_api_version": API_VERSION if args.provider == "anthropic" else None,
                        "python": platform.python_version(), "dry_run": args.dry_run,
                        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
               "cells": []}
     # Rounds: each round produces one artifact in every cell (cell order rotated), so a run
     # stopped by the budget guard or an API error still leaves balanced cells.
-    cells = [(f"{sn}__{pn}", sn, pn, st, task) for sn, st in STRATEGIES.items() for pn, task in PROMPTS.items()]
+    chosen = {k: ALL_STRATEGIES[k] for k in args.strategies.split(",")}
+    cells = [(f"{sn}__{pn}", sn, pn, st, task) for sn, st in chosen.items() for pn, task in PROMPTS.items()]
     rows = {c[0]: [] for c in cells}
     spent, worst_round, stop_reason = 0.0, 0.0, None
     price = PRICES_USD_PER_MTOK.get(llm.model)
@@ -403,6 +474,8 @@ if __name__ == "__main__":
                     help="per-call output cap (Claude needs ~16000; GPT-4o never exceeded ~1600)")
     ap.add_argument("--budget-usd", type=float, default=None,
                     help="stop before a round that could exceed this estimated spend")
+    ap.add_argument("--strategies", default="one_shot,structure_first",
+                    help="comma list among " + ",".join(ALL_STRATEGIES))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--reanalyze", action="store_true")
     a = ap.parse_args()

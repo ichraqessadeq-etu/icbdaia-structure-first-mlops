@@ -1,0 +1,121 @@
+```python
+import os
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from sklearn.metrics import precision_recall_fscore_support
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+from mlflow.exceptions import MlflowException
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+DATA_PATH = "path_to_credit_card_fraud_data.csv"
+MLFLOW_TRACKING_URI = "http://localhost:5000"
+MLFLOW_EXPERIMENT_NAME = "FraudDetection"
+MODEL_NAME = "RandomForestClassifier"
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+def load_data(filepath):
+    try:
+        data = pd.read_csv(filepath)
+        logger.info("Data loaded successfully.")
+        return data
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        raise
+    except pd.errors.EmptyDataError as e:
+        logger.error(f"Empty data file: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        # Upsample minority class
+        fraud = data[data['Class'] == 1]
+        non_fraud = data[data['Class'] == 0]
+        fraud_upsampled = resample(fraud, 
+                                   replace=True, 
+                                   n_samples=len(non_fraud), 
+                                   random_state=42)
+        data_balanced = pd.concat([non_fraud, fraud_upsampled])
+        
+        X = data_balanced.drop('Class', axis=1)
+        y = data_balanced['Class']
+        
+        logger.info("Data preprocessing completed.")
+        return X, y
+    except KeyError as e:
+        logger.error(f"Missing column in data: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error preprocessing data: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed.")
+        return model
+    except Exception as e:
+        logger.error(f"Error training model: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        report = classification_report(y_test, predictions, output_dict=True)
+        logger.info("Model evaluation completed.")
+        return report
+    except Exception as e:
+        logger.error(f"Error evaluating model: {e}")
+        raise
+
+def log_to_mlflow(model, report):
+    try:
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, MODEL_NAME)
+            mlflow.log_metrics({
+                "precision": report['1']['precision'],
+                "recall": report['1']['recall'],
+                "f1-score": report['1']['f1-score']
+            })
+            logger.info("Model and metrics logged to MLflow.")
+    except MlflowException as e:
+        logger.error(f"MLflow logging error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+def main():
+    try:
+        data = load_data(DATA_PATH)
+        X, y = preprocess_data(data)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        model = train_model(X_train, y_train)
+        report = evaluate_model(model, X_test, y_test)
+        
+        log_to_mlflow(model, report)
+    except Exception as e:
+        logger.critical(f"Pipeline failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()
+```
+
+This Python module includes the necessary steps for loading, preprocessing, training, evaluating, and logging a RandomForestClassifier model using the scikit-learn library. It also includes error handling and logs relevant information at each step. The dataset path and MLflow tracking URI should be configured according to your environment.

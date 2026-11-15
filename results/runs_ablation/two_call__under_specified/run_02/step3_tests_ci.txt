@@ -1,0 +1,110 @@
+Certainly! Let's first write the complete pytest test file for the `FraudDetectionPipeline` module. Then, we will create a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+The following test file assumes you have a sample dataset (`fraud_data.csv`) for testing purposes.
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import FraudDetectionPipeline
+from sklearn.datasets import make_classification
+
+@pytest.fixture
+def sample_data():
+    # Create a synthetic dataset for testing
+    X, y = make_classification(n_samples=100, n_features=20, n_informative=2, n_redundant=10, random_state=42)
+    data = pd.DataFrame(X)
+    data['target'] = y
+    return data
+
+def test_load_data(monkeypatch, sample_data):
+    def mock_read_csv(filename):
+        return sample_data
+
+    monkeypatch.setattr(pd, 'read_csv', mock_read_csv)
+    pipeline = FraudDetectionPipeline()
+    data = pipeline.load_data('dummy_path.csv')
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_scaled, y = pipeline.preprocess_data(sample_data)
+    assert X_scaled.shape[1] == sample_data.shape[1] - 1
+    assert len(y) == sample_data.shape[0]
+
+def test_train_model(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_scaled, y = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_scaled, y)
+    assert pipeline.model is not None
+
+def test_evaluate_model(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_scaled, y = pipeline.preprocess_data(sample_data)
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    pipeline.train_model(X_train, y_train)
+    accuracy, report = pipeline.evaluate_model(X_test, y_test)
+    assert isinstance(accuracy, float)
+    assert isinstance(report, str)
+
+def test_save_and_load_model(tmp_path, sample_data):
+    model_path = tmp_path / "fraud_model.pkl"
+    pipeline = FraudDetectionPipeline(model_path=model_path)
+    X_scaled, y = pipeline.preprocess_data(sample_data)
+    pipeline.train_model(X_scaled, y)
+    pipeline.save_model()
+
+    # Load the model and verify it's correctly loaded
+    new_pipeline = FraudDetectionPipeline(model_path=model_path)
+    new_pipeline.load_model()
+    assert new_pipeline.model is not None
+    assert new_pipeline.scaler is not None
+
+```
+
+### (b) GitHub Actions Workflow
+
+Here's a GitHub Actions workflow file for running the tests:
+
+```yaml
+# .github/workflows/python-app.yml
+
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: |
+        pytest
+```
+
+### Explanation
+
+- **Pytest Test File**: The test file uses `pytest` and includes fixtures and tests for each method in the `FraudDetectionPipeline` class. It uses a synthetic dataset from `sklearn.datasets` for testing purposes.
+- **GitHub Actions Workflow**: This workflow runs on every push or pull request to the `main` branch. It checks out the code, sets up Python, installs dependencies, and runs the tests using `pytest`.

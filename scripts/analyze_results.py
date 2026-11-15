@@ -56,7 +56,8 @@ def artifact(d):
 def collect():
     groups = {}
     for root in sorted(glob.glob("runs*")):
-        if "FAILED" in root or not os.path.exists(f"{root}/results.json"):
+        # the ablation runs (other strategies) are analysed by reanalyze_v2.py / stats_v2.py, not here
+        if "FAILED" in root or "ablation" in root or not os.path.exists(f"{root}/results.json"):
             continue
         meta = json.load(open(f"{root}/results.json", encoding="utf-8"))["meta"]
         if meta.get("dry_run"):

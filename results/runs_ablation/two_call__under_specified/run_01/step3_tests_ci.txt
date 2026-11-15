@@ -1,0 +1,124 @@
+Certainly! Below, I've provided a complete `pytest` test file for the `FraudDetectionPipeline` class, and a GitHub Actions workflow configuration to automate the testing process.
+
+### (a) Complete `pytest` Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection_pipeline import FraudDetectionPipeline
+import os
+
+# Sample data for testing
+DATA_PATH = "test_data.csv"
+
+@pytest.fixture(scope="module")
+def sample_data():
+    """Fixture for creating a sample dataset."""
+    data = {
+        "feature1": [0.1, 0.2, 0.3, 0.4, 0.5],
+        "feature2": [1, 0, 1, 0, 1],
+        "feature3": [0, 1, 0, 1, 0],
+        "fraud": [0, 1, 0, 1, 0]
+    }
+    df = pd.DataFrame(data)
+    df.to_csv(DATA_PATH, index=False)
+    yield DATA_PATH
+    os.remove(DATA_PATH)
+
+@pytest.fixture(scope="module")
+def pipeline(sample_data):
+    """Fixture for setting up the pipeline."""
+    return FraudDetectionPipeline(data_path=sample_data)
+
+def test_load_data(pipeline):
+    """Test the data loading functionality."""
+    pipeline.load_data()
+    assert pipeline.data is not None
+    assert not pipeline.data.empty
+
+def test_preprocess_data(pipeline):
+    """Test the data preprocessing functionality."""
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    # Check if train and test splits are not None and have expected lengths
+    assert pipeline.X_train is not None
+    assert pipeline.X_test is not None
+    assert pipeline.y_train is not None
+    assert pipeline.y_test is not None
+    assert len(pipeline.X_train) > 0
+    assert len(pipeline.X_test) > 0
+
+def test_train_model(pipeline):
+    """Test the model training functionality."""
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    assert isinstance(pipeline.model, RandomForestClassifier)
+
+def test_evaluate_model(capsys, pipeline):
+    """Test the model evaluation functionality."""
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    pipeline.evaluate_model()
+    captured = capsys.readouterr()
+    assert "Accuracy:" in captured.out
+    assert "Classification Report:" in captured.out
+
+def test_save_model(pipeline):
+    """Test the model saving functionality."""
+    model_path = "test_model.pkl"
+    pipeline.model_path = model_path
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    pipeline.save_model()
+    assert os.path.exists(model_path)
+    os.remove(model_path)
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/test_pipeline.yml
+
+name: Test Fraud Detection Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn joblib pytest
+
+    - name: Run tests
+      run: pytest test_fraud_detection_pipeline.py
+```
+
+### Explanation
+
+- **Test File**: This file sets up necessary fixtures for the test data and the pipeline instance. It tests each method in the `FraudDetectionPipeline` class, ensuring that data is loaded, processed, and evaluated correctly.
+
+- **GitHub Actions Workflow**: This workflow is triggered on a push or pull request to the `main` branch. It sets up a Python environment, installs dependencies, and runs the tests using `pytest`.

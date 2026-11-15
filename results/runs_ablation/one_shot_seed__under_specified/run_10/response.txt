@@ -1,0 +1,146 @@
+To create a reproducible CI/CD pipeline for your fraud detection model, we'll set up three components: the Python pipeline module, a pytest test file, and a GitHub Actions workflow. We'll ensure that every source of randomness is seeded to maintain consistency across runs.
+
+### 1. Python Pipeline Module
+
+The following module includes data preprocessing, model training, and evaluation. It uses a random seed to ensure reproducibility.
+
+```python
+# fraud_detection_pipeline.py
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+
+RANDOM_SEED = 42
+
+def preprocess_data(data):
+    # Placeholder for actual preprocessing steps
+    data = data.dropna()
+    return data
+
+def train_model(X_train, y_train):
+    model = RandomForestClassifier(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    predictions = model.predict(X_test)
+    return accuracy_score(y_test, predictions)
+
+def load_data():
+    # Placeholder for loading data
+    np.random.seed(RANDOM_SEED)
+    data_size = 1000
+    data = pd.DataFrame({
+        'feature1': np.random.rand(data_size),
+        'feature2': np.random.rand(data_size),
+        'label': np.random.randint(0, 2, data_size)
+    })
+    return data
+
+def main():
+    # Load and preprocess data
+    data = load_data()
+    data = preprocess_data(data)
+
+    # Split data
+    X = data[['feature1', 'feature2']]
+    y = data['label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+
+    # Train model
+    model = train_model(X_train, y_train)
+
+    # Evaluate model
+    accuracy = evaluate_model(model, X_test, y_test)
+    print(f"Model accuracy: {accuracy}")
+
+    # Save model
+    joblib.dump(model, 'fraud_detection_model.pkl')
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2. Pytest Test File
+
+This test file checks the functionality of the pipeline's main components. It uses the same seed to ensure reproducibility.
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+from fraud_detection_pipeline import load_data, preprocess_data, train_model, evaluate_model
+from sklearn.model_selection import train_test_split
+
+RANDOM_SEED = 42
+
+def test_load_data():
+    data = load_data()
+    assert data is not None
+    assert len(data) == 1000
+
+def test_preprocess_data():
+    data = load_data()
+    preprocessed_data = preprocess_data(data)
+    assert not preprocessed_data.isnull().values.any()
+
+def test_train_and_evaluate_model():
+    data = load_data()
+    data = preprocess_data(data)
+    X = data[['feature1', 'feature2']]
+    y = data['label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+    
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    assert accuracy > 0.5
+
+if __name__ == "__main__":
+    pytest.main()
+```
+
+### 3. GitHub Actions Workflow
+
+The following workflow automates the testing process using GitHub Actions. It runs the tests using pytest.
+
+```yaml
+# .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.x
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn joblib pandas
+
+    - name: Run tests
+      run: |
+        pytest test_fraud_detection_pipeline.py
+```
+
+This setup ensures that your fraud detection model's pipeline is tested automatically with every push or pull request to the main branch. Every run is reproducible thanks to the consistent use of the random seed.

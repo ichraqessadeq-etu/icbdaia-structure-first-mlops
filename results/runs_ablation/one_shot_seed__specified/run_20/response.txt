@@ -1,0 +1,175 @@
+Below are the deliverables for a CI/CD pipeline for a fraud detection model using a RandomForestClassifier, including a Python pipeline script, a pytest test file, and a GitHub Actions YAML workflow.
+
+### 1. Python Pipeline Script
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+import mlflow
+import mlflow.sklearn
+from sklearn.utils import resample
+
+RANDOM_SEED = 42
+
+def load_data(filepath):
+    try:
+        data = pd.read_csv(filepath)
+        return data
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to load data from {filepath}: {e}")
+
+def preprocess_data(data):
+    # Assuming 'Class' is the target column
+    X = data.drop(columns=['Class'])
+    y = data['Class']
+    return X, y
+
+def balance_data(X, y):
+    # Combine them back for resampling
+    data = pd.concat([X, y], axis=1)
+    majority = data[data.Class == 0]
+    minority = data[data.Class == 1]
+    
+    # Upsample minority class
+    minority_upsampled = resample(minority, 
+                                  replace=True, 
+                                  n_samples=len(majority), 
+                                  random_state=RANDOM_SEED)
+    
+    # Combine majority class with upsampled minority class
+    upsampled = pd.concat([majority, minority_upsampled])
+    
+    return upsampled.drop('Class', axis=1), upsampled['Class']
+
+def train_model(X_train, y_train):
+    model = RandomForestClassifier(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    predictions = model.predict(X_test)
+    acc = accuracy_score(y_test, predictions)
+    report = classification_report(y_test, predictions)
+    return acc, report
+
+def log_experiment(params, acc, report):
+    mlflow.log_params(params)
+    mlflow.log_metric("accuracy", acc)
+    mlflow.log_text(report, "classification_report.txt")
+
+def main(data_path):
+    mlflow.set_experiment("Fraud Detection")
+    
+    try:
+        data = load_data(data_path)
+        X, y = preprocess_data(data)
+        X, y = balance_data(X, y)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+        
+        with mlflow.start_run():
+            model = train_model(X_train, y_train)
+            acc, report = evaluate_model(model, X_test, y_test)
+            
+            params = {
+                "n_estimators": 100,
+                "random_state": RANDOM_SEED
+            }
+            log_experiment(params, acc, report)
+            
+            print(f"Accuracy: {acc}")
+            print(f"Classification Report:\n{report}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+if __name__ == "__main__":
+    main("creditcard.csv")
+```
+
+### 2. Pytest Test File
+
+```python
+import pytest
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+from pipeline_script import preprocess_data, balance_data, train_model, evaluate_model
+
+RANDOM_SEED = 42
+
+@pytest.fixture
+def sample_data():
+    np.random.seed(RANDOM_SEED)
+    X = pd.DataFrame(np.random.randn(1000, 5), columns=[f"feature_{i}" for i in range(5)])
+    y = pd.Series(np.random.choice([0, 1], size=1000, p=[0.9983, 0.0017]))
+    return X, y
+
+def test_preprocess_data(sample_data):
+    X, y = sample_data
+    X_processed, y_processed = preprocess_data(pd.concat([X, y.rename('Class')], axis=1))
+    assert X_processed.shape[1] == X.shape[1]
+    assert (y_processed == y).all()
+
+def test_balance_data(sample_data):
+    X, y = sample_data
+    X_balanced, y_balanced = balance_data(X, y)
+    assert len(y_balanced) == len(X_balanced)
+    assert y_balanced.value_counts()[0] == y_balanced.value_counts()[1]
+
+def test_train_model(sample_data):
+    X, y = sample_data
+    X_balanced, y_balanced = balance_data(X, y)
+    X_train, X_test, y_train, y_test = train_test_split(X_balanced, y_balanced, test_size=0.2, random_state=RANDOM_SEED)
+    model = train_model(X_train, y_train)
+    acc, report = evaluate_model(model, X_test, y_test)
+    assert acc > 0.5
+```
+
+### 3. GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+    - name: Run pipeline
+      env:
+        MLFLOW_TRACKING_URI: 'http://localhost:5000'  # Adjust according to your MLflow setup
+      run: |
+        python pipeline_script.py
+```
+
+This configuration covers the entire pipeline from data loading to model evaluation and logging, with appropriate testing and continuous integration setup. Make sure to adjust any environment-specific settings such as the path to the dataset and the MLflow tracking URI.

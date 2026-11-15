@@ -1,0 +1,223 @@
+Below are the complete Python pipeline script, the pytest test file, and the GitHub Actions workflow configuration. Each section is provided in its own fenced code block.
+
+### 1. Python Pipeline Script
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import logging
+from typing import Tuple
+
+# Constants
+RANDOM_SEED = 42
+TEST_SIZE = 0.2
+N_ESTIMATORS = 100
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load Data
+def load_data() -> pd.DataFrame:
+    try:
+        # Assuming the dataset is loaded from a CSV file
+        data = pd.read_csv("creditcard.csv")
+        logger.info("Data loaded successfully.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+# Preprocess Data
+def preprocess_data(data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    try:
+        # Separate input features and target
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        
+        # Split the data into training and test sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+        
+        # Handle class imbalance by upsampling the minority class in the training set
+        X_train_majority = X_train[y_train == 0]
+        y_train_majority = y_train[y_train == 0]
+        X_train_minority = X_train[y_train == 1]
+        y_train_minority = y_train[y_train == 1]
+        
+        X_train_minority_upsampled, y_train_minority_upsampled = resample(
+            X_train_minority, y_train_minority, 
+            replace=True, 
+            n_samples=len(X_train_majority), 
+            random_state=RANDOM_SEED
+        )
+
+        X_train_balanced = np.vstack((X_train_majority, X_train_minority_upsampled))
+        y_train_balanced = np.hstack((y_train_majority, y_train_minority_upsampled))
+        
+        logger.info("Data preprocessing completed.")
+        return X_train_balanced, X_test, y_train_balanced, y_test
+    except Exception as e:
+        logger.error(f"Error during preprocessing: {e}")
+        raise
+
+# Train Model
+def train_model(X_train: np.ndarray, y_train: np.ndarray) -> RandomForestClassifier:
+    try:
+        model = RandomForestClassifier(n_estimators=N_ESTIMATORS, random_state=RANDOM_SEED)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed.")
+        return model
+    except Exception as e:
+        logger.error(f"Error during model training: {e}")
+        raise
+
+# Evaluate Model
+def evaluate_model(model: RandomForestClassifier, X_test: np.ndarray, y_test: np.ndarray) -> dict:
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        report = classification_report(y_test, predictions, output_dict=True)
+        logger.info(f"Model evaluation completed. Accuracy: {accuracy}")
+        return {'accuracy': accuracy, 'classification_report': report}
+    except Exception as e:
+        logger.error(f"Error during model evaluation: {e}")
+        raise
+
+# Log to MLflow
+def log_to_mlflow(model: RandomForestClassifier, evaluation: dict):
+    try:
+        with mlflow.start_run():
+            mlflow.sklearn.log_model(model, "random_forest_model")
+            mlflow.log_metric("accuracy", evaluation['accuracy'])
+            mlflow.log_dict(evaluation['classification_report'], "classification_report.json")
+            logger.info("Model and metrics logged to MLflow.")
+    except Exception as e:
+        logger.error(f"Error during logging to MLflow: {e}")
+        raise
+
+def main():
+    try:
+        data = load_data()
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        model = train_model(X_train, y_train)
+        evaluation = evaluate_model(model, X_test, y_test)
+        log_to_mlflow(model, evaluation)
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2. Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from pipeline import preprocess_data, train_model, evaluate_model
+
+RANDOM_SEED = 42
+
+@pytest.fixture
+def sample_data():
+    np.random.seed(RANDOM_SEED)
+    # Create a synthetic dataset
+    data = {
+        'feature1': np.random.rand(1000),
+        'feature2': np.random.rand(1000),
+        'feature3': np.random.rand(1000),
+        'Class': np.random.choice([0, 1], size=1000, p=[0.9983, 0.0017])
+    }
+    return pd.DataFrame(data)
+
+def test_preprocess_data(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    # Check if the split is correct
+    assert len(X_train) == len(y_train)
+    assert len(X_test) == len(y_test)
+    # Check if the class balance is handled
+    assert np.sum(y_train == 1) == np.sum(y_train == 0)
+
+def test_train_model(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    # Check if model is an instance of RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+    # Check if model is trained
+    assert hasattr(model, "n_features_")
+
+def test_evaluate_model(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    evaluation = evaluate_model(model, X_test, y_test)
+    # Check if evaluation returns expected metrics
+    assert 'accuracy' in evaluation
+    assert 'classification_report' in evaluation
+    assert isinstance(evaluation['classification_report'], dict)
+```
+
+### 3. GitHub Actions YAML Workflow
+
+```yaml
+name: CI/CD Pipeline for Fraud Detection
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *' # Every day at midnight
+  workflow_dispatch: # Allows manual trigger
+  # Add a mechanism to trigger on drift detection (e.g., custom event)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Tests
+      run: |
+        pytest
+
+    - name: Run Pipeline
+      run: |
+        python pipeline.py
+
+    - name: Upload to MLflow
+      env:
+        MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+        MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      run: |
+        # Assuming the pipeline handles MLflow logging
+        echo "Pipeline execution and MLflow logging complete."
+```
+
+### Notes:
+- The Python script contains all necessary steps from data loading to logging in MLflow, with error handling.
+- The pytest test file includes tests for data preprocessing, model training, and evaluation.
+- The GitHub Actions workflow automates the CI/CD process, with triggers for code pushes, pull requests, a scheduled run, and manual triggering. Make sure to replace the placeholders for MLflow credentials with your secrets.

@@ -1,0 +1,126 @@
+Below are examples of a CI/CD pipeline for a fraud detection model. This includes a Python pipeline module, a pytest test file, and a GitHub Actions workflow. The focus is on ensuring reproducibility by seeding all sources of randomness.
+
+### Python Pipeline Module (`pipeline.py`)
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+
+RANDOM_SEED = 42
+
+def load_data():
+    # For demonstration, creating synthetic data
+    np.random.seed(RANDOM_SEED)
+    data = pd.DataFrame({
+        'feature1': np.random.rand(1000),
+        'feature2': np.random.rand(1000),
+        'label': np.random.choice([0, 1], size=1000, p=[0.95, 0.05])
+    })
+    return data
+
+def preprocess_data(data):
+    X = data[['feature1', 'feature2']]
+    y = data['label']
+    return X, y
+
+def train_model(X_train, y_train):
+    model = RandomForestClassifier(random_state=RANDOM_SEED)
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    return accuracy
+
+def save_model(model, filename='fraud_detection_model.pkl'):
+    joblib.dump(model, filename)
+
+def run_pipeline():
+    data = load_data()
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+    
+    model = train_model(X_train, y_train)
+    accuracy = evaluate_model(model, X_test, y_test)
+    print(f'Model Accuracy: {accuracy}')
+    
+    save_model(model)
+
+if __name__ == '__main__':
+    run_pipeline()
+```
+
+### Pytest Test File (`test_pipeline.py`)
+
+```python
+import pytest
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+RANDOM_SEED = 42
+
+@pytest.fixture
+def data():
+    return load_data()
+
+def test_load_data(data):
+    assert not data.empty
+    assert 'feature1' in data.columns
+    assert 'feature2' in data.columns
+    assert 'label' in data.columns
+
+def test_preprocess_data(data):
+    X, y = preprocess_data(data)
+    assert X.shape[0] == y.shape[0]
+    assert X.shape[1] == 2
+
+def test_train_model(data):
+    X, y = preprocess_data(data)
+    model = train_model(X, y)
+    assert model is not None
+
+def test_evaluate_model(data):
+    X, y = preprocess_data(data)
+    model = train_model(X, y)
+    accuracy = evaluate_model(model, X, y)
+    assert 0 <= accuracy <= 1
+```
+
+### GitHub Actions Workflow (`.github/workflows/ci-cd.yml`)
+
+```yaml
+name: CI/CD Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn joblib pandas
+
+    - name: Test with pytest
+      run: |
+        pytest test_pipeline.py
+
+    - name: Run pipeline
+      run: |
+        python pipeline.py
+```
+
+This setup ensures that each run of the pipeline and tests is reproducible by using a fixed random seed (`RANDOM_SEED`). The pipeline is tested with pytest, and the GitHub Actions workflow is configured to run on every push or pull request.

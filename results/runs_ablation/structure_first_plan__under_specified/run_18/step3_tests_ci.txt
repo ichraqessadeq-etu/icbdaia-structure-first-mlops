@@ -1,0 +1,214 @@
+Certainly! Below is the complete `pytest` test file for the fraud detection pipeline and the GitHub Actions workflow configuration as specified in your structure.
+
+### Test Files
+
+#### `tests/test_data_preprocessing.py`
+
+```python
+import pytest
+import pandas as pd
+from pandas.testing import assert_frame_equal
+from fraud_detection.pipeline.data_preprocessing import load_data, clean_data, split_data
+
+def test_load_data():
+    """Test the data loading functionality."""
+    data = load_data('tests/test_data.csv')
+    assert isinstance(data, pd.DataFrame), "Data should be loaded as a DataFrame."
+
+def test_clean_data():
+    """Test the data cleaning process."""
+    raw_data = pd.DataFrame({
+        'A': [1, 2, None, 4],
+        'B': [1, 2, 3, 2],
+        'C': [5, 6, 7, 8]
+    })
+    expected_clean_data = pd.DataFrame({
+        'A': [1, 2, 4],
+        'B': [1, 2, 2],
+        'C': [5, 6, 8]
+    })
+    cleaned_data = clean_data(raw_data)
+    assert_frame_equal(cleaned_data, expected_clean_data), "Cleaned data does not match expected output."
+
+def test_split_data():
+    """Test the data splitting function."""
+    data = pd.DataFrame({'feature': range(10), 'label': [1, 0] * 5})
+    train_data, test_data = split_data(data, test_size=0.2)
+    assert len(train_data) == 8, "Train data size should be 80%."
+    assert len(test_data) == 2, "Test data size should be 20%."
+```
+
+#### `tests/test_model_training.py`
+
+```python
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.model_training import train_model, save_model
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+import os
+
+def test_train_model():
+    """Test the model training process."""
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4],
+        'feature2': [5, 6, 7, 8],
+        'label': [0, 1, 0, 1]
+    })
+    params = {'n_estimators': 10, 'random_state': 42}
+    model = train_model(data, params)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier."
+
+def test_save_model(tmp_path):
+    """Test the model saving functionality."""
+    model = RandomForestClassifier()
+    file_path = os.path.join(tmp_path, 'model.joblib')
+    save_model(model, file_path)
+    assert os.path.exists(file_path), "Model file should exist after saving."
+```
+
+#### `tests/test_model_evaluation.py`
+
+```python
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.model_evaluation import evaluate_model, generate_report
+from sklearn.ensemble import RandomForestClassifier
+import os
+
+def test_evaluate_model():
+    """Test the model evaluation process."""
+    model = RandomForestClassifier()
+    model.fit([[0], [1]], [0, 1])
+    test_data = pd.DataFrame({
+        'feature': [0, 1],
+        'label': [0, 1]
+    })
+    accuracy = evaluate_model(model, test_data)
+    assert accuracy == 1.0, "Model should have an accuracy of 1.0 on perfect predictions."
+
+def test_generate_report(tmp_path):
+    """Test the report generation functionality."""
+    file_path = os.path.join(tmp_path, 'report.txt')
+    generate_report(0.95, file_path)
+    assert os.path.exists(file_path), "Report file should exist after generation."
+    with open(file_path, 'r') as file:
+        content = file.read()
+    assert "Accuracy: 0.95" in content, "Report content should match the provided metrics."
+```
+
+#### `tests/test_model_deployment.py`
+
+```python
+import pytest
+from fraud_detection.pipeline.model_deployment import deploy_model
+
+def test_deploy_model():
+    """Test the model deployment process."""
+    model = object()  # Placeholder for an actual model
+    try:
+        deploy_model(model, 'local')
+    except NotImplementedError:
+        pytest.fail("Deployment should not raise NotImplementedError for local deployment.")
+```
+
+### GitHub Actions Workflow (`.github/workflows/ci_cd_pipeline.yml`)
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+  install_dependencies:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: pytest tests/
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Build the application
+      run: python setup.py sdist bdist_wheel
+
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Deploy the model
+      run: python fraud_detection/pipeline/model_deployment.py
+```
+
+These files include the necessary tests for each component of the pipeline and the GitHub Actions workflow to automate the CI/CD process, ensuring consistency and reliability in deploying the fraud detection model.

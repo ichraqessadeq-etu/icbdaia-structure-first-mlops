@@ -1,6 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this code or data, please cite it as below."
-title: "Structure-First Generation of MLOps Pipelines: Does Engineering-Style Staging Reduce Operational Hallucinations in LLM-Generated CI/CD Artifacts? (code and data)"
+title: "Staged Generation of MLOps Pipelines with Large Language Models: More Tests, Broken Interfaces, and No Gain in Reproducibility (code and data)"
+version: 2.0.0
 authors:
   - family-names: Essadeq
     given-names: Ichraq
@@ -17,7 +18,7 @@ authors:
 license: MIT
 doi: 10.5281/zenodo.24093463
 repository-code: "https://github.com/ichraqessadeq-etu/icbdaia-structure-first-mlops"
-date-released: 2026-11-09
+date-released: 2026-11-15
 keywords:
   - MLOps
   - LLM

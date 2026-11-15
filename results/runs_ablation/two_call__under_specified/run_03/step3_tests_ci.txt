@@ -1,0 +1,117 @@
+Let's start by creating a comprehensive test file using `pytest` to ensure that each component of your `FraudDetectionPipeline` is functioning correctly. Then, we will set up a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+Here's a `test_fraud_detection_pipeline.py` file that you can use to test the pipeline:
+
+```python
+# test_fraud_detection_pipeline.py
+
+import pytest
+import pandas as pd
+from fraud_detection_pipeline import FraudDetectionPipeline
+from sklearn.ensemble import RandomForestClassifier
+
+@pytest.fixture
+def sample_data():
+    # Creating a simple synthetic dataset
+    data = {
+        'feature1': [1, 2, 3, 4, 5],
+        'feature2': [5, 4, 3, 2, 1],
+        'is_fraud': [0, 1, 0, 1, 0]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(sample_data, tmpdir):
+    # Save sample data to a temporary CSV file
+    filepath = tmpdir.join("sample_data.csv")
+    sample_data.to_csv(filepath, index=False)
+    
+    pipeline = FraudDetectionPipeline()
+    data = pipeline.load_data(filepath)
+    
+    assert not data.isnull().values.any(), "The data should not contain any NaN values after preprocessing."
+    assert 'is_fraud' in data.columns, "The target column 'is_fraud' should be present after loading data."
+
+def test_split_data(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_train, X_test, y_train, y_test = pipeline.split_data(sample_data, 'is_fraud')
+    
+    assert len(X_train) + len(X_test) == len(sample_data), "The total number of samples should be the same after splitting."
+    assert len(y_train) + len(y_test) == len(sample_data), "The total number of target samples should be the same after splitting."
+
+def test_train(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_train, X_test, y_train, y_test = pipeline.split_data(sample_data, 'is_fraud')
+    
+    pipeline.train(X_train, y_train)
+    
+    assert isinstance(pipeline.model, RandomForestClassifier), "The model should be an instance of RandomForestClassifier after training."
+
+def test_evaluate(sample_data):
+    pipeline = FraudDetectionPipeline()
+    X_train, X_test, y_train, y_test = pipeline.split_data(sample_data, 'is_fraud')
+    
+    pipeline.train(X_train, y_train)
+    metrics = pipeline.evaluate(X_test, y_test)
+    
+    assert 'accuracy' in metrics, "Accuracy should be a part of the evaluation metrics."
+    assert 'precision' in metrics, "Precision should be a part of the evaluation metrics."
+    assert 'recall' in metrics, "Recall should be a part of the evaluation metrics."
+    assert 'f1_score' in metrics, "F1 Score should be a part of the evaluation metrics."
+
+def test_save_and_load_model(sample_data, tmpdir):
+    # Create a temporary file path
+    filepath = tmpdir.join("model.joblib")
+    
+    pipeline = FraudDetectionPipeline()
+    X_train, X_test, y_train, y_test = pipeline.split_data(sample_data, 'is_fraud')
+    
+    pipeline.train(X_train, y_train)
+    pipeline.save_model(filepath)
+    
+    new_pipeline = FraudDetectionPipeline()
+    new_pipeline.load_model(filepath)
+    
+    assert isinstance(new_pipeline.model, RandomForestClassifier), "The loaded model should be an instance of RandomForestClassifier."
+```
+
+### (b) GitHub Actions Workflow
+
+Below is a GitHub Actions workflow file that you can place in `.github/workflows/test.yml` to automate testing with pytest:
+
+```yaml
+# .github/workflows/test.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn joblib pandas
+
+    - name: Test with pytest
+      run: |
+        pytest
+```
+
+This configuration will run the tests using Python 3.8, install the necessary dependencies, and execute your `pytest` test suite whenever code is pushed to the `main` branch or a pull request is made. Adjust the Python version and dependencies as necessary for your project.

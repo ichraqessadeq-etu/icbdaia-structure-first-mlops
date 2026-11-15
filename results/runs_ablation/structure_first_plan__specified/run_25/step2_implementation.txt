@@ -1,0 +1,71 @@
+```python
+# pipeline/data_loader.py
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+def load_data(file_path: str):
+    """Load and preprocess the dataset from a given file path."""
+    # Load data
+    data = pd.read_csv(file_path)
+    # Assume the last column is the target
+    X = data.iloc[:, :-1]
+    y = data.iloc[:, -1]
+    # Split the data into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return X_train, X_test, y_train, y_test
+
+# pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train):
+    """Train the RandomForestClassifier model."""
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+# pipeline/evaluator.py
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the trained model on the test data."""
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'precision': precision_score(y_test, predictions),
+        'recall': recall_score(y_test, predictions),
+        'f1_score': f1_score(y_test, predictions)
+    }
+    return metrics
+
+# pipeline/logger.py
+import mlflow
+
+def log_to_mlflow(model, metrics):
+    """Log the model and evaluation metrics to MLflow."""
+    mlflow.start_run()
+    mlflow.sklearn.log_model(model, "random_forest_model")
+    mlflow.log_metrics(metrics)
+    mlflow.end_run()
+
+# pipeline/main.py
+from pipeline.data_loader import load_data
+from pipeline.model_trainer import train_model
+from pipeline.evaluator import evaluate_model
+from pipeline.logger import log_to_mlflow
+
+def main():
+    """Main function to run the end-to-end pipeline."""
+    # Load and preprocess data
+    X_train, X_test, y_train, y_test = load_data('data/fraud_detection.csv')
+    # Train model
+    model = train_model(X_train, y_train)
+    # Evaluate model
+    metrics = evaluate_model(model, X_test, y_test)
+    # Log model and metrics
+    log_to_mlflow(model, metrics)
+
+if __name__ == "__main__":
+    main()
+```
+
+This implementation follows the specified structure and function signatures, providing a complete end-to-end pipeline for a fraud detection model using scikit-learn's `RandomForestClassifier`. It includes data loading, model training, evaluation, and logging of results to MLflow.

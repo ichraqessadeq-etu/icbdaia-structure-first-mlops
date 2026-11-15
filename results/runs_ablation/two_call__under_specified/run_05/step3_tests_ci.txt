@@ -1,0 +1,108 @@
+Certainly! Below is the complete pytest test file and the GitHub Actions workflow file for the given pipeline module.
+
+### (a) Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from your_module_name import FraudDetectionPipeline
+
+@pytest.fixture
+def sample_data(tmpdir):
+    # Create a sample CSV file for testing
+    data = {
+        'feature1': [0.2, 0.4, 0.6, 0.8, 1.0],
+        'feature2': [1.1, 1.3, 1.5, 1.7, 1.9],
+        'target': [0, 1, 0, 1, 0]
+    }
+    df = pd.DataFrame(data)
+    file_path = tmpdir.join("sample_data.csv")
+    df.to_csv(file_path, index=False)
+    return str(file_path)
+
+@pytest.fixture
+def pipeline_instance(sample_data, tmpdir):
+    model_path = str(tmpdir) + '/'
+    return FraudDetectionPipeline(data_path=sample_data, model_path=model_path)
+
+def test_load_data(pipeline_instance):
+    pipeline_instance.load_data()
+    assert pipeline_instance.data is not None
+    assert not pipeline_instance.data.empty
+
+def test_preprocess_data(pipeline_instance):
+    pipeline_instance.load_data()
+    pipeline_instance.preprocess_data()
+    assert pipeline_instance.X_train is not None
+    assert pipeline_instance.X_test is not None
+    assert pipeline_instance.y_train is not None
+    assert pipeline_instance.y_test is not None
+
+def test_train_model(pipeline_instance):
+    pipeline_instance.load_data()
+    pipeline_instance.preprocess_data()
+    pipeline_instance.train_model()
+    assert isinstance(pipeline_instance.model, RandomForestClassifier)
+
+def test_evaluate_model(pipeline_instance, caplog):
+    pipeline_instance.load_data()
+    pipeline_instance.preprocess_data()
+    pipeline_instance.train_model()
+    with caplog.at_level(logging.INFO):
+        pipeline_instance.evaluate_model()
+    assert "Model evaluation report:" in caplog.text
+
+def test_save_model(pipeline_instance):
+    pipeline_instance.load_data()
+    pipeline_instance.preprocess_data()
+    pipeline_instance.train_model()
+    pipeline_instance.save_model()
+    model_path = pipeline_instance.model_path + 'fraud_detection_model.pkl'
+    scaler_path = pipeline_instance.model_path + 'scaler.pkl'
+    assert os.path.exists(model_path)
+    assert os.path.exists(scaler_path)
+```
+
+### (b) GitHub Actions Workflow File
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn joblib
+
+    - name: Run tests
+      run: |
+        pytest --disable-warnings
+```
+
+### Explanation
+
+- **Pytest Test File**: The pytest file makes use of fixtures to create temporary directories and files for testing. It checks for data loading, preprocessing, model training, model evaluation, and model saving functionalities.
+
+- **GitHub Actions Workflow**: The workflow triggers on pushes and pull requests to the `main` branch. It sets up a Python environment, installs dependencies, and runs the tests using `pytest`.

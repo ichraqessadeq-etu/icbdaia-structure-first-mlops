@@ -1,0 +1,166 @@
+Certainly! Here is the complete implementation of the pytest test files and the GitHub Actions workflow as per the planned structure:
+
+### (a) Pytest Test Files
+
+```python
+# fraud_detection_pipeline/tests/test_data_preprocessing.py
+
+import pytest
+import pandas as pd
+from pipeline.data_preprocessing import load_data, clean_data
+
+def test_load_data():
+    """Test the load_data function."""
+    # Assuming you have a test CSV file `test_data.csv` for testing
+    df = load_data('test_data.csv')
+    assert isinstance(df, pd.DataFrame), "load_data should return a DataFrame"
+    assert not df.empty, "DataFrame should not be empty"
+
+def test_clean_data():
+    """Test the clean_data function."""
+    df = pd.DataFrame({
+        'amount': [100, -50, 200, None],
+        'days': [1, 2, 3, 4],
+    })
+    cleaned_df = clean_data(df)
+    assert len(cleaned_df) == 2, "There should be 2 remaining rows after cleaning"
+    assert (cleaned_df['amount'] > 0).all(), "All amounts should be greater than 0"
+
+
+# fraud_detection_pipeline/tests/test_feature_engineering.py
+
+import pytest
+import pandas as pd
+from pipeline.feature_engineering import generate_features
+
+def test_generate_features():
+    """Test the generate_features function."""
+    df = pd.DataFrame({
+        'amount': [100, 200, 300],
+        'days': [1, 2, 3],
+    })
+    df = generate_features(df)
+    assert 'transaction_per_day' in df.columns, "Generated feature 'transaction_per_day' should exist"
+    assert df['transaction_per_day'].equals(df['amount'] / df['days']), "Feature values should be correctly calculated"
+
+
+# fraud_detection_pipeline/tests/test_model_training.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline.model_training import train_model, save_model
+import os
+
+def test_train_model():
+    """Test the train_model function."""
+    X = pd.DataFrame({'feature1': [0.1, 0.2, 0.3], 'feature2': [1, 2, 3]})
+    y = pd.Series([0, 1, 0])
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier), "Model should be a RandomForestClassifier"
+    assert model.n_classes_ == 2, "Model should have 2 classes"
+
+def test_save_model(tmp_path):
+    """Test the save_model function."""
+    model = RandomForestClassifier()
+    file_path = tmp_path / "model.joblib"
+    save_model(model, file_path)
+    assert os.path.exists(file_path), "Model file should exist after saving"
+
+
+# fraud_detection_pipeline/tests/test_model_evaluation.py
+
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline.model_evaluation import evaluate_model
+
+def test_evaluate_model():
+    """Test the evaluate_model function."""
+    X = pd.DataFrame({'feature1': [0.1, 0.2, 0.3], 'feature2': [1, 2, 3]})
+    y = pd.Series([0, 1, 0])
+    model = RandomForestClassifier().fit(X, y)
+    metrics = evaluate_model(model, X, y)
+    assert isinstance(metrics, dict), "Metrics should be returned as a dictionary"
+    assert 'accuracy' in metrics, "Metrics should include accuracy"
+    assert metrics['accuracy'] == 1.0, "Accuracy should be 100% for the test data"
+
+
+# fraud_detection_pipeline/tests/test_model_deployment.py
+
+import pytest
+from sklearn.ensemble import RandomForestClassifier
+from pipeline.model_deployment import deploy_model
+import os
+
+def test_deploy_model(tmp_path):
+    """Test the deploy_model function."""
+    model = RandomForestClassifier()
+    file_path = tmp_path / "deployed_model.joblib"
+    deploy_model(model, file_path)
+    assert os.path.exists(file_path), "Deployed model file should exist"
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci_cd_pipeline.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        run: pytest tests/
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build the model
+        run: python -m pipeline.model_training
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Deploy the model
+        run: python -m pipeline.model_deployment
+```
+
+This setup includes comprehensive test cases for each stage of your pipeline and a GitHub Actions workflow that follows the CI/CD process from testing to building and deploying the model.

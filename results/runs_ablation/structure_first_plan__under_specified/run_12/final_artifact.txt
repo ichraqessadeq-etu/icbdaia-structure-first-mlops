@@ -1,0 +1,219 @@
+Certainly! Below is the complete implementation of the `fraud_detection_pipeline.py` module. This implementation follows the given structure, including the same functions and signatures.
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+import joblib
+
+def load_data(file_path: str) -> pd.DataFrame:
+    """Load data from a given file path."""
+    try:
+        data = pd.read_csv(file_path)
+        print("Data loaded successfully.")
+        return data
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Preprocess the input data."""
+    try:
+        # Example preprocessing steps
+        data = data.dropna()  # Drop missing values
+        data = pd.get_dummies(data, drop_first=True)  # One-hot encoding for categorical variables
+        print("Data preprocessed successfully.")
+        return data
+    except Exception as e:
+        print(f"Error in preprocessing data: {e}")
+        raise
+
+def train_model(processed_data: pd.DataFrame, model_params: dict) -> RandomForestClassifier:
+    """Train a fraud detection model using the preprocessed data."""
+    try:
+        X = processed_data.drop('target', axis=1)
+        y = processed_data['target']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        model = RandomForestClassifier(**model_params)
+        model.fit(X_train, y_train)
+        print("Model trained successfully.")
+        return model, X_test, y_test
+    except Exception as e:
+        print(f"Error in training model: {e}")
+        raise
+
+def evaluate_model(model: RandomForestClassifier, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
+    """Evaluate the trained model on test data."""
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        report = classification_report(y_test, predictions)
+        print("Model evaluated successfully.")
+        return {"accuracy": accuracy, "report": report}
+    except Exception as e:
+        print(f"Error in evaluating model: {e}")
+        raise
+
+def save_model(model: RandomForestClassifier, file_path: str) -> None:
+    """Save the trained model to a specified file path."""
+    try:
+        joblib.dump(model, file_path)
+        print("Model saved successfully.")
+    except Exception as e:
+        print(f"Error in saving model: {e}")
+        raise
+```
+
+This module includes:
+
+- **`load_data`**: Loads data from a CSV file into a Pandas DataFrame.
+- **`preprocess_data`**: Performs basic preprocessing such as handling missing values and encoding categorical features.
+- **`train_model`**: Splits the data into training and testing sets, trains a Random Forest classifier, and returns the trained model along with the test sets.
+- **`evaluate_model`**: Evaluates the model using accuracy and generates a classification report.
+- **`save_model`**: Saves the trained model to a file using `joblib`.
+
+Each function includes basic error handling to catch and print exceptions, providing a robust foundation for your fraud detection pipeline.
+
+Certainly! Below is the complete implementation of the pytest test file and the GitHub Actions workflow as specified in the structure.
+
+### (a) Pytest Test File: `test_fraud_detection_pipeline.py`
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from fraud_detection.pipeline.fraud_detection_pipeline import (
+    load_data,
+    preprocess_data,
+    train_model,
+    evaluate_model,
+    save_model
+)
+
+def test_load_data():
+    """Test loading data from a file."""
+    # Create a mock CSV for testing
+    test_data = pd.DataFrame({
+        'feature1': [1, 2, 3],
+        'feature2': [4, 5, 6],
+        'target': [0, 1, 0]
+    })
+    test_data.to_csv('test_data.csv', index=False)
+    
+    # Load the data using the function
+    loaded_data = load_data('test_data.csv')
+    
+    # Assert that the data was loaded correctly
+    pd.testing.assert_frame_equal(loaded_data, test_data)
+
+def test_preprocess_data():
+    """Test the preprocessing of data."""
+    data = pd.DataFrame({
+        'feature1': [1, 2, 3],
+        'feature2': ['A', 'B', 'A'],
+        'target': [0, 1, 0]
+    })
+    processed_data = preprocess_data(data)
+    
+    # Check that NaN values were dropped
+    assert processed_data.isnull().sum().sum() == 0
+    
+    # Check that categorical features are one-hot encoded
+    assert 'feature2_B' in processed_data.columns
+
+def test_train_model():
+    """Test training of the fraud detection model."""
+    processed_data = pd.DataFrame({
+        'feature1': [1, 2, 3, 4],
+        'feature2_B': [0, 1, 0, 1],
+        'target': [0, 1, 0, 1]
+    })
+    model_params = {'n_estimators': 10, 'random_state': 42}
+    model, X_test, y_test = train_model(processed_data, model_params)
+    
+    # Check that the model is an instance of RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+    
+    # Check that the test data is not empty
+    assert not X_test.empty and not y_test.empty
+
+def test_evaluate_model():
+    """Test the evaluation of the trained model."""
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    X_test = pd.DataFrame({'feature1': [1, 2], 'feature2_B': [0, 1]})
+    y_test = pd.Series([0, 1])
+    
+    # Train the model for testing purposes
+    model.fit(X_test, y_test)
+    
+    evaluation_results = evaluate_model(model, X_test, y_test)
+    
+    # Check that the evaluation results contain accuracy and report
+    assert 'accuracy' in evaluation_results
+    assert 'report' in evaluation_results
+
+def test_save_model():
+    """Test saving the trained model to a file."""
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    model_file_path = 'test_model.pkl'
+    
+    save_model(model, model_file_path)
+    
+    # Check that the model file exists
+    assert os.path.exists(model_file_path)
+```
+
+### (b) GitHub Actions Workflow: `ci_cd_pipeline.yml`
+
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/
+```
+
+This setup ensures that your CI/CD pipeline is robust, with automated testing of each component of the fraud detection pipeline and integration into GitHub Actions for continuous integration and delivery.

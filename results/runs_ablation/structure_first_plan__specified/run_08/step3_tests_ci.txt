@@ -1,0 +1,171 @@
+Certainly! Below is the complete pytest test file, `test_pipeline.py`, which implements the planned tests by importing from the pipeline module. In addition, the complete GitHub Actions workflow is provided in a single `ci_cd_pipeline.yml` block.
+
+### (a) `test_pipeline.py`
+```python
+# fraud_detection_pipeline/tests/test_pipeline.py
+import pytest
+from pipeline.data_loader import load_data, preprocess_data
+from pipeline.model_trainer import train_model
+from pipeline.model_evaluator import evaluate_model
+import pandas as pd
+from sklearn.datasets import make_classification
+from sklearn.ensemble import RandomForestClassifier
+
+@pytest.fixture
+def sample_data():
+    """Fixture to provide sample data for testing."""
+    X, y = make_classification(n_samples=100, n_features=20, n_informative=2, n_redundant=10, random_state=42)
+    data = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(20)])
+    data['target'] = y
+    return data
+
+def test_load_data(tmp_path):
+    """Test that data is loaded correctly."""
+    df = pd.DataFrame({'feature_1': [1, 2], 'feature_2': [3, 4], 'target': [0, 1]})
+    file_path = tmp_path / "test.csv"
+    df.to_csv(file_path, index=False)
+
+    loaded_data = load_data(str(file_path))
+    pd.testing.assert_frame_equal(loaded_data, df)
+
+def test_preprocess_data(sample_data):
+    """Test that preprocessing is performed correctly."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert X_train.shape[1] == sample_data.shape[1] - 1  # Minus target column
+
+def test_train_model(sample_data):
+    """Test that the model trains without errors."""
+    X_train, _, y_train, _ = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    """Test that the evaluation returns expected metrics format."""
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    assert 'accuracy' in metrics
+    assert 'report' in metrics
+    assert isinstance(metrics['accuracy'], float)
+    assert isinstance(metrics['report'], str)
+```
+
+### (b) `ci_cd_pipeline.yml`
+```yaml
+# fraud_detection_pipeline/.github/workflows/ci_cd_pipeline.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run tests with pytest
+        run: |
+          pytest tests/
+
+  train_and_evaluate:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: |
+          python -m pipeline.data_loader
+          python -m pipeline.model_trainer
+          python -m pipeline.model_evaluator
+          python -m pipeline.mlflow_logger
+
+  detect_concept_drift:
+    runs-on: ubuntu-latest
+    needs: train_and_evaluate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Check for concept drift
+        run: |
+          python -m pipeline.concept_drift_detector
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: detect_concept_drift
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Deploy model if new version
+        run: |
+          # Add deployment script here
+          ...
+```
+
+This setup ensures that tests are run after the initial setup, and the pipeline proceeds through training, evaluation, concept drift detection, and then deployment, if applicable.

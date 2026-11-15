@@ -1,0 +1,229 @@
+Below is a complete Python pipeline script that loads data, trains a `RandomForestClassifier`, evaluates it, and logs the results to MLflow. The script is designed with error handling and is ready for integration into a CI/CD pipeline.
+
+```python
+import pandas as pd
+import numpy as np
+import mlflow
+import mlflow.sklearn
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.utils import resample
+from sklearn.exceptions import NotFittedError
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        logger.info("Data loaded successfully")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    try:
+        # Assuming the class label is named 'Class'
+        X = data.drop(columns='Class')
+        y = data['Class']
+
+        # Handling imbalanced dataset by upsampling minority class
+        X_majority = X[y == 0]
+        y_majority = y[y == 0]
+        X_minority = X[y == 1]
+        y_minority = y[y == 1]
+
+        X_minority_upsampled, y_minority_upsampled = resample(
+            X_minority, y_minority,
+            replace=True,
+            n_samples=len(y_majority),
+            random_state=42
+        )
+
+        X_balanced = pd.concat([X_majority, X_minority_upsampled])
+        y_balanced = pd.concat([y_majority, y_minority_upsampled])
+
+        logger.info("Data preprocessing completed")
+        return X_balanced, y_balanced
+    except Exception as e:
+        logger.error(f"Error in data preprocessing: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed")
+        return model
+    except Exception as e:
+        logger.error(f"Error in model training: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        precision = precision_score(y_test, predictions, zero_division=1)
+        recall = recall_score(y_test, predictions, zero_division=1)
+        f1 = f1_score(y_test, predictions, zero_division=1)
+
+        logger.info(f"Model evaluation metrics: Accuracy={accuracy}, Precision={precision}, Recall={recall}, F1={f1}")
+        
+        return {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1
+        }
+    except NotFittedError as e:
+        logger.error(f"Model is not fitted: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in model evaluation: {e}")
+        raise
+
+def log_to_mlflow(model, metrics):
+    try:
+        mlflow.sklearn.log_model(model, "model")
+        for metric_name, metric_value in metrics.items():
+            mlflow.log_metric(metric_name, metric_value)
+        logger.info("Model and metrics logged to MLflow")
+    except Exception as e:
+        logger.error(f"Error logging to MLflow: {e}")
+        raise
+
+def main(data_path):
+    try:
+        # Start MLflow run
+        with mlflow.start_run():
+            data = load_data(data_path)
+            X, y = preprocess_data(data)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            model = train_model(X_train, y_train)
+            metrics = evaluate_model(model, X_test, y_test)
+            log_to_mlflow(model, metrics)
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    data_file_path = "path/to/creditcard.csv"
+    main(data_file_path)
+```
+
+### Key Points:
+- **Data Loading**: Reads a CSV file and handles potential errors.
+- **Preprocessing**: Balances the dataset using upsampling techniques and handles errors.
+- **Model Training**: Trains a RandomForestClassifier and handles potential errors during training.
+- **Evaluation**: Computes several evaluation metrics and logs them.
+- **MLflow Logging**: Logs the model and metrics to MLflow, handling errors.
+
+This script is designed to be robust against common errors, making it suitable for production use.
+
+To implement tests using `pytest` and set up a GitHub Actions workflow, you'll need two separate files: a Python test file for `pytest` and a YAML file for the GitHub Actions workflow. Below, I provide a complete `pytest` test file followed by a GitHub Actions workflow file.
+
+### (a) `pytest` Test File
+
+Here is a sample `pytest` test file that tests various functions of your pipeline module. Save this as `test_pipeline.py`.
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+# Sample data for testing
+sample_data = pd.DataFrame({
+    'feature1': [1, 2, 3, 4],
+    'feature2': [5, 6, 7, 8],
+    'Class': [0, 1, 0, 1]
+})
+
+def test_load_data():
+    with patch('pandas.read_csv') as mock_read_csv:
+        mock_read_csv.return_value = sample_data
+        data = load_data("fake_path")
+        assert not data.empty
+        assert 'Class' in data.columns
+
+def test_preprocess_data():
+    X, y = preprocess_data(sample_data)
+    assert len(X) == len(y)
+    assert X.shape[1] == sample_data.shape[1] - 1
+
+def test_train_model():
+    X, y = preprocess_data(sample_data)
+    model = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+    assert hasattr(model, "predict")
+
+def test_evaluate_model():
+    X, y = preprocess_data(sample_data)
+    model = train_model(X, y)
+    metrics = evaluate_model(model, X, y)
+    assert isinstance(metrics, dict)
+    assert "accuracy" in metrics
+
+def test_log_to_mlflow():
+    mock_model = MagicMock(spec=RandomForestClassifier)
+    metrics = {'accuracy': 1.0, 'precision': 1.0, 'recall': 1.0, 'f1': 1.0}
+    
+    with patch('mlflow.sklearn.log_model') as mock_log_model, \
+         patch('mlflow.log_metric') as mock_log_metric:
+        log_to_mlflow(mock_model, metrics)
+        mock_log_model.assert_called_once_with(mock_model, "model")
+        assert mock_log_metric.call_count == len(metrics)
+```
+
+### (b) GitHub Actions Workflow File
+
+Here is a sample GitHub Actions workflow file to automatically run your tests. Save this as `.github/workflows/test.yml`.
+
+```yaml
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: pytest
+```
+
+### Explanation
+
+- **`pytest` Test File**: This file tests each function in your module. It uses `unittest.mock` to mock external dependencies like file reading and MLflow logging, ensuring that your tests are isolated and do not rely on external systems.
+
+- **GitHub Actions Workflow File**: This YAML file sets up a continuous integration workflow that triggers on pushes and pull requests to the `main` branch. It checks out the code, sets up Python, installs dependencies, and runs the tests using `pytest`.
+
+Make sure to adjust paths and dependencies as needed to fit your project's structure and requirements.

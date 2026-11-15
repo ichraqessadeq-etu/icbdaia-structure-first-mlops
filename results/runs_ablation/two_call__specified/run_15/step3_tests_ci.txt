@@ -1,0 +1,97 @@
+To test the pipeline module and automate the testing process using GitHub Actions, you'll need to create a test file using `pytest` and a GitHub Actions workflow file. Below are the complete implementations for both.
+
+### (a) Pytest Test File
+
+Create a test file named `test_pipeline.py` in the same directory as your pipeline module. This file contains tests for various functions in your module.
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model
+
+def test_load_data():
+    # Create a small DataFrame and save it as a CSV
+    data = pd.DataFrame({'feature1': [1, 2], 'feature2': [3, 4], 'Class': [0, 1]})
+    data.to_csv('test_data.csv', index=False)
+
+    # Test load_data function
+    loaded_data = load_data('test_data.csv')
+    pd.testing.assert_frame_equal(loaded_data, data)
+
+def test_preprocess_data():
+    data = pd.DataFrame({'feature1': [1, 2, 3], 'feature2': [4, 5, 6], 'Class': [0, 1, 1]})
+    X, y = preprocess_data(data)
+
+    assert len(X) == 4
+    assert len(y) == 4
+    assert y.sum() == 2  # Check if the upsampled data contains 2 instances of the minority class
+
+def test_train_model():
+    X = pd.DataFrame({'feature1': [1, 2, 3, 4], 'feature2': [5, 6, 7, 8]})
+    y = pd.Series([0, 1, 0, 1])
+    model = train_model(X, y)
+
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    model = RandomForestClassifier(random_state=42)
+    X = pd.DataFrame({'feature1': [1, 2, 3, 4], 'feature2': [5, 6, 7, 8]})
+    y = pd.Series([0, 1, 0, 1])
+    model.fit(X, y)
+
+    report, auc_score = evaluate_model(model, X, y)
+
+    assert isinstance(report, dict)
+    assert '0' in report  # Ensure class '0' is in the report
+    assert '1' in report  # Ensure class '1' is in the report
+    assert isinstance(auc_score, float)
+
+if __name__ == "__main__":
+    pytest.main()
+```
+
+### (b) GitHub Actions Workflow
+
+Create a workflow file named `python-app.yml` in the `.github/workflows/` directory in your repository.
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas scikit-learn pytest mlflow
+
+    - name: Run tests
+      run: |
+        pytest test_pipeline.py
+```
+
+### Explanation
+
+- **Test Script (`test_pipeline.py`):** This script contains unit tests for each function in your pipeline module. It checks if data is loaded correctly, data preprocessing handles upsampling as expected, models are trained properly, and evaluation metrics are computed accurately.
+  
+- **GitHub Actions Workflow (`python-app.yml`):** This workflow runs whenever there is a push or pull request to the `main` branch. It sets up Python, installs necessary dependencies, and runs the test script using `pytest`.
+
+Make sure your repository is structured correctly with these files, and push your changes to GitHub to enable the CI/CD pipeline.

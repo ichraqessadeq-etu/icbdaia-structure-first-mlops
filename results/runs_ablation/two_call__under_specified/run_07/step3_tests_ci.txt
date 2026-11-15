@@ -1,0 +1,111 @@
+Certainly! Below is the complete pytest test file for the `FraudDetectionPipeline` class, along with a GitHub Actions workflow configuration to run these tests.
+
+### (a) Pytest Test File
+
+```python
+# test_fraud_detection_pipeline.py
+
+import os
+import pytest
+import pandas as pd
+from sklearn.datasets import make_classification
+from fraud_detection_pipeline import FraudDetectionPipeline
+
+# Helper functions
+def create_mock_data(path):
+    # Create a synthetic dataset
+    X, y = make_classification(n_samples=1000, n_features=20, random_state=42)
+    data = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(20)])
+    data['fraud_label'] = y
+    data.to_csv(path, index=False)
+
+# Test cases
+@pytest.fixture(scope="module")
+def mock_data(tmpdir_factory):
+    data_path = tmpdir_factory.mktemp("data").join("mock_fraud_data.csv")
+    create_mock_data(data_path)
+    return str(data_path)
+
+@pytest.fixture(scope="module")
+def pipeline(mock_data):
+    return FraudDetectionPipeline(data_path=mock_data)
+
+def test_load_data(pipeline):
+    pipeline.load_data()
+    assert pipeline.X_train is not None
+    assert pipeline.X_test is not None
+    assert pipeline.y_train is not None
+    assert pipeline.y_test is not None
+
+def test_preprocess_data(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    assert pipeline.scaler is not None
+    assert pipeline.X_train.shape == pipeline.X_test.shape
+    assert pipeline.X_train.mean(axis=0).all() < 1e-7  # Check if standardized
+
+def test_train_model(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    assert pipeline.model is not None
+    assert hasattr(pipeline.model, "predict")
+
+def test_evaluate_model(pipeline):
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    metrics = pipeline.evaluate_model()
+    assert metrics is None  # Since it prints, there's no return value
+    # Optional: Check the output to contain expected strings
+
+def test_save_model(pipeline, tmpdir):
+    model_path = tmpdir.mkdir("models")
+    pipeline.load_data()
+    pipeline.preprocess_data()
+    pipeline.train_model()
+    pipeline.save_model(model_path)
+    assert os.path.exists(f"{model_path}/fraud_detection_model.pkl")
+    assert os.path.exists(f"{model_path}/scaler.pkl")
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+# .github/workflows/python-package.yml
+
+name: Python package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run pytest
+      run: |
+        pytest
+```
+
+### Explanation
+
+- **Pytest Test File**: This test file includes a helper function to create a synthetic CSV dataset for testing. We use pytest fixtures to set up the pipeline and data. Each test function verifies different stages of the pipeline.
+
+- **GitHub Actions Workflow**: This workflow is triggered on pushes and pull requests to the `main` branch. It checks out the repository, sets up Python 3.8, installs the necessary dependencies, and runs the tests using pytest.

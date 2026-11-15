@@ -1,0 +1,195 @@
+Here's a complete Python pipeline script for training and evaluating a `RandomForestClassifier` for fraud detection, with MLflow integration for experiment tracking. This script includes data loading, model training, evaluation, and logging to MLflow. It also incorporates basic error handling.
+
+```python
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import numpy as np
+
+def load_data(file_path):
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        raise RuntimeError(f"Error loading data: {e}")
+
+def preprocess_data(data):
+    try:
+        # Handle class imbalance
+        fraud = data[data['Class'] == 1]
+        non_fraud = data[data['Class'] == 0]
+        non_fraud_downsampled = resample(non_fraud, 
+                                         replace=False, 
+                                         n_samples=len(fraud), 
+                                         random_state=42)
+        balanced_data = pd.concat([fraud, non_fraud_downsampled])
+
+        X = balanced_data.drop('Class', axis=1)
+        y = balanced_data['Class']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        raise RuntimeError(f"Error preprocessing data: {e}")
+
+def train_model(X_train, y_train):
+    try:
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        raise RuntimeError(f"Error training model: {e}")
+
+def evaluate_model(model, X_test, y_test):
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        report = classification_report(y_test, predictions, output_dict=True)
+        return accuracy, report
+    except Exception as e:
+        raise RuntimeError(f"Error evaluating model: {e}")
+
+def log_experiment(model, accuracy, report):
+    try:
+        mlflow.set_experiment('Fraud Detection')
+        with mlflow.start_run():
+            mlflow.log_param('model_type', 'RandomForestClassifier')
+            mlflow.log_metric('accuracy', accuracy)
+            for label, metrics in report.items():
+                if isinstance(metrics, dict):
+                    for metric_name, metric_value in metrics.items():
+                        mlflow.log_metric(f'{label}_{metric_name}', metric_value)
+            mlflow.sklearn.log_model(model, 'random_forest_model')
+    except Exception as e:
+        raise RuntimeError(f"Error logging experiment to MLflow: {e}")
+
+def main(file_path):
+    try:
+        data = load_data(file_path)
+        X_train, X_test, y_train, y_test = preprocess_data(data)
+        model = train_model(X_train, y_train)
+        accuracy, report = evaluate_model(model, X_test, y_test)
+        log_experiment(model, accuracy, report)
+        print(f"Model training complete. Accuracy: {accuracy}")
+    except Exception as e:
+        print(f"Pipeline error: {e}")
+
+if __name__ == "__main__":
+    data_file_path = 'creditcard.csv'  # Update with your actual file path
+    main(data_file_path)
+```
+
+This script provides a structured flow from loading the dataset to logging the model details and metrics to MLflow. It handles potential errors at each stage, ensuring robustness for production use. Make sure to adjust the data file path and any other project-specific settings as needed.
+
+Let's start by creating a complete `pytest` test file for the provided pipeline module. We'll focus on testing each function independently to ensure they work as expected. Then, we'll create a GitHub Actions workflow to automate the testing process.
+
+### (a) Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from module_name import load_data, preprocess_data, train_model, evaluate_model, log_experiment
+
+def test_load_data():
+    # Test successful data loading
+    data = load_data('test_data.csv')
+    assert isinstance(data, pd.DataFrame)
+
+    # Test file not found
+    with pytest.raises(RuntimeError):
+        load_data('non_existent_file.csv')
+
+def test_preprocess_data():
+    test_data = pd.DataFrame({
+        'Feature1': [1, 2, 3, 4, 5, 6],
+        'Feature2': [2, 3, 4, 5, 6, 7],
+        'Class': [0, 0, 0, 1, 1, 1]
+    })
+
+    X_train, X_test, y_train, y_test = preprocess_data(test_data)
+    assert X_train.shape[0] > 0
+    assert X_test.shape[0] > 0
+    assert y_train.shape[0] > 0
+    assert y_test.shape[0] > 0
+
+def test_train_model():
+    X_train = pd.DataFrame({'Feature1': [1, 2, 3], 'Feature2': [4, 5, 6]})
+    y_train = pd.Series([0, 1, 0])
+
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    model = RandomForestClassifier(random_state=42)
+    X_train = pd.DataFrame({'Feature1': [1, 2, 3], 'Feature2': [4, 5, 6]})
+    y_train = pd.Series([0, 1, 0])
+    model.fit(X_train, y_train)
+
+    X_test = pd.DataFrame({'Feature1': [1, 2], 'Feature2': [4, 5]})
+    y_test = pd.Series([0, 1])
+
+    accuracy, report = evaluate_model(model, X_test, y_test)
+    assert isinstance(accuracy, float)
+    assert isinstance(report, dict)
+
+# Note: log_experiment function involves mlflow logging, which is harder to test in isolation.
+# Consider mocking mlflow in a real-world scenario.
+
+if __name__ == "__main__":
+    pytest.main()
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+name: Python application
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pandas scikit-learn mlflow
+        # Add any other dependencies your project needs here
+
+    - name: Run tests
+      run: |
+        pytest test_module.py  # Update with actual test file name
+
+    - name: Upload pytest results
+      if: always()
+      uses: actions/upload-artifact@v2
+      with:
+        name: pytest-results
+        path: test_results.xml
+```
+
+### Notes:
+- Replace `module_name` with the actual module file name where your main pipeline code resides.
+- The test file assumes you have a `test_data.csv` for testing purposes.
+- Adjust paths and file names as needed for your specific project setup.
+- The `log_experiment` function is not directly tested due to complexities with `mlflow`. In a real scenario, you might use mocking to handle these cases.
+- Ensure the GitHub Actions workflow file is placed in the `.github/workflows` directory in your repository.

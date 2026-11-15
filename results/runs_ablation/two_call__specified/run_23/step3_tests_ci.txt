@@ -1,0 +1,109 @@
+Let's break down the requirement into two parts: writing a `pytest` test file and creating a GitHub Actions workflow file.
+
+### (a) Complete `pytest` Test File
+
+Below is an example of how you could structure your `pytest` test file to test the functions in your pipeline module. The test file assumes that you have a Python file named `pipeline.py` where your module is implemented.
+
+```python
+# test_pipeline.py
+import pytest
+import pandas as pd
+from pipeline import load_data, preprocess_data, train_model, evaluate_model
+
+# Test constants
+TEST_DATA_PATH = "test_creditcard.csv"  # You need a sample test file to test data loading
+
+def test_load_data():
+    # Test if the data loads correctly
+    data = load_data(TEST_DATA_PATH)
+    assert isinstance(data, pd.DataFrame), "Loaded data should be a DataFrame"
+    assert len(data) > 0, "Loaded data should not be empty"
+
+def test_preprocess_data():
+    # Create a simple dataframe to simulate preprocessing
+    data = pd.DataFrame({
+        'Amount': [100, 200, 300],
+        'Class': [0, 1, 0]
+    })
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    assert len(X_train) > 0, "X_train should not be empty"
+    assert len(X_test) > 0, "X_test should not be empty"
+    assert len(y_train) > 0, "y_train should not be empty"
+    assert len(y_test) > 0, "y_test should not be empty"
+
+def test_train_model():
+    # Train a model with simple data
+    data = pd.DataFrame({
+        'Amount': [100, 200, 300],
+        'V1': [1, 2, 3],
+        'Class': [0, 1, 0]
+    })
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    assert model is not None, "Model should be trained and not None"
+    assert hasattr(model, "predict"), "Model should have a predict method"
+
+def test_evaluate_model():
+    # Evaluate a simple model
+    data = pd.DataFrame({
+        'Amount': [100, 200, 300],
+        'V1': [1, 2, 3],
+        'Class': [0, 1, 0]
+    })
+    X_train, X_test, y_train, y_test = preprocess_data(data)
+    model = train_model(X_train, y_train)
+    report, auc_score = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str), "Classification report should be a string"
+    assert isinstance(auc_score, float), "AUC score should be a float"
+    assert 0 <= auc_score <= 1, "AUC score should be between 0 and 1"
+
+```
+
+### (b) Complete GitHub Actions Workflow
+
+Below is an example of a GitHub Actions workflow file that sets up a Python environment, installs dependencies, and runs the tests using `pytest`.
+
+```yaml
+# .github/workflows/ci.yml
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+
+    - name: Run tests
+      run: |
+        pytest tests/
+
+```
+
+### Important Notes:
+- **Test Data**: You'll need a small test dataset `test_creditcard.csv` or mock data within the test functions for consistent results.
+- **Dependencies**: Ensure that your `requirements.txt` includes all necessary dependencies, such as `pandas`, `scikit-learn`, `mlflow`, and `pytest`.
+- **File Naming**: Adjust the file names and paths based on your actual setup.
+- **GitHub Secrets**: If you have any sensitive information (like MLflow credentials), ensure they are managed using GitHub Secrets.
+
+This setup will allow you to automatically run tests whenever you push to or create a pull request on the `main` branch.

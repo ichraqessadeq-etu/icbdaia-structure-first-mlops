@@ -1,0 +1,117 @@
+To test the `FraudDetectionModel` class using `pytest` and set up a GitHub Actions workflow for continuous integration, you can follow these steps. Below is a complete `pytest` test file and a `GitHub Actions` workflow file:
+
+### (a) Pytest Test File
+
+Create a file named `test_fraud_detection_model.py` for your pytest tests:
+
+```python
+# test_fraud_detection_model.py
+
+import pytest
+import pandas as pd
+from fraud_detection_model import FraudDetectionModel
+from sklearn.datasets import make_classification
+
+@pytest.fixture
+def model():
+    return FraudDetectionModel()
+
+@pytest.fixture
+def mock_data():
+    # Generate a synthetic dataset for testing
+    X, y = make_classification(n_samples=100, n_features=20, n_informative=2, n_redundant=10,
+                               random_state=42, n_classes=2)
+    data = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+    data['is_fraud'] = y
+    return data
+
+def test_load_data(model, mock_data):
+    # Test data loading
+    model.data = mock_data
+    assert model.data is not None
+    assert not model.data.empty
+
+def test_preprocess_data(model, mock_data):
+    # Test data preprocessing
+    model.data = mock_data
+    model.preprocess_data()
+    assert model.X_train is not None
+    assert model.X_test is not None
+    assert model.y_train is not None
+    assert model.y_test is not None
+    assert len(model.X_train) > 0
+    assert len(model.X_test) > 0
+
+def test_train_model(model, mock_data):
+    # Test model training
+    model.data = mock_data
+    model.preprocess_data()
+    model.train_model()
+    assert model.model is not None
+    assert hasattr(model.model, "predict")
+
+def test_evaluate_model(model, mock_data):
+    # Test model evaluation
+    model.data = mock_data
+    model.preprocess_data()
+    model.train_model()
+    accuracy, precision, recall = model.evaluate_model()
+    assert 0 <= accuracy <= 1
+    assert 0 <= precision <= 1
+    assert 0 <= recall <= 1
+
+def test_predict(model, mock_data):
+    # Test making predictions
+    model.data = mock_data
+    model.preprocess_data()
+    model.train_model()
+    predictions = model.predict(model.X_test)
+    assert len(predictions) == len(model.y_test)
+```
+
+### (b) GitHub Actions Workflow File
+
+Create a file named `.github/workflows/python-package.yml` for your GitHub Actions workflow:
+
+```yaml
+name: Python package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas joblib
+
+    - name: Run tests
+      run: |
+        pytest
+```
+
+### Explanation
+
+- **Pytest File (`test_fraud_detection_model.py`):** This file contains tests for the `FraudDetectionModel` class. It uses fixtures to create a model instance and mock data for testing. Each function tests a different aspect of the class, including data loading, preprocessing, model training, evaluation, and prediction.
+
+- **GitHub Actions Workflow (`python-package.yml`):** This YAML file defines a workflow that runs on every push or pull request to the `main` branch. It sets up Python, installs dependencies, and runs `pytest` to execute the tests. This ensures that your code is automatically tested in a CI/CD pipeline whenever changes are made.
+
+Make sure you place these files in the correct directories of your project for them to work as expected. The test file should be in the same directory as your `fraud_detection_model.py` file, and the workflow file should be in the `.github/workflows` directory.

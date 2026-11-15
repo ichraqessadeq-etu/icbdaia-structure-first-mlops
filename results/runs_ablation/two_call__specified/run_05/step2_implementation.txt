@@ -1,0 +1,96 @@
+Below is a complete Python pipeline script for training, evaluating, and logging a RandomForestClassifier for fraud detection using MLflow. This script is structured to handle data loading, training, evaluation, and logging while considering error handling and scalability.
+
+```python
+import os
+import mlflow
+import mlflow.sklearn
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+
+class FraudDetectionPipeline:
+    def __init__(self, data_path, test_size=0.2, random_state=42):
+        self.data_path = data_path
+        self.test_size = test_size
+        self.random_state = random_state
+        self.model = RandomForestClassifier(random_state=self.random_state)
+
+    def load_data(self):
+        try:
+            data = pd.read_csv(self.data_path)
+            return data
+        except Exception as e:
+            raise RuntimeError(f"Error loading data: {e}")
+
+    def preprocess_data(self, data):
+        try:
+            X = data.drop('Class', axis=1)
+            y = data['Class']
+
+            # Handle imbalance with resampling
+            X_majority = X[y == 0]
+            y_majority = y[y == 0]
+            X_minority = X[y == 1]
+            y_minority = y[y == 1]
+
+            X_minority_upsampled, y_minority_upsampled = resample(
+                X_minority, y_minority,
+                replace=True,
+                n_samples=X_majority.shape[0],
+                random_state=self.random_state
+            )
+
+            X_resampled = np.vstack((X_majority, X_minority_upsampled))
+            y_resampled = np.hstack((y_majority, y_minority_upsampled))
+
+            return train_test_split(X_resampled, y_resampled, test_size=self.test_size, random_state=self.random_state)
+        except Exception as e:
+            raise RuntimeError(f"Error preprocessing data: {e}")
+
+    def train(self, X_train, y_train):
+        try:
+            self.model.fit(X_train, y_train)
+        except Exception as e:
+            raise RuntimeError(f"Error training model: {e}")
+
+    def evaluate(self, X_test, y_test):
+        try:
+            predictions = self.model.predict(X_test)
+            roc_auc = roc_auc_score(y_test, predictions)
+            report = classification_report(y_test, predictions, output_dict=True)
+            return roc_auc, report
+        except Exception as e:
+            raise RuntimeError(f"Error evaluating model: {e}")
+
+    def log_metrics(self, roc_auc, report):
+        try:
+            mlflow.log_metric("roc_auc", roc_auc)
+            for label, metrics in report.items():
+                for metric_name, metric_value in metrics.items():
+                    mlflow.log_metric(f"{label}_{metric_name}", metric_value)
+        except Exception as e:
+            raise RuntimeError(f"Error logging metrics: {e}")
+
+    def run_pipeline(self):
+        mlflow.set_experiment("FraudDetection")
+        with mlflow.start_run():
+            data = self.load_data()
+            X_train, X_test, y_train, y_test = self.preprocess_data(data)
+            self.train(X_train, y_train)
+            roc_auc, report = self.evaluate(X_test, y_test)
+            self.log_metrics(roc_auc, report)
+            mlflow.sklearn.log_model(self.model, "random_forest_model")
+
+if __name__ == "__main__":
+    pipeline = FraudDetectionPipeline(data_path="creditcard.csv")
+    pipeline.run_pipeline()
+```
+
+In this script:
+- We handle data loading, training, and evaluation with error handling through try-except blocks.
+- The imbalance in the dataset is managed by upsampling the minority class.
+- The model's performance is evaluated using ROC AUC and a classification report, both of which are logged to MLflow.
+- The script assumes a CSV file named `creditcard.csv` is available in the current directory. Adjust the `data_path` parameter accordingly.

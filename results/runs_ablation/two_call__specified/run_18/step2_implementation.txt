@@ -1,0 +1,126 @@
+Below is a complete Python pipeline script for loading data, training a `RandomForestClassifier`, evaluating it, and logging the results to MLflow. This script also includes basic error handling and logging.
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+import mlflow
+import mlflow.sklearn
+import logging
+import os
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Configuration
+DATA_PATH = "data/creditcard.csv"
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
+MLFLOW_TRACKING_URI = "http://localhost:5000"
+
+def load_data(filepath):
+    """Load the dataset from a CSV file."""
+    try:
+        data = pd.read_csv(filepath)
+        logging.info(f"Data loaded successfully from {filepath}.")
+        return data
+    except Exception as e:
+        logging.error(f"Error loading data: {e}")
+        raise
+
+def preprocess_data(data):
+    """Preprocess the data by handling class imbalance."""
+    try:
+        # Separate fraud and non-fraud
+        fraud = data[data['Class'] == 1]
+        non_fraud = data[data['Class'] == 0]
+
+        # Downsample non-fraud
+        non_fraud_downsampled = resample(non_fraud,
+                                         replace=False,
+                                         n_samples=len(fraud),
+                                         random_state=RANDOM_STATE)
+
+        # Combine fraud and downsampled non-fraud
+        balanced_data = pd.concat([fraud, non_fraud_downsampled])
+        
+        logging.info("Data preprocessing completed. Balanced dataset created.")
+        return balanced_data
+    except Exception as e:
+        logging.error(f"Error in data preprocessing: {e}")
+        raise
+
+def train_model(X_train, y_train):
+    """Train a RandomForestClassifier model."""
+    try:
+        model = RandomForestClassifier(random_state=RANDOM_STATE)
+        model.fit(X_train, y_train)
+        logging.info("Model training completed.")
+        return model
+    except Exception as e:
+        logging.error(f"Error in model training: {e}")
+        raise
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the model performance."""
+    try:
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+
+        report = classification_report(y_test, y_pred)
+        auc_score = roc_auc_score(y_test, y_proba)
+
+        logging.info("Model evaluation completed.")
+        logging.info(f"Classification Report:\n{report}")
+        logging.info(f"AUC Score: {auc_score}")
+
+        return report, auc_score
+    except Exception as e:
+        logging.error(f"Error in model evaluation: {e}")
+        raise
+
+def log_experiment(model, auc_score):
+    """Log the experiment to MLflow."""
+    try:
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        mlflow.set_experiment("Fraud Detection")
+
+        with mlflow.start_run():
+            mlflow.log_param("model_type", "RandomForestClassifier")
+            mlflow.log_metric("auc_score", auc_score)
+            mlflow.sklearn.log_model(model, "model")
+
+        logging.info("Experiment logged to MLflow.")
+    except Exception as e:
+        logging.error(f"Error logging experiment to MLflow: {e}")
+        raise
+
+def main():
+    try:
+        # Load and preprocess data
+        data = load_data(DATA_PATH)
+        data = preprocess_data(data)
+
+        # Split the data
+        X = data.drop('Class', axis=1)
+        y = data['Class']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+
+        # Train and evaluate the model
+        model = train_model(X_train, y_train)
+        report, auc_score = evaluate_model(model, X_test, y_test)
+
+        # Log the experiment
+        log_experiment(model, auc_score)
+
+    except Exception as e:
+        logging.error(f"An error occurred in the pipeline: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+This script will execute the entire machine learning pipeline from data loading to logging the model's performance in MLflow. Adjust the `DATA_PATH` and `MLFLOW_TRACKING_URI` as necessary for your environment.

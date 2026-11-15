@@ -1,0 +1,264 @@
+Certainly! Below is the full implementation of the pipeline module based on the provided structure. 
+
+```python
+# fraud_detection/pipeline/__init__.py
+# This file can be empty or contain package-level imports if needed.
+
+# fraud_detection/pipeline/data_loader.py
+import pandas as pd
+
+def load_data(file_path: str):
+    """Load and preprocess the dataset."""
+    try:
+        data = pd.read_csv(file_path)
+        # Example preprocessing steps
+        data.fillna(0, inplace=True)
+        # Separate features and target
+        X = data.drop('target', axis=1)
+        y = data['target']
+        return X, y
+    except Exception as e:
+        print(f"Error in loading data: {e}")
+        raise
+
+# fraud_detection/pipeline/model_trainer.py
+from sklearn.ensemble import RandomForestClassifier
+
+def train_model(X_train, y_train):
+    """Train the RandomForestClassifier model."""
+    try:
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        print(f"Error in training model: {e}")
+        raise
+
+# fraud_detection/pipeline/model_evaluator.py
+from sklearn.metrics import accuracy_score, f1_score
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate the model on the test set."""
+    try:
+        predictions = model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        f1 = f1_score(y_test, predictions, average='weighted')
+        return {'accuracy': accuracy, 'f1_score': f1}
+    except Exception as e:
+        print(f"Error in evaluating model: {e}")
+        raise
+
+# fraud_detection/pipeline/mlflow_logger.py
+import mlflow
+
+def log_to_mlflow(params, metrics, model):
+    """Log parameters, metrics, and model to MLflow."""
+    try:
+        with mlflow.start_run():
+            mlflow.log_params(params)
+            mlflow.log_metrics(metrics)
+            mlflow.sklearn.log_model(model, "model")
+    except Exception as e:
+        print(f"Error in logging to MLflow: {e}")
+        raise
+
+# fraud_detection/pipeline/concept_drift_detector.py
+from sklearn.metrics import mean_squared_error
+
+def detect_concept_drift(reference_data, new_data):
+    """Detect concept drift by comparing reference data with new data."""
+    try:
+        # Simple concept drift detection using mean squared error
+        drift_score = mean_squared_error(reference_data, new_data)
+        threshold = 0.1  # Example threshold
+        drift_detected = drift_score > threshold
+        return drift_detected
+    except Exception as e:
+        print(f"Error in detecting concept drift: {e}")
+        raise
+```
+
+This module includes basic implementations for loading data, training a model, evaluating the model, logging to MLflow, and detecting concept drift. Note that specific preprocessing steps and model parameters can be adjusted as per your project's requirements. Each function includes basic error handling to capture and report any issues encountered during execution.
+
+Certainly! Below is the complete pytest test file and the GitHub Actions workflow implementation based on the planned structure and components you've provided.
+
+### (a) Complete Pytest Test File
+
+```python
+# fraud_detection/tests/test_pipeline.py
+
+import pytest
+from fraud_detection.pipeline.data_loader import load_data
+from fraud_detection.pipeline.model_trainer import train_model
+from fraud_detection.pipeline.model_evaluator import evaluate_model
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+
+def test_load_data():
+    """Test data loading and preprocessing."""
+    # Create a mock dataset
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    mock_data = X
+    mock_data = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(20)])
+    mock_data['target'] = y
+
+    # Save to a temporary CSV file
+    mock_data.to_csv('temp_data.csv', index=False)
+
+    # Test loading function
+    try:
+        X_loaded, y_loaded = load_data('temp_data.csv')
+        assert X_loaded.shape[0] == 100  # Check number of samples
+        assert y_loaded.shape[0] == 100  # Check target size
+    finally:
+        # Cleanup the temporary file
+        import os
+        os.remove('temp_data.csv')
+
+def test_train_model():
+    """Test model training."""
+    # Create a mock dataset
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Train model
+    model = train_model(X_train, y_train)
+    
+    # Check if the model is a RandomForestClassifier instance
+    from sklearn.ensemble import RandomForestClassifier
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    """Test model evaluation."""
+    # Create a mock dataset and split
+    X, y = make_classification(n_samples=100, n_features=20, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Train and evaluate model
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    
+    # Verify metrics
+    assert 'accuracy' in metrics
+    assert 'f1_score' in metrics
+    assert 0 <= metrics['accuracy'] <= 1
+    assert 0 <= metrics['f1_score'] <= 1
+```
+
+### (b) Complete GitHub Actions Workflow
+
+```yaml
+# .github/workflows/ci-cd.yml
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest fraud_detection/tests/
+
+  train:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model
+        run: |
+          python fraud_detection/pipeline/model_trainer.py
+
+  evaluate:
+    runs-on: ubuntu-latest
+    needs: train
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Evaluate model
+        run: |
+          python fraud_detection/pipeline/model_evaluator.py
+
+  log:
+    runs-on: ubuntu-latest
+    needs: evaluate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Log to MLflow
+        run: |
+          python fraud_detection/pipeline/mlflow_logger.py
+```
+
+This setup uses pytest to validate the components of the pipeline and a GitHub Actions workflow to automate the CI/CD process, ensuring that code changes are tested, and the model is trained, evaluated, and logged to MLflow upon successful tests.

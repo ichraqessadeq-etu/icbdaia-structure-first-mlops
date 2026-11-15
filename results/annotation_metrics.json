@@ -1,0 +1,88 @@
+{
+ "n_items_with_verdict": 157,
+ "raw_agreement": 0.949,
+ "cohen_kappa": 0.871,
+ "A_v2_gpt-4o": {
+  "n": 74,
+  "agreed_correct": 63,
+  "agreed_wrong": 10,
+  "agreed_undetermined": 0,
+  "disagreements": 1,
+  "share_correct_among_agreed_decided": 0.863,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   0.851,
+   0.865
+  ]
+ },
+ "A_v2_claude-sonnet-4-5": {
+  "n": 51,
+  "agreed_correct": 51,
+  "agreed_wrong": 0,
+  "agreed_undetermined": 0,
+  "disagreements": 0,
+  "share_correct_among_agreed_decided": 1.0,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   1.0,
+   1.0
+  ]
+ },
+ "A_v2_all": {
+  "n": 125,
+  "agreed_correct": 114,
+  "agreed_wrong": 10,
+  "agreed_undetermined": 0,
+  "disagreements": 1,
+  "share_correct_among_agreed_decided": 0.919,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   0.912,
+   0.92
+  ]
+ },
+ "B_v1_only_gpt-4o": {
+  "n": 4,
+  "agreed_correct": 0,
+  "agreed_wrong": 1,
+  "agreed_undetermined": 1,
+  "disagreements": 2,
+  "share_correct_among_agreed_decided": 0.0,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   0.0,
+   0.75
+  ]
+ },
+ "B_v1_only_claude-sonnet-4-5": {
+  "n": 28,
+  "agreed_correct": 21,
+  "agreed_wrong": 1,
+  "agreed_undetermined": 1,
+  "disagreements": 5,
+  "share_correct_among_agreed_decided": 0.955,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   0.75,
+   0.964
+  ]
+ },
+ "B_v1_only_all": {
+  "n": 32,
+  "agreed_correct": 21,
+  "agreed_wrong": 2,
+  "agreed_undetermined": 2,
+  "disagreements": 7,
+  "share_correct_among_agreed_decided": 0.913,
+  "range_if_disagreements_all_wrong_or_all_correct": [
+   0.656,
+   0.938
+  ]
+ },
+ "C_negative": {
+  "n_artifacts": 15,
+  "missed_by_A": 0,
+  "missed_by_B": 3,
+  "missed_by_at_least_one": 3,
+  "items_with_misses": [
+   33,
+   87,
+   101
+  ]
+ }
+}

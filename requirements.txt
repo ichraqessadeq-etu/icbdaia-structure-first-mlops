@@ -1,8 +1,13 @@
-# analysis and figure (no API key needed)
+# analysis, tables and figures (no API key needed)
 numpy
 scipy
+pandas
+statsmodels
 matplotlib
+pyyaml
+openpyxl          # make_annotation_sheet.py only
 # generation only (paid API calls)
 openai>=1.0
 anthropic>=0.40
 python-dotenv
+# execution of the artifacts: a separate, pinned environment (see README, "Executing the artifacts")

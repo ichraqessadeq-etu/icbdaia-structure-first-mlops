@@ -1,0 +1,111 @@
+Certainly! Below you'll find a complete pytest test file for the implemented pipeline module, followed by a GitHub Actions workflow file to automate the execution of these tests.
+
+### (a) Pytest Test File
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from pipeline_module import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+# Test data
+TEST_DATA = pd.DataFrame({
+    'Feature1': [0, 1, 1, 0, 1],
+    'Feature2': [1, 0, 1, 1, 0],
+    'Class': [0, 1, 1, 0, 1]
+})
+
+def test_load_data(monkeypatch):
+    """Test the load_data function."""
+    monkeypatch.setattr(pd, "read_csv", lambda _: TEST_DATA)
+    data = load_data("dummy_path.csv")
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_preprocess_data():
+    """Test the preprocess_data function."""
+    X, y = preprocess_data(TEST_DATA)
+    assert isinstance(X, np.ndarray)
+    assert isinstance(y, np.ndarray)
+    assert X.shape[0] == y.shape[0]
+    assert len(set(y)) == 2  # Ensure binary classification
+
+def test_train_model():
+    """Test the train_model function."""
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    assert isinstance(model, RandomForestClassifier)
+    assert isinstance(X_test, np.ndarray)
+    assert isinstance(y_test, np.ndarray)
+
+def test_evaluate_model():
+    """Test the evaluate_model function."""
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    results = evaluate_model(model, X_test, y_test)
+    assert isinstance(results, dict)
+    assert "roc_auc" in results
+    assert "classification_report" in results
+
+def test_log_to_mlflow(monkeypatch):
+    """Test the log_to_mlflow function."""
+    # Mock mlflow functions
+    monkeypatch.setattr(mlflow, "start_run", lambda: None)
+    monkeypatch.setattr(mlflow.sklearn, "log_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mlflow, "log_metrics", lambda *args, **kwargs: None)
+    
+    X, y = preprocess_data(TEST_DATA)
+    model, X_test, y_test = train_model(X, y)
+    results = evaluate_model(model, X_test, y_test)
+    
+    try:
+        log_to_mlflow(model, results)
+        assert True
+    except Exception:
+        assert False
+```
+
+### (b) GitHub Actions Workflow
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest mlflow scikit-learn
+
+    - name: Run tests
+      run: |
+        pytest -v
+```
+
+### Explanation
+
+- **Pytest Test File**: Contains tests for each function in the pipeline. It uses `pytest` fixtures and `monkeypatch` to mock external dependencies like file I/O and MLflow logging.
+
+- **GitHub Actions Workflow**: Automates the testing process on every push or pull request to the main branch. It sets up the Python environment, installs dependencies, and runs the tests using `pytest`.
+
+Make sure to adjust any paths and dependencies according to your project's structure and requirements.

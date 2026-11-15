@@ -1,0 +1,140 @@
+Certainly! Below is the complete implementation of the `pytest` test file (`test_pipeline.py`) and the GitHub Actions workflow (`ci_cd_pipeline.yml`) as described in your pipeline structure. 
+
+### (a) `tests/test_pipeline.py`
+```python
+import pytest
+import pandas as pd
+from fraud_detection.pipeline.data_loader import load_data, detect_concept_drift
+from fraud_detection.pipeline.model_trainer import train_model
+from fraud_detection.pipeline.model_evaluator import evaluate_model
+from sklearn.ensemble import RandomForestClassifier
+
+def test_load_data():
+    """Test the data loading and preprocessing function."""
+    file_path = 'creditcard.csv'  # Ensure this path is correct in your environment
+    data = load_data(file_path)
+    X, y = data
+    assert data is not None
+    assert isinstance(X, pd.DataFrame)
+    assert isinstance(y, pd.Series)
+    assert not X.empty
+    assert not y.empty
+
+def test_detect_concept_drift():
+    """Test the concept drift detection function."""
+    file_path = 'creditcard.csv'  # Ensure this path is correct in your environment
+    data = load_data(file_path)
+    drift_detected = detect_concept_drift(data)
+    assert isinstance(drift_detected, bool)
+
+def test_train_model():
+    """Test the model training function."""
+    file_path = 'creditcard.csv'  # Ensure this path is correct in your environment
+    data = load_data(file_path)
+    model = train_model(data)
+    assert model is not None
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model():
+    """Test the model evaluation function."""
+    file_path = 'creditcard.csv'  # Ensure this path is correct in your environment
+    data = load_data(file_path)
+    model = train_model(data)
+    metrics = evaluate_model(model, data)
+    assert metrics is not None
+    assert isinstance(metrics, dict)
+    assert 'accuracy' in metrics
+```
+
+### (b) `.github/workflows/ci_cd_pipeline.yml`
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0' # Weekly schedule
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    outputs:
+      drift_detected: ${{ steps.detect_drift.outputs.drift_detected }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Detect Concept Drift
+        id: detect_drift
+        run: |
+          python -c "
+          from fraud_detection.pipeline.data_loader import load_data, detect_concept_drift
+          data = load_data('creditcard.csv')
+          drift_detected = detect_concept_drift(data)
+          print(f'::set-output name=drift_detected::{drift_detected}')"
+      
+  train-and-eval:
+    needs: check-drift
+    if: ${{ needs.check-drift.outputs.drift_detected == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Run Training and Evaluation
+        run: |
+          python -c "
+          from fraud_detection.pipeline.data_loader import load_data
+          from fraud_detection.pipeline.model_trainer import train_model
+          from fraud_detection.pipeline.model_evaluator import evaluate_model
+          from fraud_detection.pipeline.mlflow_logger import log_experiment
+          data = load_data('creditcard.csv')
+          model = train_model(data)
+          metrics = evaluate_model(model, data)
+          log_experiment(metrics, model)"
+      
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Run Tests
+        run: pytest tests/
+```
+
+### Notes:
+- Ensure that `'creditcard.csv'` is correctly placed or accessible in your environment where the tests and CI/CD pipeline run.
+- The `detect_concept_drift` function currently contains placeholder logic; ensure it is implemented with appropriate logic for your use case.
+- The logging and model evaluation are integrated into the `train-and-eval` job in the GitHub Actions workflow.
+- The workflow runs on every push and pull request to the `main` branch, can be triggered manually, and is scheduled to run weekly. Adjust these triggers as per your needs.

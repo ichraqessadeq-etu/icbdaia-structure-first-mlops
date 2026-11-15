@@ -1,0 +1,126 @@
+### (a) Pytest Test File
+
+To create a comprehensive test file using `pytest`, we'll need to test each function for its expected behavior. Below is a sample test file that checks the main functionalities of the pipeline using mock data and mocks for external services like MLflow:
+
+```python
+import pytest
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from your_module_name import load_data, preprocess_data, train_model, evaluate_model, log_to_mlflow
+
+@pytest.fixture
+def sample_data():
+    # Creating a small sample dataset for testing
+    data = {
+        "feature1": [1, 2, 3, 4],
+        "feature2": [5, 6, 7, 8],
+        "Class": [0, 1, 0, 1]
+    }
+    return pd.DataFrame(data)
+
+def test_load_data(monkeypatch):
+    # Mocking the pandas read_csv method to return sample data
+    def mock_read_csv(file_path):
+        return pd.DataFrame({"feature1": [1, 2], "feature2": [3, 4], "Class": [0, 1]})
+    
+    monkeypatch.setattr(pd, "read_csv", mock_read_csv)
+    data = load_data("dummy_path.csv")
+    assert isinstance(data, pd.DataFrame)
+
+def test_preprocess_data(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    assert not X_train.empty
+    assert not X_test.empty
+    assert len(X_train) + len(X_test) == len(sample_data)
+    assert len(y_train) + len(y_test) == len(sample_data)
+
+def test_train_model(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    assert isinstance(model, RandomForestClassifier)
+
+def test_evaluate_model(sample_data):
+    X_train, X_test, y_train, y_test = preprocess_data(sample_data)
+    model = train_model(X_train, y_train)
+    report, roc_auc = evaluate_model(model, X_test, y_test)
+    assert isinstance(report, str)
+    assert isinstance(roc_auc, float)
+
+def test_log_to_mlflow(monkeypatch):
+    # Mocking mlflow functions to prevent actual logging
+    class MockMlflow:
+        def set_experiment(self, experiment_name):
+            pass
+
+        def start_run(self):
+            return self
+
+        def log_param(self, key, value):
+            pass
+
+        def log_metric(self, key, value):
+            pass
+
+        def log_artifact(self, path):
+            pass
+
+        def log_model(self, model, artifact_path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+    monkeypatch.setattr("mlflow", MockMlflow())
+    model = RandomForestClassifier()
+    report = "dummy report"
+    roc_auc = 0.75
+    log_to_mlflow(model, report, roc_auc)
+```
+
+### (b) GitHub Actions Workflow
+
+A GitHub Actions workflow file for running these tests might look like this:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'  # or your preferred version
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest scikit-learn pandas mlflow
+
+    - name: Run tests
+      run: |
+        pytest your_test_file.py
+```
+
+### Notes
+- Replace `your_module_name` with the actual name of the module where the pipeline functions are implemented.
+- Replace `your_test_file.py` with the name of the test file.
+- Ensure that the Python version specified in the GitHub Actions workflow matches the version you are using locally.
+- The test file uses `monkeypatch` to mock external dependencies, such as reading from a file and MLflow, to ensure that the tests can run without those dependencies being present.
